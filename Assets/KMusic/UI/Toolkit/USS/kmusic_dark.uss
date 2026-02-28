@@ -218,8 +218,8 @@
 }
 
 .km-step {
-  width: 94px;
-  height: 94px;
+  width: 128px;
+  height: 110px;
   margin-right: 18px;
   border-radius: 16px;
   background-color: #1E2230;
@@ -283,8 +283,8 @@
 }
 
 .km-chop-btn {
-  width: 94px;
-  height: 94px;
+  width: 100px;
+  height: 100px;
 
   /* spacing like StepGrid */
   margin-right: 18px;
@@ -312,8 +312,8 @@
 }
 
 .km-drum-btn {
-  width: 94px;
-  height: 94px;
+  width: 100px;
+  height: 100px;
 
   margin-right: 18px;
 
@@ -360,8 +360,8 @@
 }
 
 .km-pianoroll-cell {
-    width: 94px;
-    height: 94px;
+    width: 108px;
+    height: 108px;
     border-radius: 10px;
     margin-right: 18px
 }

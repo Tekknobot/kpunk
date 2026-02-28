@@ -2,21 +2,12 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:km="KMusic.UI">
   <ui:VisualElement name="Root" class="km-root">
     <ui:VisualElement class="km-topbar">
-      <ui:Label class="km-title" text="Z-Punk" />
+      <ui:Label class="km-title" text="z-punk" />
       <ui:VisualElement class="km-presetbar">
         <ui:Label name="PresetLabel" class="km-presetlabel" text="Preset: PROJECT 0" />
       </ui:VisualElement>
       <ui:Button name="ABButton" class="km-pillbtn" text="A/B" />
       <ui:Button name="SettingsButton" class="km-pillbtn" text="⚙" />
-    </ui:VisualElement>
-
-    <!-- Tabs -->
-    <ui:VisualElement class="km-tabs">
-      <ui:VisualElement name="TabSeq" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="SEQ"/></ui:VisualElement>
-      <ui:VisualElement name="TabSynth" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH"/></ui:VisualElement>
-      <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="SAMPLER"/></ui:VisualElement>
-      <ui:VisualElement name="TabArp" class="km-tab"><ui:Label class="km-tab-label" text="ARP"/></ui:VisualElement>
-      <ui:VisualElement name="TabFx" class="km-tab"><ui:Label class="km-tab-label" text="FX"/></ui:VisualElement>
     </ui:VisualElement>
 
     <!-- Pages: tabs show/hide these panels -->
@@ -179,6 +170,15 @@
         </ui:VisualElement>
       </ui:VisualElement>
 
+    </ui:VisualElement>
+
+    <!-- Tabs -->
+    <ui:VisualElement class="km-tabs">
+      <ui:VisualElement name="TabSeq" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="SEQ"/></ui:VisualElement>
+      <ui:VisualElement name="TabSynth" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH"/></ui:VisualElement>
+      <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="SAMPLER"/></ui:VisualElement>
+      <ui:VisualElement name="TabArp" class="km-tab"><ui:Label class="km-tab-label" text="ARP"/></ui:VisualElement>
+      <ui:VisualElement name="TabFx" class="km-tab"><ui:Label class="km-tab-label" text="FX"/></ui:VisualElement>
     </ui:VisualElement>
 
     <km:PresetBrowser name="PresetBrowser" style="display: none;" />
