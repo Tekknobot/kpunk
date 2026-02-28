@@ -1,0 +1,276 @@
+/* kmusic_dark.uss */
+
+:root {
+  --bg: #0F1115;
+  --panel: #171A21;
+  --panel2: #131720;
+  --border: #242938;
+  --text: #E7E9EE;
+  --muted: #9AA3B2;
+  --accent: #6AE4FF;
+  --accent2: #A78BFA;
+  --danger: #FF5A5F;
+
+  --radius-lg: 24px;
+  --radius-md: 18px;
+  --radius-sm: 14px;
+
+  --gap-1: 8px;
+  --gap-2: 12px;
+  --gap-3: 18px;
+  --gap-4: 24px;
+
+  --font: 18px;
+}
+
+/* --- Global text scale --- */
+* {
+  font-size: var(--font);
+}
+
+.km-root {
+  width: 100%;
+  height: 100%;
+  flex-grow: 1;
+
+  background-color: var(--bg);
+
+  padding-left: 20px;
+  padding-right: 20px;
+  padding-top: 24px;
+  padding-bottom: 24px;
+
+  flex-direction: column;
+
+  /* IMPORTANT: prevent any implicit centering behavior */
+  align-self: stretch;
+}
+
+.km-topbar {
+  height: 104px;
+  border-radius: 20px;
+  background-color: #12141A;
+  border-width: 2px;
+  border-color: var(--border);
+  padding: 20px 20px;
+  flex-direction: row;
+  align-items: center;
+}
+
+.km-title {
+  color: var(--text);
+  font-size: 48px;
+  -unity-font-style: bold;
+}
+
+.km-presetbar {
+  margin-left: 16px;
+  flex-grow: 1;
+  height: 54px;
+  border-radius: 16px;
+  background-color: #1C1F28;
+  border-width: 2px;
+  border-color: var(--border);
+  padding: 0 16px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: row;
+}
+
+.km-presetlabel {
+  color: var(--muted);
+  font-size: 22px;
+}
+
+.km-pillbtn {
+  height: 54px;
+  width: 92px;
+  margin-left: 12px;
+  border-radius: 16px;
+  background-color: #1C1F28;
+  border-width: 2px;
+  border-color: var(--border);
+  justify-content: center;
+  align-items: center;
+}
+
+.km-pillbtn:hover {
+  border-color: var(--accent);
+}
+
+.km-pillbtn > .unity-text-element {
+  color: var(--text);
+  font-size: 18px;
+  -unity-font-style: bold;
+}
+
+.km-tabs {
+  height: 56px;
+  margin-top: 18px;
+  flex-direction: row;
+}
+
+.km-tab {
+  flex-grow: 1;
+  margin-right: 12px;
+  border-radius: 16px;
+  border-width: 2px;
+  border-color: var(--border);
+  background-color: #181B23;
+  justify-content: center;
+  align-items: center;
+}
+
+.km-tab--active {
+  border-color: var(--accent);
+  background-color: #202532;
+}
+
+.km-tab-label {
+  color: var(--muted);
+  font-size: 20px;
+  -unity-font-style: bold;
+}
+
+.km-tab--active .km-tab-label { color: var(--text); }
+
+.km-card {
+  margin-top: 14px;
+  border-radius: var(--radius-lg);
+  background-color: var(--panel);
+  border-width: 2px;
+  border-color: var(--border);
+  padding: 14px;
+  overflow: hidden;
+}
+
+.km-row {
+  flex-direction: row;
+}
+
+.km-col3 > .km-subcard {
+  flex-grow: 1;
+}
+
+.km-subcard {
+  border-radius: var(--radius-md);
+  background-color: #13161E;
+  border-width: 2px;
+  border-color: var(--border);
+  padding: 14px;
+  margin-right: 18px;
+}
+
+.km-subtitle {
+  color: var(--muted);
+  font-size: 20px;
+  -unity-font-style: bold;
+  margin-bottom: 10px;
+}
+
+.km-controls {
+  flex-grow: 1;
+  flex-direction: column;
+}
+
+.km-macro-row {
+  flex-direction: row;
+  margin-bottom: 10px;
+}
+
+.km-fader-row {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-top: 10px;
+}
+
+.km-step-tools {
+  flex-direction: row;
+  margin-left: 240px;
+}
+
+.km-tool {
+  width: 96px;
+  height: 34px;
+  margin-right: 10px;
+  border-radius: 14px;
+  background-color: #1C1F28;
+  border-width: 2px;
+  border-color: var(--border);
+  justify-content: center;
+  align-items: center;
+}
+
+.km-tool-label {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.km-seq-grid {
+  margin-top: 12px;
+  flex-direction: column;
+}
+
+.km-seq-row {
+  flex-direction: row;
+  margin-bottom: 18px;
+}
+
+.km-step {
+  width: 94px;
+  height: 94px;
+  margin-right: 18px;
+  border-radius: 16px;
+  background-color: #1E2230;
+  border-width: 2px;
+  border-color: var(--border);
+  justify-content: center;
+  align-items: center;
+}
+
+.km-step--active {
+  border-color: var(--accent2);
+}
+
+.km-tempo {
+  height: 400px;
+}
+
+.km-tempo-row {
+  margin-top: 10px;
+  flex-direction: row;
+  align-items: center;
+}
+
+.km-label {
+  color: var(--muted);
+  font-size: 20px;
+  -unity-font-style: bold;
+}
+
+.km-bpm {
+  color: var(--text);
+  font-size: 28px;
+  -unity-font-style: bold;
+  margin-left: 18px;
+}
+
+/* Layout tuning */
+.km-modules-card {
+  height: 780px;
+}
+
+.km-subcard {
+  height: 740px;
+}
+
+/* Force major containers to stretch full width */
+.km-card,
+.km-modules-card,
+.km-subcard,
+.km-topbar,
+.km-tabs {
+  width: 100%;
+  align-self: stretch;
+}
