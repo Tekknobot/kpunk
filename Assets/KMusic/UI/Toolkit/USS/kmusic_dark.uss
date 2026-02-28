@@ -234,7 +234,7 @@
 }
 
 .km-tempo {
-  height: 400px;
+  height: 130px;
 }
 
 .km-tempo-row {

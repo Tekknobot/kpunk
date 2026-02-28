@@ -504,71 +504,255 @@ namespace KMusic.UI
     }
 
     // --- Step Grid ---
-    public class StepGrid : VisualElement
+    class StepGrid : VisualElement
     {
         public new class UxmlFactory : UxmlFactory<StepGrid, UxmlTraits> { }
 
         private const int Rows = 2;
         private const int Cols = 8;
 
-        private bool[,] _on = new bool[Rows, Cols];
+        // 0 = empty, >0 = "value" (drum on=1, sample chop=1..16)
+        private int[,] _val = new int[Rows, Cols];
+
+        // paint brush value (0 = erase)
         private int _paintValue = 1;
+
+        private VisualElement[,] _cells = new VisualElement[Rows, Cols];
+
+        // Optional: tint all "active" cells with a color (useful for drum lanes)
+        private bool _useActiveTint = false;
+        private Color _activeTint = Color.white;
+
+        // Optional: show a tiny label on each active cell (useful for chop ID)
+        private bool _showValueLabel = false;
+        private Func<int, string> _valueLabelFormatter = null;
+
+        // Fired when user clicks/paints a cell
+        public event Action<int, int, int> OnCellValueChanged;
+
+        // Fired when user clicks a cell (for “other way” selection)
+        public event Action<int, int> OnCellClicked;
+
+        public int RowCount => Rows;
+        public int ColCount => Cols;
 
         public StepGrid()
         {
             AddToClassList("km-seq-grid");
             Build();
+            ClearAll(); // ✅ no default highlights
+        }
+
+        public void SetPaintValue(int v) => _paintValue = Mathf.Clamp(v, 0, 999);
+
+        /// <summary>
+        /// Tint all active cells with this color (inactive cells revert to USS styling).
+        /// </summary>
+        public void SetActiveTint(Color c)
+        {
+            _useActiveTint = true;
+            _activeTint = c;
+            RefreshAll();
+        }
+
+        public void ClearActiveTint()
+        {
+            _useActiveTint = false;
+            RefreshAll();
+        }
+
+        /// <summary>
+        /// Show/hide per-cell labels (e.g. chop numbers).
+        /// If formatter is null, defaults to v.ToString().
+        /// Return "" to hide the label for a given value.
+        /// </summary>
+        public void EnableValueLabels(bool on, Func<int, string> formatter = null)
+        {
+            _showValueLabel = on;
+            _valueLabelFormatter = formatter;
+            RefreshAll();
+        }
+
+        public void RefreshAll()
+        {
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    UpdateCellVisual(r, c);
+        }
+
+        public void ClearAll()
+        {
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    SetValue(r, c, 0, fireEvent: false);
+        }
+
+        public int GetValue(int r, int c) => _val[r, c];
+
+        public void SetValue(int r, int c, int v, bool fireEvent = true)
+        {
+            _val[r, c] = v;
+            var cell = _cells[r, c];
+
+            // Visual: active if non-zero
+            if (v != 0) cell.AddToClassList("km-step--active");
+            else cell.RemoveFromClassList("km-step--active");
+
+            // ✅ Update custom visuals (tint + label)
+            UpdateCellVisual(r, c);
+
+            if (fireEvent)
+                OnCellValueChanged?.Invoke(r, c, v);
+        }
+
+        private void UpdateCellVisual(int r, int c)
+        {
+            var v = _val[r, c];
+            var cell = _cells[r, c];
+            if (cell == null) return;
+
+            if (_useActiveTint && v != 0)
+                cell.style.backgroundColor = _activeTint;
+            else
+                cell.style.backgroundColor = StyleKeyword.Null;
+
+            // --- Label ---
+            var tag = cell.Q<Label>("CellTag");
+            if (tag != null)
+            {
+                if (_showValueLabel && v != 0)
+                {
+                    string txt = (_valueLabelFormatter != null) ? _valueLabelFormatter(v) : v.ToString();
+                    if (!string.IsNullOrEmpty(txt))
+                    {
+                        tag.text = txt;
+                        tag.style.display = DisplayStyle.Flex;
+                    }
+                    else
+                    {
+                        tag.text = "";
+                        tag.style.display = DisplayStyle.None;
+                    }
+                }
+                else
+                {
+                    tag.text = "";
+                    tag.style.display = DisplayStyle.None;
+                }
+            }
+        }
+
+        // Export/import for controller scripts (drum lanes, sample patterns)
+        public int[,] ExportValues()
+        {
+            var copy = new int[Rows, Cols];
+            Array.Copy(_val, copy, _val.Length);
+            return copy;
+        }
+
+        public void ImportValues(int[,] src, bool fireEvent = false)
+        {
+            if (src == null || src.GetLength(0) != Rows || src.GetLength(1) != Cols)
+                return;
+
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    SetValue(r, c, src[r, c], fireEvent);
+        }
+
+        public bool[,] ExportBools()
+        {
+            var b = new bool[Rows, Cols];
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    b[r, c] = (_val[r, c] != 0);
+            return b;
+        }
+
+        public void ImportBools(bool[,] src, bool fireEvent = false)
+        {
+            if (src == null || src.GetLength(0) != Rows || src.GetLength(1) != Cols)
+                return;
+
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    SetValue(r, c, src[r, c] ? 1 : 0, fireEvent);
         }
 
         private void Build()
         {
             Clear();
+
             for (int r = 0; r < Rows; r++)
             {
                 var row = new VisualElement();
                 row.AddToClassList("km-seq-row");
+
                 for (int c = 0; c < Cols; c++)
                 {
                     int rr = r, cc = c;
+
                     var cell = new VisualElement();
                     cell.AddToClassList("km-step");
+
+                    // allow overlay label
+                    cell.style.position = Position.Relative;
+
+                    // tiny per-cell tag (for chop IDs)
+                    var tag = new Label();
+                    tag.name = "CellTag";
+                    tag.AddToClassList("km-step-tag");
+                    tag.pickingMode = PickingMode.Ignore;
+                    tag.style.position = Position.Absolute;
+                    tag.style.left = 2;
+                    tag.style.top = 1;
+                    tag.style.fontSize = 10;
+                    tag.style.unityFontStyleAndWeight = FontStyle.Bold;
+                    tag.style.display = DisplayStyle.None;
+                    cell.Add(tag);
+
+                    _cells[r, c] = cell;
+
                     cell.RegisterCallback<PointerDownEvent>(e =>
                     {
-                        Toggle(rr, cc);
+                        // “Other way” support: clicking a cell can select whatever is stored in it
+                        OnCellClicked?.Invoke(rr, cc);
+
+                        ApplyPaint(rr, cc);
                         cell.CapturePointer(e.pointerId);
                         e.StopPropagation();
                     });
+
                     cell.RegisterCallback<PointerMoveEvent>(e =>
                     {
                         if (cell.HasPointerCapture(e.pointerId))
-                        {
-                            if (_paintValue == 1 && !_on[rr, cc]) Set(rr, cc, true);
-                            if (_paintValue == 0 && _on[rr, cc]) Set(rr, cc, false);
-                        }
+                            ApplyPaint(rr, cc);
                     });
+
                     cell.RegisterCallback<PointerUpEvent>(e =>
                     {
                         if (cell.HasPointerCapture(e.pointerId))
                             cell.ReleasePointer(e.pointerId);
                     });
+
                     row.Add(cell);
                 }
+
                 Add(row);
             }
-            // Seed pattern similar to mockup
-            Set(0, 0, true); Set(0, 3, true); Set(0, 4, true); Set(0, 7, true);
-            Set(1, 2, true); Set(1, 5, true);
         }
 
-        private void Toggle(int r, int c) => Set(r, c, !_on[r, c]);
-
-        private void Set(int r, int c, bool v)
+        private void ApplyPaint(int r, int c)
         {
-            _on[r, c] = v;
-            var row = this.ElementAt(r) as VisualElement;
-            var ve = row.ElementAt(c) as VisualElement;
-            if (v) ve.AddToClassList("km-step--active");
-            else ve.RemoveFromClassList("km-step--active");
+            // Paint value 0 = erase
+            if (_paintValue == 0)
+            {
+                if (_val[r, c] != 0) SetValue(r, c, 0);
+            }
+            else
+            {
+                if (_val[r, c] != _paintValue) SetValue(r, c, _paintValue);
+            }
         }
     }
 

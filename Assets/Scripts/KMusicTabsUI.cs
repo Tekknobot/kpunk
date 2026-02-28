@@ -35,6 +35,8 @@ public class KMusicTabsUI : MonoBehaviour
 
     private void Setup()
     {
+        Debug.Log("KMusicTabsUI Setup() running");
+        
         if (_isSetup) return;
         if (!doc) return;
 
@@ -85,15 +87,34 @@ public class KMusicTabsUI : MonoBehaviour
     {
         if (tab == null) return;
 
+        // Make sure the tab can receive hits
+        tab.style.flexGrow = 1;
+        tab.style.minHeight = 40;
         tab.pickingMode = PickingMode.Position;
-        foreach (var child in tab.Children())
-            child.pickingMode = PickingMode.Ignore;
 
-        tab.AddManipulator(new Clickable(() =>
+        // Catch pointer down directly (more reliable than Clickable)
+        tab.RegisterCallback<PointerDownEvent>(evt =>
         {
-            Debug.Log($"TAB CLICK: {tab.name}");
-            onActivate();
-        }));
+            Debug.Log($"TAB DOWN: {tab.name}");
+            onActivate?.Invoke();
+            evt.StopPropagation();
+        }, TrickleDown.TrickleDown);
+
+        // Optional: show that the element is being hovered
+        tab.RegisterCallback<PointerEnterEvent>(_ =>
+        {
+            // Uncomment if you want noise:
+            // Debug.Log($"TAB ENTER: {tab.name}");
+        }, TrickleDown.TrickleDown);
+    }
+
+    private void IgnorePickingRecursive(VisualElement root)
+    {
+        foreach (var child in root.Children())
+        {
+            child.pickingMode = PickingMode.Ignore;
+            IgnorePickingRecursive(child);
+        }
     }
 
     private void Show(string which)
