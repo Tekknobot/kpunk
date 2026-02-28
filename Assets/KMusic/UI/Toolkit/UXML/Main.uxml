@@ -39,6 +39,10 @@
           <km:StepGrid name="StepGrid" />
         </ui:VisualElement>
 
+        <ui:VisualElement class="km-card">
+          <KMusic.UI.PianoRollGrid name="SeqPianoRoll" rows="6" cols="8" />
+        </ui:VisualElement>
+
         <ui:VisualElement class="km-card km-tempo">
           <ui:Label class="km-label" text="TEMPO"/>
           <ui:VisualElement class="km-tempo-row">

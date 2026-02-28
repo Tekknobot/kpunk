@@ -348,3 +348,26 @@
   background-color: #202532;
   border-width: 3px;
 }
+
+.km-pianoroll-outer {
+    flex-direction: column;
+    margin-top: 18px;
+}
+
+.km-pianoroll-row {
+    flex-direction: row;
+    margin-top: 18px;
+}
+
+.km-pianoroll-cell {
+    width: 94px;
+    height: 94px;
+    border-radius: 10px;
+    margin-right: 18px
+}
+
+.km-pianoroll-label {
+    -unity-font-style: bold;
+    font-size: 28px;
+    color: white;
+}
