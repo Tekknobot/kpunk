@@ -274,3 +274,77 @@
   width: 100%;
   align-self: stretch;
 }
+
+.km-chop-strip {
+  margin-top: 12px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.km-chop-btn {
+  width: 94px;
+  height: 94px;
+
+  /* spacing like StepGrid */
+  margin-right: 18px;
+  margin-bottom: 18px;
+
+  padding: 0;
+
+  border-radius: 16px;
+  background-color: #1E2230;
+  border-width: 2px;
+  border-color: var(--border);
+
+  justify-content: center;
+  align-items: center;
+
+  color: var(--text);
+  -unity-font-style: bold;
+  font-size: 18px;
+}
+
+.km-drum-strip {
+  margin-top: 12px;
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+.km-drum-btn {
+  width: 94px;
+  height: 94px;
+
+  margin-right: 18px;
+
+  padding: 0;
+
+  border-radius: 16px;
+  background-color: #1E2230;
+  border-width: 2px;
+  border-color: var(--border);
+
+  justify-content: center;
+  align-items: center;
+
+  color: var(--text);
+  -unity-font-style: bold;
+  font-size: 18px;
+}
+
+/* Drum lane colors */
+
+.drum-kick  { border-color: #E63946; }
+.drum-snare { border-color: #F77F00; }
+.drum-clap  { border-color: #FF4D9D; }
+.drum-hatc  { border-color: #00E5FF; }
+.drum-hato  { border-color: #4FC3F7; }
+.drum-rim   { border-color: #9B5DE5; }
+.drum-perc  { border-color: #80ED99; }
+.drum-crash { border-color: #FFD60A; }
+
+/* active selection highlight */
+.km-drum-btn--active {
+  background-color: #202532;
+  border-width: 3px;
+}

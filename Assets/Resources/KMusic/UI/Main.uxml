@@ -10,83 +10,152 @@
       <ui:Button name="SettingsButton" class="km-pillbtn" text="⚙" />
     </ui:VisualElement>
 
+    <!-- Tabs -->
     <ui:VisualElement class="km-tabs">
-      <ui:VisualElement name="TabSynth" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="SYNTH"/></ui:VisualElement>
+      <ui:VisualElement name="TabSeq" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="SEQ"/></ui:VisualElement>
+      <ui:VisualElement name="TabSynth" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH"/></ui:VisualElement>
+      <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="SAMPLER"/></ui:VisualElement>
       <ui:VisualElement name="TabArp" class="km-tab"><ui:Label class="km-tab-label" text="ARP"/></ui:VisualElement>
       <ui:VisualElement name="TabFx" class="km-tab"><ui:Label class="km-tab-label" text="FX"/></ui:VisualElement>
-      <ui:VisualElement name="TabSeq" class="km-tab"><ui:Label class="km-tab-label" text="SEQ"/></ui:VisualElement>
     </ui:VisualElement>
 
-    <ui:VisualElement class="km-card km-modules-card">
-      <ui:VisualElement class="km-row km-col3">
-        <ui:VisualElement class="km-subcard">
-          <ui:Label class="km-subtitle" text="FILTER"/>
-          <ui:VisualElement class="km-macro-row">
-            <km:KnobElement name="FilterCut" label="Cut" paramId="filter.cutoff" />
-            <km:KnobElement name="FilterRes" label="Res" paramId="filter.res" />
-            <km:KnobElement name="FilterDrive" label="Drive" paramId="filter.drive" />
+    <!-- Pages: tabs show/hide these panels -->
+    <ui:VisualElement name="Pages" style="flex-grow:1; flex-direction:column;">
+
+      <!-- SEQ (default visible) -->
+      <ui:VisualElement name="PageSeq" style="display:flex; flex-direction:column;">
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="SEQUENCER"/>
+            <ui:VisualElement class="km-step-tools">
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Paint"/></ui:VisualElement>
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Erase"/></ui:VisualElement>
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Vel"/></ui:VisualElement>
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Prob"/></ui:VisualElement>
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Len"/></ui:VisualElement>
+            </ui:VisualElement>
           </ui:VisualElement>
-          <ui:VisualElement class="km-fader-row">
-            <km:FaderElement label="Atk" paramId="filter.atk" />
-            <km:FaderElement label="Dec" paramId="filter.dec" />
-            <km:FaderElement label="Sus" paramId="filter.sus" />
-            <km:FaderElement label="Rel" paramId="filter.rel" />
-          </ui:VisualElement>
+
+          <km:StepGrid name="StepGrid" />
         </ui:VisualElement>
 
-        <ui:VisualElement class="km-subcard">
-          <ui:Label class="km-subtitle" text="AMP/ENV"/>
-          <ui:VisualElement class="km-macro-row">
-            <km:KnobElement label="Atk" paramId="amp.atk" />
-            <km:KnobElement label="Dec" paramId="amp.dec" />
-            <km:KnobElement label="Sus" paramId="amp.sus" />
-          </ui:VisualElement>
-          <ui:VisualElement class="km-fader-row">
-            <km:FaderElement label="Atk" paramId="amp.atk2" />
-            <km:FaderElement label="Dec" paramId="amp.dec2" />
-            <km:FaderElement label="Sus" paramId="amp.sus2" />
-            <km:FaderElement label="Rel" paramId="amp.rel2" />
-          </ui:VisualElement>
-        </ui:VisualElement>
-
-        <ui:VisualElement class="km-subcard">
-          <ui:Label class="km-subtitle" text="MOD"/>
-          <ui:VisualElement class="km-macro-row">
-            <km:KnobElement label="Rate" paramId="mod.rate" />
-            <km:KnobElement label="Depth" paramId="mod.depth" />
-            <km:KnobElement label="Mix" paramId="mod.mix" />
-          </ui:VisualElement>
-          <ui:VisualElement class="km-fader-row">
-            <km:FaderElement label="Atk" paramId="mod.atk" />
-            <km:FaderElement label="Dec" paramId="mod.dec" />
-            <km:FaderElement label="Sus" paramId="mod.sus" />
-            <km:FaderElement label="Rel" paramId="mod.rel" />
+        <ui:VisualElement class="km-card km-tempo">
+          <ui:Label class="km-label" text="TEMPO"/>
+          <ui:VisualElement class="km-tempo-row">
+            <km:FaderElement label="" paramId="tempo" horizontal="true" />
+            <ui:Label name="BpmLabel" class="km-bpm" text="107 BPM"/>
           </ui:VisualElement>
         </ui:VisualElement>
       </ui:VisualElement>
-    </ui:VisualElement>
 
-    <ui:VisualElement class="km-card">
-      <ui:VisualElement class="km-row" style="align-items: center;">
-        <ui:Label class="km-subtitle" text="SEQUENCER"/>
-        <ui:VisualElement class="km-step-tools">
-          <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Paint"/></ui:VisualElement>
-          <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Erase"/></ui:VisualElement>
-          <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Vel"/></ui:VisualElement>
-          <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Prob"/></ui:VisualElement>
-          <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Len"/></ui:VisualElement>
+      <!-- SYNTH -->
+      <ui:VisualElement name="PageSynth" style="display:none; flex-direction:column;">
+        <ui:VisualElement class="km-card km-modules-card">
+          <ui:VisualElement class="km-row km-col3">
+            <ui:VisualElement class="km-subcard">
+              <ui:Label class="km-subtitle" text="FILTER"/>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement name="FilterCut" label="Cut" paramId="filter.cutoff" />
+                <km:KnobElement name="FilterRes" label="Res" paramId="filter.res" />
+                <km:KnobElement name="FilterDrive" label="Drive" paramId="filter.drive" />
+              </ui:VisualElement>
+              <ui:VisualElement class="km-fader-row">
+                <km:FaderElement label="Atk" paramId="filter.atk" />
+                <km:FaderElement label="Dec" paramId="filter.dec" />
+                <km:FaderElement label="Sus" paramId="filter.sus" />
+                <km:FaderElement label="Rel" paramId="filter.rel" />
+              </ui:VisualElement>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-subcard">
+              <ui:Label class="km-subtitle" text="AMP/ENV"/>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="Atk" paramId="amp.atk" />
+                <km:KnobElement label="Dec" paramId="amp.dec" />
+                <km:KnobElement label="Sus" paramId="amp.sus" />
+              </ui:VisualElement>
+              <ui:VisualElement class="km-fader-row">
+                <km:FaderElement label="Atk" paramId="amp.atk2" />
+                <km:FaderElement label="Dec" paramId="amp.dec2" />
+                <km:FaderElement label="Sus" paramId="amp.sus2" />
+                <km:FaderElement label="Rel" paramId="amp.rel2" />
+              </ui:VisualElement>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-subcard">
+              <ui:Label class="km-subtitle" text="MOD"/>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="Rate" paramId="mod.rate" />
+                <km:KnobElement label="Depth" paramId="mod.depth" />
+                <km:KnobElement label="Mix" paramId="mod.mix" />
+              </ui:VisualElement>
+              <ui:VisualElement class="km-fader-row">
+                <km:FaderElement label="Atk" paramId="mod.atk" />
+                <km:FaderElement label="Dec" paramId="mod.dec" />
+                <km:FaderElement label="Sus" paramId="mod.sus" />
+                <km:FaderElement label="Rel" paramId="mod.rel" />
+              </ui:VisualElement>
+            </ui:VisualElement>
+          </ui:VisualElement>
         </ui:VisualElement>
       </ui:VisualElement>
 
-      <km:StepGrid name="StepGrid" />
-    </ui:VisualElement>
+      <!-- SAMPLER -->
+      <ui:VisualElement name="PageSampler" style="display:none; flex-direction:column;">
 
-    <ui:VisualElement class="km-card km-tempo">
-      <ui:Label class="km-label" text="TEMPO"/>
-      <ui:VisualElement class="km-tempo-row">
-        <km:FaderElement label="" paramId="tempo" horizontal="true" />
-        <ui:Label name="BpmLabel" class="km-bpm" text="107 BPM"/>
+        <!-- Drum Picker (new) -->
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="DRUM PICKER"/>
+          </ui:VisualElement>
+
+          <!-- 4x2 drum grid (edit labels as you like) -->
+          <ui:VisualElement class="km-drum-grid">
+            <ui:Button name="DrumKick" class="km-drum-btn" text="Kick"/>
+            <ui:Button name="DrumSnare" class="km-drum-btn" text="Snare"/>
+            <ui:Button name="DrumClap" class="km-drum-btn" text="Clap"/>
+            <ui:Button name="DrumHatC" class="km-drum-btn" text="Hat C"/>
+
+            <ui:Button name="DrumHatO" class="km-drum-btn" text="Hat O"/>
+            <ui:Button name="DrumTom" class="km-drum-btn" text="Tom"/>
+            <ui:Button name="DrumPerc" class="km-drum-btn" text="Perc"/>
+            <ui:Button name="DrumCrash" class="km-drum-btn" text="Crash"/>
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- Sampler Sequencer (StepGrid, same as SEQ page) -->
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="SAMPLER SEQUENCER"/>
+            <ui:VisualElement class="km-step-tools">
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Paint"/></ui:VisualElement>
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Erase"/></ui:VisualElement>
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Vel"/></ui:VisualElement>
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Prob"/></ui:VisualElement>
+              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Len"/></ui:VisualElement>
+            </ui:VisualElement>
+          </ui:VisualElement>
+
+          <!-- New StepGrid instance for sampler -->
+          <km:StepGrid name="SamplerStepGrid" />
+        </ui:VisualElement>
+
       </ui:VisualElement>
+
+      <!-- ARP (stub for now) -->
+      <ui:VisualElement name="PageArp" style="display:none; flex-direction:column;">
+        <ui:VisualElement class="km-card">
+          <ui:Label class="km-subtitle" text="ARP"/>
+        </ui:VisualElement>
+      </ui:VisualElement>
+
+      <!-- FX (stub for now) -->
+      <ui:VisualElement name="PageFx" style="display:none; flex-direction:column;">
+        <ui:VisualElement class="km-card">
+          <ui:Label class="km-subtitle" text="FX"/>
+        </ui:VisualElement>
+      </ui:VisualElement>
+
     </ui:VisualElement>
 
     <km:PresetBrowser name="PresetBrowser" style="display: none;" />

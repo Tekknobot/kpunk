@@ -447,12 +447,24 @@ namespace KMusic.UI
             }
             else
             {
-                float left = 20f + ((resolvedStyle.width - 60f) * t);
-                _thumb.style.left = left;
+                const float HPAD_X = 20f;   // left/right padding
+                const float THUMB = 36f;    // thumb width
+
+                float w = resolvedStyle.width;
+
+                // distance thumb can travel
+                float travel = Mathf.Max(0f, w - (HPAD_X * 2f) - THUMB);
+
+                // compute thumb position
+                float x = HPAD_X + travel * t;
+
+                _thumb.style.left = x;
                 _thumb.style.top = 3;
+
+                // fill stays centered with thumb
                 _fill.style.left = 0;
                 _fill.style.top = 12;
-                _fill.style.width = left;
+                _fill.style.width = x + (THUMB * 0.5f);
             }
         }
 

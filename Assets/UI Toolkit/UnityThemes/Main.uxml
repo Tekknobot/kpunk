@@ -100,86 +100,11 @@
         </ui:VisualElement>
       </ui:VisualElement>
 
-      <!-- SAMPLER -->
+      <!-- SAMPLER (stub for now) -->
       <ui:VisualElement name="PageSampler" style="display:none; flex-direction:column;">
-
-        <!-- Chop Picker (2 rows x 8) -->
         <ui:VisualElement class="km-card">
-          <ui:Label class="km-subtitle" text="CHOP PICKER"/>
-
-          <ui:VisualElement class="km-chop-strip">
-
-            <ui:Button name="Chop01" class="km-chop-btn" text="01"/>
-            <ui:Button name="Chop02" class="km-chop-btn" text="02"/>
-            <ui:Button name="Chop03" class="km-chop-btn" text="03"/>
-            <ui:Button name="Chop04" class="km-chop-btn" text="04"/>
-            <ui:Button name="Chop05" class="km-chop-btn" text="05"/>
-            <ui:Button name="Chop06" class="km-chop-btn" text="06"/>
-            <ui:Button name="Chop07" class="km-chop-btn" text="07"/>
-            <ui:Button name="Chop08" class="km-chop-btn" text="08"/>
-
-            <ui:Button name="Chop09" class="km-chop-btn" text="09"/>
-            <ui:Button name="Chop10" class="km-chop-btn" text="10"/>
-            <ui:Button name="Chop11" class="km-chop-btn" text="11"/>
-            <ui:Button name="Chop12" class="km-chop-btn" text="12"/>
-            <ui:Button name="Chop13" class="km-chop-btn" text="13"/>
-            <ui:Button name="Chop14" class="km-chop-btn" text="14"/>
-            <ui:Button name="Chop15" class="km-chop-btn" text="15"/>
-            <ui:Button name="Chop16" class="km-chop-btn" text="16"/>
-
-          </ui:VisualElement>
+          <ui:Label class="km-subtitle" text="SAMPLER"/>
         </ui:VisualElement>
-
-        <!-- Sample Sequencer (for chops) -->
-        <ui:VisualElement class="km-card">
-          <ui:VisualElement class="km-row" style="align-items: center;">
-            <ui:Label class="km-subtitle" text="SAMPLE SEQUENCER"/>
-            <ui:VisualElement class="km-step-tools">
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Paint"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Erase"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Vel"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Prob"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Len"/></ui:VisualElement>
-            </ui:VisualElement>
-          </ui:VisualElement>
-
-          <!-- Dedicated grid for sample chops -->
-          <km:StepGrid name="SampleStepGrid" />
-        </ui:VisualElement>
-
-        <!-- Drum Picker (1x8) -->
-        <ui:VisualElement class="km-card">
-          <ui:Label class="km-subtitle" text="DRUM PICKER"/>
-
-          <ui:VisualElement class="km-drum-strip">
-            <ui:Button name="DrumKick"  class="km-drum-btn drum-kick"  text="Kick"/>
-            <ui:Button name="DrumSnare" class="km-drum-btn drum-snare" text="Snare"/>
-            <ui:Button name="DrumClap"  class="km-drum-btn drum-clap"  text="Clap"/>
-            <ui:Button name="DrumHatC"  class="km-drum-btn drum-hatc"  text="Closed"/>
-            <ui:Button name="DrumHatO"  class="km-drum-btn drum-hato"  text="Open"/>
-            <ui:Button name="DrumTom"   class="km-drum-btn drum-rim"   text="RIM"/>
-            <ui:Button name="DrumPerc"  class="km-drum-btn drum-perc"  text="PERC"/>
-            <ui:Button name="DrumCrash" class="km-drum-btn drum-crash" text="CRASH"/>
-          </ui:VisualElement>
-        </ui:VisualElement>
-
-        <!-- Drum Sequencer -->
-        <ui:VisualElement class="km-card">
-          <ui:VisualElement class="km-row" style="align-items: center;">
-            <ui:Label class="km-subtitle" text="DRUM SEQUENCER"/>
-            <ui:VisualElement class="km-step-tools">
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Paint"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Erase"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Vel"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Prob"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Len"/></ui:VisualElement>
-            </ui:VisualElement>
-          </ui:VisualElement>
-
-          <!-- Dedicated grid for drums -->
-          <km:StepGrid name="DrumStepGrid" />
-        </ui:VisualElement>
-
       </ui:VisualElement>
 
       <!-- ARP (stub for now) -->
