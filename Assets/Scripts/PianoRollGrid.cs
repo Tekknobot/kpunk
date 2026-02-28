@@ -58,6 +58,13 @@ namespace KMusic.UI
         // event
         public event Action<int, int, bool> OnCellChanged; // (row, col, isOn)
 
+        // Picker mode: PianoRollGrid acts as a NOTE PICKER / palette (no self-painting)
+        public event Action<int, int, string, int> OnCellPicked; // (row, col, label, valueId)
+
+        private bool _pickerMode = false;
+        private int _pickedRow = -1;
+        private int _pickedCol = -1;
+
         public int RowCount => _rows;
         public int ColCount => _cols;
 
@@ -122,7 +129,42 @@ namespace KMusic.UI
             _toggleOffOnClick = on;
         }
 
-        public void ClearAll(bool fireEvent = false)
+        
+
+        /// <summary>
+        /// When enabled, the grid no longer toggles its own on/off cells.
+        /// Instead, clicking/dragging picks a note (row/col) and fires OnCellPicked.
+        /// </summary>
+        public void EnablePickerMode(bool on)
+        {
+            _pickerMode = on;
+
+            // Reset highlight when switching modes.
+            if (!_pickerMode)
+            {
+                _pickedRow = -1;
+                _pickedCol = -1;
+            }
+
+            RefreshAll();
+        }
+
+        /// <summary>
+        /// Stable 1-based value id for (row,col). Useful for writing into StepGrid (0 = empty).
+        /// </summary>
+        public int GetCellValueId(int r, int c) => (r * _cols) + c + 1;
+
+        /// <summary>
+        /// Public label accessor for a cell (uses exact map when available).
+        /// </summary>
+        public string GetCellLabel(int r, int c) => GetCellLabelInternal(r, c);
+
+        /// <summary>
+        /// Public base color accessor for a cell (uses exact map when available).
+        /// </summary>
+        public Color GetCellColor(int r, int c) => GetCellBaseColor(r, c);
+
+public void ClearAll(bool fireEvent = false)
         {
             if (_on == null) return;
             for (int r = 0; r < _rows; r++)
@@ -226,10 +268,29 @@ namespace KMusic.UI
                     {
                         _isDragging = true;
 
+                        // Picker mode: pick note + highlight
+                        if (_pickerMode)
+                        {
+                            _pickedRow = rr;
+                            _pickedCol = cc;
+
+                            var labelText = GetCellLabelInternal(rr, cc);
+                            var valueId = GetCellValueId(rr, cc);
+
+                            OnCellPicked?.Invoke(rr, cc, labelText, valueId);
+
+                            RefreshAll();
+
+                            cell.CapturePointer(e.pointerId);
+                            e.StopPropagation();
+                            return;
+                        }
+
+                        // Paint mode (legacy): toggle on/off
                         bool cur = GetCell(rr, cc);
                         bool next;
 
-                        // ✅ toggle if already on
+                        // toggle if already on
                         if (_toggleOffOnClick && cur)
                             next = false;
                         else
@@ -241,16 +302,31 @@ namespace KMusic.UI
                         cell.CapturePointer(e.pointerId);
                         e.StopPropagation();
                     });
-
-                    cell.RegisterCallback<PointerMoveEvent>(e =>
+cell.RegisterCallback<PointerMoveEvent>(e =>
                     {
                         if (!_isDragging) return;
                         if (!cell.HasPointerCapture(e.pointerId)) return;
 
+                        if (_pickerMode)
+                        {
+                            // Dragging across cells updates the picked note
+                            if (_pickedRow != rr || _pickedCol != cc)
+                            {
+                                _pickedRow = rr;
+                                _pickedCol = cc;
+
+                                var labelText = GetCellLabelInternal(rr, cc);
+                                var valueId = GetCellValueId(rr, cc);
+
+                                OnCellPicked?.Invoke(rr, cc, labelText, valueId);
+                                RefreshAll();
+                            }
+                            return;
+                        }
+
                         ApplyDrag(rr, cc);
                     });
-
-                    cell.RegisterCallback<PointerUpEvent>(e =>
+cell.RegisterCallback<PointerUpEvent>(e =>
                     {
                         if (cell.HasPointerCapture(e.pointerId))
                             cell.ReleasePointer(e.pointerId);
@@ -280,6 +356,8 @@ namespace KMusic.UI
             var baseColor = GetCellBaseColor(r, c);
             bool isOn = _on[r, c];
 
+            // Picker highlight (independent of ON/OFF state)
+            bool isPicked = _pickerMode && (r == _pickedRow) && (c == _pickedCol);
             // OFF is dimmer; ON is bright (like the reference image tiles)
             var off = new Color(baseColor.r * 0.85f, baseColor.g * 0.85f, baseColor.b * 0.85f, 0.35f);
             var on  = new Color(baseColor.r, baseColor.g, baseColor.b, 0.95f);
@@ -287,20 +365,20 @@ namespace KMusic.UI
             cell.style.backgroundColor = isOn ? on : off;
 
             // white border pixel look (USS can override)
-            cell.style.borderTopWidth = 2;
-            cell.style.borderBottomWidth = 2;
-            cell.style.borderLeftWidth = 2;
-            cell.style.borderRightWidth = 2;
+            cell.style.borderTopWidth = isPicked ? 4 : 2;
+            cell.style.borderBottomWidth = isPicked ? 4 : 2;
+            cell.style.borderLeftWidth = isPicked ? 4 : 2;
+            cell.style.borderRightWidth = isPicked ? 4 : 2;
             cell.style.borderTopColor = Color.white;
             cell.style.borderBottomColor = Color.white;
             cell.style.borderLeftColor = Color.white;
             cell.style.borderRightColor = Color.white;
 
             // ✅ label exactly like image (per-cell) if we have the map
-            label.text = GetCellLabel(r, c);
+            label.text = GetCellLabelInternal(r, c);
         }
 
-        private string GetCellLabel(int r, int c)
+        private string GetCellLabelInternal(int r, int c)
         {
             if (_cellLabelMap != null &&
                 _cellLabelMap.GetLength(0) == _rows &&

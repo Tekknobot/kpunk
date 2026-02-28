@@ -273,7 +273,6 @@ namespace KMusic.UI
             const float THUMB = 36f;
             const float HTRACK_H = 18f;          // horizontal track height
             const float HHOLDER_H = 42f;
-            const float HPAD_X = 20f;            // horizontal left/right padding for thumb travel
 
             if (!Horizontal)
             {
@@ -528,6 +527,11 @@ namespace KMusic.UI
         // paint brush value (0 = erase)
         private int _paintValue = 1;
 
+        // Stroke state (so drag keeps erase/paint mode consistent)
+        private int _activePointerId = -1;
+        private bool _activeErase = false;
+
+
         private VisualElement[,] _cells = new VisualElement[Rows, Cols];
 
         // Optional: tint all "active" cells with a color (useful for drum lanes)
@@ -749,7 +753,10 @@ namespace KMusic.UI
                         // “Other way” support: clicking a cell can select whatever is stored in it
                         OnCellClicked?.Invoke(rr, cc);
 
-                        ApplyPaint(rr, cc);
+                        bool erase = (e.button == (int)MouseButton.RightMouse) || e.ctrlKey || e.commandKey;
+                        _activePointerId = e.pointerId;
+                        _activeErase = erase;
+                        ApplyPaint(rr, cc, erase);
                         cell.CapturePointer(e.pointerId);
                         e.StopPropagation();
                     });
@@ -757,13 +764,23 @@ namespace KMusic.UI
                     cell.RegisterCallback<PointerMoveEvent>(e =>
                     {
                         if (cell.HasPointerCapture(e.pointerId))
-                            ApplyPaint(rr, cc);
+                        {
+                            bool erase = (e.pointerId == _activePointerId) ? _activeErase : ((e.button == (int)MouseButton.RightMouse) || e.ctrlKey || e.commandKey);
+                            ApplyPaint(rr, cc, erase);
+                        }
                     });
 
                     cell.RegisterCallback<PointerUpEvent>(e =>
                     {
                         if (cell.HasPointerCapture(e.pointerId))
+                        {
                             cell.ReleasePointer(e.pointerId);
+                            if (e.pointerId == _activePointerId)
+                            {
+                                _activePointerId = -1;
+                                _activeErase = false;
+                            }
+                        }
                     });
 
                     row.Add(cell);
@@ -773,9 +790,16 @@ namespace KMusic.UI
             }
         }
 
-        private void ApplyPaint(int r, int c)
+        private void ApplyPaint(int r, int c, bool eraseOverride)
         {
             int cur = _val[r, c];
+
+            // Right-click / Ctrl / Cmd stroke erase
+            if (eraseOverride)
+            {
+                if (cur != 0) SetValue(r, c, 0);
+                return;
+            }
 
             // Paint value 0 = erase
             if (_paintValue == 0)

@@ -136,6 +136,7 @@ GameObject:
   - component: {fileID: 161364353}
   - component: {fileID: 161364354}
   - component: {fileID: 161364355}
+  - component: {fileID: 161364356}
   m_Layer: 0
   m_Name: KMusicApp
   m_TagString: Untagged
@@ -227,6 +228,21 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   doc: {fileID: 161364351}
+--- !u!114 &161364356
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 161364349}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 333eeda5ab463d14892d3190f4ad17da, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  pianoRollName: SeqPianoRoll
+  stepGridName: StepGrid
+  verboseLogs: 1
 --- !u!1 &662830704
 GameObject:
   m_ObjectHideFlags: 0
