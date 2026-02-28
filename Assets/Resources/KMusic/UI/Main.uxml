@@ -6,6 +6,8 @@
       <ui:VisualElement class="km-presetbar">
         <ui:Label name="PresetLabel" class="km-presetlabel" text="Preset: PROJECT 0" />
       </ui:VisualElement>
+      <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text="▶" />
+      <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text="■" />
       <ui:Button name="ABButton" class="km-pillbtn" text="A/B" />
       <ui:Button name="SettingsButton" class="km-pillbtn" text="⚙" />
     </ui:VisualElement>

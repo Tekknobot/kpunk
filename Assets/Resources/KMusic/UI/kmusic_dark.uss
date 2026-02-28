@@ -256,3 +256,16 @@
 }
 
 .km-card { overflow: hidden; }
+
+
+/* Playhead highlight (current step) */
+.km-step--playhead {
+  border-color: var(--accent);
+  border-width: 3px;
+  background-color: #2A3142;
+}
+
+/* Transport buttons */
+.km-pillbtn--transport {
+  width: 72px;
+}

@@ -536,6 +536,9 @@ namespace KMusic.UI
 
         private VisualElement[,] _cells = new VisualElement[Rows, Cols];
 
+        // Playhead visualization (0..Rows*Cols-1, -1 = none)
+        private int _playheadIndex = -1;
+
         // Optional: tint all "active" cells with a color (useful for drum lanes)
         private bool _useActiveTint = false;
         private Color _activeTint = Color.white;
@@ -548,6 +551,21 @@ namespace KMusic.UI
         public event Action<int, int, int> OnCellValueChanged;
 
         // Fired when user clicks a cell (for “other way” selection)
+        /// <summary>
+        /// Set current playhead step (0..15). Highlights the corresponding cell.
+        /// </summary>
+        public void SetPlayhead(int stepIndex)
+        {
+            if (stepIndex < -1) stepIndex = -1;
+            if (stepIndex >= Rows * Cols) stepIndex %= (Rows * Cols);
+            if (_playheadIndex == stepIndex) return;
+            _playheadIndex = stepIndex;
+            // refresh all cells to update playhead class
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    UpdateCellVisual(r, c);
+        }
+
         public event Action<int, int> OnCellClicked;
 
         public int RowCount => Rows;
@@ -638,10 +656,20 @@ namespace KMusic.UI
         }
 
         private void UpdateCellVisual(int r, int c)
-        {
+        {      
             int v = GetValue(r, c);
             var cell = _cells[r, c];
             if (cell == null) return;
+
+            // ✅ Playhead highlight
+            int idx = r * Cols + c;
+            bool isPlayhead = (_playheadIndex == idx);
+            
+            if (_playheadIndex >= 0 && idx == _playheadIndex) cell.AddToClassList("km-step--playhead");
+            else cell.RemoveFromClassList("km-step--playhead");
+
+            if (isPlayhead) cell.AddToClassList("km-step--playhead");
+            else cell.RemoveFromClassList("km-step--playhead");
 
             // ✅ Active cell background:
             // Priority: ValueTint (if enabled) -> ActiveTint (if enabled) -> DefaultTint
@@ -675,6 +703,11 @@ namespace KMusic.UI
                     tag.style.display = DisplayStyle.None;
                 }
             }
+
+            if (isPlayhead)
+                cell.AddToClassList("km-step--playhead");
+            else
+                cell.RemoveFromClassList("km-step--playhead");
         }
 
         // Export/import for controller scripts (drum lanes, sample patterns)
@@ -740,9 +773,12 @@ namespace KMusic.UI
                     tag.style.display = DisplayStyle.None;
                     tag.pickingMode = PickingMode.Ignore;
                     tag.style.position = Position.Absolute;
-                    tag.style.left = 1;
+                    tag.style.left = 0;
+                    tag.style.right = 0;
                     tag.style.top = 0;
-                    tag.style.fontSize = 20;
+                    tag.style.bottom = 0;
+                    tag.style.unityTextAlign = TextAnchor.MiddleCenter;
+                    tag.style.fontSize = 28;
                     tag.style.unityFontStyleAndWeight = FontStyle.Bold;
 
                     // ✅ make sure the tag actually exists in the cell

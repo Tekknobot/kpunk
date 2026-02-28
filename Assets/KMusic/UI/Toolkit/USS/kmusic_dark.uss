@@ -59,7 +59,7 @@
 
 .km-title {
   color: var(--text);
-  font-size: 48px;
+  font-size: 32px;
   -unity-font-style: bold;
 }
 
@@ -79,7 +79,7 @@
 
 .km-presetlabel {
   color: var(--muted);
-  font-size: 22px;
+  font-size: 28px;
 }
 
 .km-pillbtn {
@@ -87,7 +87,7 @@
   width: 92px;
   margin-left: 12px;
   border-radius: 16px;
-  background-color: #1C1F28;
+  background-color: #596381;
   border-width: 2px;
   border-color: var(--border);
   justify-content: center;
@@ -100,7 +100,7 @@
 
 .km-pillbtn > .unity-text-element {
   color: var(--text);
-  font-size: 18px;
+  font-size: 24px;
   -unity-font-style: bold;
 }
 
@@ -128,7 +128,7 @@
 
 .km-tab-label {
   color: var(--muted);
-  font-size: 20px;
+  font-size: 24px;
   -unity-font-style: bold;
 }
 
@@ -163,7 +163,7 @@
 
 .km-subtitle {
   color: var(--muted);
-  font-size: 20px;
+  font-size: 24px;
   -unity-font-style: bold;
   margin-bottom: 10px;
 }
@@ -245,7 +245,7 @@
 
 .km-label {
   color: var(--muted);
-  font-size: 20px;
+  font-size: 24px;
   -unity-font-style: bold;
 }
 
@@ -370,4 +370,13 @@
     -unity-font-style: bold;
     font-size: 28px;
     color: white;
+}
+
+.km-step--playhead {
+  border-color: var(--accent);
+  border-width: 4px;
+}
+
+.km-step--playhead {
+  border-style: solid;
 }

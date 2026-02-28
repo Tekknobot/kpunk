@@ -12,6 +12,8 @@ namespace KMusic
 
         private UIDocument _doc;
         private ParameterBus _bus;
+
+        public ParameterBus Bus => _bus;
         private ThemeStyleSheet _runtimeTheme;
 
         private void Awake()
