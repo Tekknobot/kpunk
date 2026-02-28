@@ -286,15 +286,26 @@ public void ClearAll(bool fireEvent = false)
                             return;
                         }
 
-                        // Paint mode (legacy): toggle on/off
+                        // Paint mode: paint / erase
+                        // - Left click paints ON (with optional toggle-off behavior)
+                        // - Right click OR Ctrl/Cmd forces erase (OFF)
+                        bool erase = (e.button == (int)MouseButton.RightMouse) || e.ctrlKey || e.commandKey;
+
                         bool cur = GetCell(rr, cc);
                         bool next;
 
-                        // toggle if already on
-                        if (_toggleOffOnClick && cur)
+                        if (erase)
+                        {
                             next = false;
+                        }
                         else
-                            next = true;
+                        {
+                            // toggle if already on
+                            if (_toggleOffOnClick && cur)
+                                next = false;
+                            else
+                                next = true;
+                        }
 
                         _dragTargetValue = next;
                         ApplyDrag(rr, cc);

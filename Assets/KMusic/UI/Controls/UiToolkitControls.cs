@@ -505,6 +505,8 @@ namespace KMusic.UI
     // --- Step Grid ---
     public class StepGrid : VisualElement
     {
+        private bool _strokeErase = false;
+
         // Optional: show a label per active cell (e.g. "02")
         private bool _showValueLabel = false;
         private Func<int, string> _valueLabelFormatter = null;
@@ -738,9 +740,9 @@ namespace KMusic.UI
                     tag.style.display = DisplayStyle.None;
                     tag.pickingMode = PickingMode.Ignore;
                     tag.style.position = Position.Absolute;
-                    tag.style.left = 2;
-                    tag.style.top = 1;
-                    tag.style.fontSize = 10;
+                    tag.style.left = 1;
+                    tag.style.top = 0;
+                    tag.style.fontSize = 20;
                     tag.style.unityFontStyleAndWeight = FontStyle.Bold;
 
                     // ✅ make sure the tag actually exists in the cell
@@ -750,39 +752,51 @@ namespace KMusic.UI
 
                     cell.RegisterCallback<PointerDownEvent>(e =>
                     {
-                        // “Other way” support: clicking a cell can select whatever is stored in it
+                        // Clicking a cell can select whatever is stored in it
                         OnCellClicked?.Invoke(rr, cc);
 
-                        bool erase = (e.button == (int)MouseButton.RightMouse) || e.ctrlKey || e.commandKey;
+                        bool rightButton = e.button == (int)MouseButton.RightMouse;
+                        bool modErase = e.ctrlKey || e.commandKey;
+                        bool gestureErase = rightButton || modErase;
+
                         _activePointerId = e.pointerId;
-                        _activeErase = erase;
-                        ApplyPaint(rr, cc, erase);
+                        _activeErase = gestureErase;
+
+                        // ✅ Toggle erase: left-click an occupied cell = erase
+                        int existing = GetValue(rr, cc);
+                        bool clickOccupiedErase = (e.button == (int)MouseButton.LeftMouse) && !gestureErase && existing > 0;
+
+                        _strokeErase = gestureErase || clickOccupiedErase;
+
+                        ApplyPaint(rr, cc, _strokeErase);
+
                         cell.CapturePointer(e.pointerId);
                         e.StopPropagation();
                     });
 
                     cell.RegisterCallback<PointerMoveEvent>(e =>
                     {
-                        if (cell.HasPointerCapture(e.pointerId))
-                        {
-                            bool erase = (e.pointerId == _activePointerId) ? _activeErase : ((e.button == (int)MouseButton.RightMouse) || e.ctrlKey || e.commandKey);
-                            ApplyPaint(rr, cc, erase);
-                        }
+                        if (!cell.HasPointerCapture(e.pointerId))
+                            return;
+
+                        // keep the same erase/paint mode for this stroke
+                        ApplyPaint(rr, cc, _strokeErase);
                     });
 
                     cell.RegisterCallback<PointerUpEvent>(e =>
                     {
-                        if (cell.HasPointerCapture(e.pointerId))
+                        if (!cell.HasPointerCapture(e.pointerId))
+                            return;
+
+                        cell.ReleasePointer(e.pointerId);
+
+                        if (e.pointerId == _activePointerId)
                         {
-                            cell.ReleasePointer(e.pointerId);
-                            if (e.pointerId == _activePointerId)
-                            {
-                                _activePointerId = -1;
-                                _activeErase = false;
-                            }
+                            _activePointerId = -1;
+                            _activeErase = false;
+                            _strokeErase = false; // ✅ reset
                         }
                     });
-
                     row.Add(cell);
                 }
 
