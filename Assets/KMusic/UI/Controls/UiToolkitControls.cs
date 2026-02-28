@@ -1,6 +1,7 @@
 // UiToolkitControls.cs
 
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
 using KMusic.Core;
@@ -390,11 +391,11 @@ namespace KMusic.UI
                 _track.style.top = (HHOLDER_H - HTRACK_H) * 0.5f;
 
                 // Fill (MAKE IT ABSOLUTE + START WIDTH 0)
-                _fill.style.position = Position.Absolute;           // ✅ add/ensure
+                _fill.style.position = Position.Absolute;
                 _fill.style.height = HTRACK_H;
                 _fill.style.top = (HHOLDER_H - HTRACK_H) * 0.5f;
                 _fill.style.left = 0;
-                _fill.style.width = 0;                             // ✅ add
+                _fill.style.width = 0;
 
                 // Thumb
                 _thumb.style.top = (HHOLDER_H - THUMB) * 0.5f;
@@ -409,6 +410,7 @@ namespace KMusic.UI
             RegisterCallback<PointerMoveEvent>(OnMove);
             RegisterCallback<PointerUpEvent>(OnUp);
         }
+
         public void Bind(ParameterBus bus)
         {
             _bus = bus;
@@ -505,6 +507,15 @@ namespace KMusic.UI
     // --- Step Grid ---
     public class StepGrid : VisualElement
     {
+        // --- Robust stroke capture (grid-level) ---
+        private bool _painting = false;
+        private int _capturedPointerId = -1;
+        private int _lastPaintR = -1;
+        private int _lastPaintC = -1;
+
+        // Fast lookup: cell VisualElement -> (r,c)
+        private readonly Dictionary<VisualElement, Vector2Int> _cellIndex = new Dictionary<VisualElement, Vector2Int>();
+
         private bool _strokeErase = false;
 
         // Optional: show a label per active cell (e.g. "02")
@@ -533,7 +544,6 @@ namespace KMusic.UI
         private int _activePointerId = -1;
         private bool _activeErase = false;
 
-
         private VisualElement[,] _cells = new VisualElement[Rows, Cols];
 
         // Playhead visualization (0..Rows*Cols-1, -1 = none)
@@ -550,22 +560,6 @@ namespace KMusic.UI
         // Fired when user clicks/paints a cell
         public event Action<int, int, int> OnCellValueChanged;
 
-        // Fired when user clicks a cell (for “other way” selection)
-        /// <summary>
-        /// Set current playhead step (0..15). Highlights the corresponding cell.
-        /// </summary>
-        public void SetPlayhead(int stepIndex)
-        {
-            if (stepIndex < -1) stepIndex = -1;
-            if (stepIndex >= Rows * Cols) stepIndex %= (Rows * Cols);
-            if (_playheadIndex == stepIndex) return;
-            _playheadIndex = stepIndex;
-            // refresh all cells to update playhead class
-            for (int r = 0; r < Rows; r++)
-                for (int c = 0; c < Cols; c++)
-                    UpdateCellVisual(r, c);
-        }
-
         public event Action<int, int> OnCellClicked;
 
         public int RowCount => Rows;
@@ -575,22 +569,37 @@ namespace KMusic.UI
         {
             AddToClassList("km-seq-grid");
             Build();
+
+            RegisterCallback<PointerMoveEvent>(OnGridPointerMove);
+            RegisterCallback<PointerUpEvent>(OnGridPointerUp);
+            RegisterCallback<PointerCancelEvent>(OnGridPointerCancel);
+            RegisterCallback<PointerCaptureOutEvent>(OnGridPointerCaptureOut);
+
             ClearAll(); // ✅ no default highlights
+        }
+
+        /// <summary>
+        /// Set current playhead step (0..15). Highlights the corresponding cell.
+        /// </summary>
+        public void SetPlayhead(int stepIndex)
+        {
+            if (stepIndex < -1) stepIndex = -1;
+            if (stepIndex >= Rows * Cols) stepIndex %= (Rows * Cols);
+            if (_playheadIndex == stepIndex) return;
+            _playheadIndex = stepIndex;
+
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    UpdateCellVisual(r, c);
         }
 
         public void SetPaintValue(int v) => _paintValue = Mathf.Clamp(v, 0, 999);
 
-        /// <summary>
-        /// ✅ Toggle erase when clicking an already-painted cell (same value).
-        /// </summary>
         public void EnableToggleEraseOnSameValue(bool on)
         {
             _toggleEraseOnSameValue = on;
         }
 
-        /// <summary>
-        /// Tint all active cells with this color (inactive cells revert to USS styling).
-        /// </summary>
         public void SetActiveTint(Color c)
         {
             _useActiveTint = true;
@@ -604,11 +613,6 @@ namespace KMusic.UI
             RefreshAll();
         }
 
-        /// <summary>
-        /// Show/hide per-cell labels (e.g. chop numbers).
-        /// If formatter is null, defaults to v.ToString().
-        /// Return "" to hide the label for a given value.
-        /// </summary>
         public void EnableValueLabels(bool on, Func<int, string> formatter)
         {
             _showValueLabel = on;
@@ -644,11 +648,9 @@ namespace KMusic.UI
             _val[r, c] = v;
             var cell = _cells[r, c];
 
-            // Visual: active if non-zero
             if (v != 0) cell.AddToClassList("km-step--active");
             else cell.RemoveFromClassList("km-step--active");
 
-            // ✅ Update custom visuals (tint + label)
             UpdateCellVisual(r, c);
 
             if (fireEvent)
@@ -656,23 +658,18 @@ namespace KMusic.UI
         }
 
         private void UpdateCellVisual(int r, int c)
-        {      
+        {
             int v = GetValue(r, c);
             var cell = _cells[r, c];
             if (cell == null) return;
 
-            // ✅ Playhead highlight
+            // playhead class
             int idx = r * Cols + c;
             bool isPlayhead = (_playheadIndex == idx);
-            
-            if (_playheadIndex >= 0 && idx == _playheadIndex) cell.AddToClassList("km-step--playhead");
-            else cell.RemoveFromClassList("km-step--playhead");
-
             if (isPlayhead) cell.AddToClassList("km-step--playhead");
             else cell.RemoveFromClassList("km-step--playhead");
 
-            // ✅ Active cell background:
-            // Priority: ValueTint (if enabled) -> ActiveTint (if enabled) -> DefaultTint
+            // active background tint
             if (v != 0)
             {
                 if (_useValueTint && _valueTint != null)
@@ -687,7 +684,7 @@ namespace KMusic.UI
                 cell.style.backgroundColor = StyleKeyword.Null;
             }
 
-            // ✅ Update label
+            // label
             var tag = cell.Q<Label>("CellTag");
             if (tag != null)
             {
@@ -703,14 +700,8 @@ namespace KMusic.UI
                     tag.style.display = DisplayStyle.None;
                 }
             }
-
-            if (isPlayhead)
-                cell.AddToClassList("km-step--playhead");
-            else
-                cell.RemoveFromClassList("km-step--playhead");
         }
 
-        // Export/import for controller scripts (drum lanes, sample patterns)
         public int[,] ExportValues()
         {
             var copy = new int[Rows, Cols];
@@ -750,6 +741,7 @@ namespace KMusic.UI
         private void Build()
         {
             Clear();
+            _cellIndex.Clear(); // ✅ IMPORTANT: prevent stale cell refs after rebuild
 
             for (int r = 0; r < Rows; r++)
             {
@@ -762,11 +754,8 @@ namespace KMusic.UI
 
                     var cell = new VisualElement();
                     cell.AddToClassList("km-step");
-
-                    // allow overlay label
                     cell.style.position = Position.Relative;
 
-                    // tiny per-cell tag (for chop IDs)
                     var tag = new Label();
                     tag.name = "CellTag";
                     tag.style.color = Color.white;
@@ -781,14 +770,13 @@ namespace KMusic.UI
                     tag.style.fontSize = 28;
                     tag.style.unityFontStyleAndWeight = FontStyle.Bold;
 
-                    // ✅ make sure the tag actually exists in the cell
                     cell.Add(tag);
 
                     _cells[r, c] = cell;
+                    _cellIndex[cell] = new Vector2Int(rr, cc);
 
                     cell.RegisterCallback<PointerDownEvent>(e =>
                     {
-                        // Clicking a cell can select whatever is stored in it
                         OnCellClicked?.Invoke(rr, cc);
 
                         bool rightButton = e.button == (int)MouseButton.RightMouse;
@@ -798,41 +786,28 @@ namespace KMusic.UI
                         _activePointerId = e.pointerId;
                         _activeErase = gestureErase;
 
-                        // ✅ Toggle erase: left-click an occupied cell = erase
                         int existing = GetValue(rr, cc);
                         bool clickOccupiedErase = (e.button == (int)MouseButton.LeftMouse) && !gestureErase && existing > 0;
 
                         _strokeErase = gestureErase || clickOccupiedErase;
 
+                        // --- Start stroke (GRID-level pointer capture) ---
+                        _painting = true;
+                        _capturedPointerId = e.pointerId;
+                        _lastPaintR = -1;
+                        _lastPaintC = -1;
+
+                        // ✅ capture pointer on the GRID, not the cell (older UITK uses helper)
+                        PointerCaptureHelper.CapturePointer(this, e.pointerId);
+
+                        // paint immediately on down
                         ApplyPaint(rr, cc, _strokeErase);
+                        _lastPaintR = rr;
+                        _lastPaintC = cc;
 
-                        cell.CapturePointer(e.pointerId);
-                        e.StopPropagation();
+                        e.StopImmediatePropagation();
                     });
 
-                    cell.RegisterCallback<PointerMoveEvent>(e =>
-                    {
-                        if (!cell.HasPointerCapture(e.pointerId))
-                            return;
-
-                        // keep the same erase/paint mode for this stroke
-                        ApplyPaint(rr, cc, _strokeErase);
-                    });
-
-                    cell.RegisterCallback<PointerUpEvent>(e =>
-                    {
-                        if (!cell.HasPointerCapture(e.pointerId))
-                            return;
-
-                        cell.ReleasePointer(e.pointerId);
-
-                        if (e.pointerId == _activePointerId)
-                        {
-                            _activePointerId = -1;
-                            _activeErase = false;
-                            _strokeErase = false; // ✅ reset
-                        }
-                    });
                     row.Add(cell);
                 }
 
@@ -868,8 +843,98 @@ namespace KMusic.UI
             // Normal paint
             if (cur != _paintValue) SetValue(r, c, _paintValue);
         }
+
+        private void OnGridPointerMove(PointerMoveEvent e)
+        {
+            if (!_painting) return;
+            if (_capturedPointerId != -1 && e.pointerId != _capturedPointerId) return;
+            if (!PointerCaptureHelper.HasPointerCapture(this, e.pointerId)) return;
+
+            if (!TryGetCellAt(e.localPosition, out int r, out int c))
+                return;
+
+            if (r == _lastPaintR && c == _lastPaintC)
+                return;
+
+            ApplyPaint(r, c, _strokeErase);
+            _lastPaintR = r;
+            _lastPaintC = c;
+
+            e.StopImmediatePropagation();
+        }
+
+        private void OnGridPointerUp(PointerUpEvent e)
+        {
+            if (_capturedPointerId != -1 && e.pointerId != _capturedPointerId) return;
+            EndStroke(e.pointerId);
+            e.StopImmediatePropagation();
+        }
+
+        private void OnGridPointerCancel(PointerCancelEvent e)
+        {
+            if (_capturedPointerId != -1 && e.pointerId != _capturedPointerId) return;
+            EndStroke(e.pointerId);
+            e.StopImmediatePropagation();
+        }
+
+        private void OnGridPointerCaptureOut(PointerCaptureOutEvent e)
+        {
+            // Something else stole capture (ScrollView/panel/etc.)
+            _painting = false;
+            _capturedPointerId = -1;
+            _strokeErase = false;
+            _lastPaintR = -1;
+            _lastPaintC = -1;
+        }
+
+        /// <summary>
+        /// Convert a pointer position (local to StepGrid) into a (row,col) by picking the element under it.
+        /// Compatible with older UI Toolkit Pick overload.
+        /// </summary>
+        private bool TryGetCellAt(Vector2 localPos, out int r, out int c)
+        {
+            r = -1;
+            c = -1;
+
+            if (panel == null)
+                return false;
+
+            Vector2 worldPos = this.LocalToWorld(localPos);
+            VisualElement picked = panel.Pick(worldPos);
+
+            while (picked != null)
+            {
+                if (_cellIndex.TryGetValue(picked, out var rc))
+                {
+                    r = rc.x;
+                    c = rc.y;
+                    return true;
+                }
+                picked = picked.parent;
+            }
+
+            return false;
+        }
+
+        private void EndStroke(int pointerId)
+        {
+            _painting = false;
+
+            if (PointerCaptureHelper.HasPointerCapture(this, pointerId))
+                PointerCaptureHelper.ReleasePointer(this, pointerId);
+
+            if (pointerId == _capturedPointerId)
+                _capturedPointerId = -1;
+
+            _strokeErase = false;
+            _activePointerId = -1;
+            _activeErase = false;
+
+            _lastPaintR = -1;
+            _lastPaintC = -1;
+        }
     }
-    
+
     // --- Preset Browser Overlay (scaffold) ---
     public class PresetBrowser : VisualElement
     {
