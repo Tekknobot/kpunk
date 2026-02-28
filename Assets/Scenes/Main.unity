@@ -135,6 +135,7 @@ GameObject:
   - component: {fileID: 161364350}
   - component: {fileID: 161364353}
   - component: {fileID: 161364354}
+  - component: {fileID: 161364355}
   m_Layer: 0
   m_Name: KMusicApp
   m_TagString: Untagged
@@ -199,7 +200,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d013f4e5a29295b4aaeb26d720929fd9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  doc: {fileID: 0}
+  doc: {fileID: 161364351}
 --- !u!114 &161364354
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -212,7 +213,20 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 83c0e53e30d8e6d4fb372d37b9c2f30d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  doc: {fileID: 0}
+  doc: {fileID: 161364351}
+--- !u!114 &161364355
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 161364349}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c446edb0ca47c68439936b0cea755bb0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  doc: {fileID: 161364351}
 --- !u!1 &662830704
 GameObject:
   m_ObjectHideFlags: 0

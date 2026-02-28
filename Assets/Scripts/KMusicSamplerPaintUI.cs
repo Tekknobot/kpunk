@@ -46,7 +46,7 @@ public class KMusicSamplerPaintUI : MonoBehaviour
 
         var root = doc.rootVisualElement;
 
-        sampleGrid = root.Q<StepGrid>("SampleStepGrid");
+        sampleGrid = root.Q<StepGrid>("SampleStepGrid") ?? root.Q<StepGrid>("SampleStepGrid");
         drumGrid   = root.Q<StepGrid>("DrumStepGrid");
 
         if (sampleGrid == null) Debug.LogError("KMusicSamplerPaintUI: SampleStepGrid not found in UXML.");
@@ -83,6 +83,12 @@ public class KMusicSamplerPaintUI : MonoBehaviour
         // Default: no highlights by default
         sampleGrid?.ClearAll();
         drumGrid?.ClearAll();
+
+        // ✅ Sample grid: clicking an already-on cell erases it (toggle)
+        sampleGrid?.EnableToggleEraseOnSameValue(true);
+
+        // ✅ Drum grid: clicking an already-on cell erases it (toggle)
+        drumGrid?.EnableToggleEraseOnSameValue(true);
 
         // Set default brushes
         SelectChop(1);
@@ -148,7 +154,10 @@ public class KMusicSamplerPaintUI : MonoBehaviour
 
         // Drums: tint painted steps by the selected drum's color
         if (drumGrid != null)
+        {
             drumGrid.SetActiveTint(GetActiveDrumColor(activeDrum));
+            drumGrid.RefreshAll(); // ✅ immediate recolor of already-painted steps
+        }
 
         // brush for drums is always 1 (on) or 0 erase via modifier
         if (drumGrid != null)
@@ -223,7 +232,7 @@ public class KMusicSamplerPaintUI : MonoBehaviour
 
             // “Other way” for drums:
             // clicking a cell doesn't change lane (because lane is chosen by drum picker)
-            // but we can still support “erase on click if already on” naturally via paintValue logic.
+            // but we can still support “erase on click if already on” naturally via toggle logic.
         }
     }
 }

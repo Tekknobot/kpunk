@@ -504,8 +504,19 @@ namespace KMusic.UI
     }
 
     // --- Step Grid ---
-    class StepGrid : VisualElement
+    public class StepGrid : VisualElement
     {
+        // Optional: show a label per active cell (e.g. "02")
+        private bool _showValueLabel = false;
+        private Func<int, string> _valueLabelFormatter = null;
+
+        // Optional: tint cells by stored value (e.g. chop ID)
+        private bool _useValueTint = false;
+        private Func<int, Color> _valueTint = null;
+
+        // Fallback visible tint when no USS styles active cells
+        private Color _defaultActiveTint = new Color(1f, 1f, 1f, 0.18f);
+
         public new class UxmlFactory : UxmlFactory<StepGrid, UxmlTraits> { }
 
         private const int Rows = 2;
@@ -523,9 +534,9 @@ namespace KMusic.UI
         private bool _useActiveTint = false;
         private Color _activeTint = Color.white;
 
-        // Optional: show a tiny label on each active cell (useful for chop ID)
-        private bool _showValueLabel = false;
-        private Func<int, string> _valueLabelFormatter = null;
+        // ✅ Optional: clicking a cell that already has the paint value will erase it.
+        // Great for drum sequencers (toggle on/off).
+        private bool _toggleEraseOnSameValue = false;
 
         // Fired when user clicks/paints a cell
         public event Action<int, int, int> OnCellValueChanged;
@@ -544,6 +555,14 @@ namespace KMusic.UI
         }
 
         public void SetPaintValue(int v) => _paintValue = Mathf.Clamp(v, 0, 999);
+
+        /// <summary>
+        /// ✅ Toggle erase when clicking an already-painted cell (same value).
+        /// </summary>
+        public void EnableToggleEraseOnSameValue(bool on)
+        {
+            _toggleEraseOnSameValue = on;
+        }
 
         /// <summary>
         /// Tint all active cells with this color (inactive cells revert to USS styling).
@@ -566,10 +585,17 @@ namespace KMusic.UI
         /// If formatter is null, defaults to v.ToString().
         /// Return "" to hide the label for a given value.
         /// </summary>
-        public void EnableValueLabels(bool on, Func<int, string> formatter = null)
+        public void EnableValueLabels(bool on, Func<int, string> formatter)
         {
             _showValueLabel = on;
             _valueLabelFormatter = formatter;
+            RefreshAll();
+        }
+
+        public void EnableValueTint(bool on, Func<int, Color> tintForValue)
+        {
+            _useValueTint = on;
+            _valueTint = tintForValue;
             RefreshAll();
         }
 
@@ -607,32 +633,35 @@ namespace KMusic.UI
 
         private void UpdateCellVisual(int r, int c)
         {
-            var v = _val[r, c];
+            int v = GetValue(r, c);
             var cell = _cells[r, c];
             if (cell == null) return;
 
-            if (_useActiveTint && v != 0)
-                cell.style.backgroundColor = _activeTint;
+            // ✅ Active cell background:
+            // Priority: ValueTint (if enabled) -> ActiveTint (if enabled) -> DefaultTint
+            if (v != 0)
+            {
+                if (_useValueTint && _valueTint != null)
+                    cell.style.backgroundColor = _valueTint(v);
+                else if (_useActiveTint)
+                    cell.style.backgroundColor = _activeTint;
+                else
+                    cell.style.backgroundColor = _defaultActiveTint;
+            }
             else
+            {
                 cell.style.backgroundColor = StyleKeyword.Null;
+            }
 
-            // --- Label ---
+            // ✅ Update label
             var tag = cell.Q<Label>("CellTag");
             if (tag != null)
             {
                 if (_showValueLabel && v != 0)
                 {
-                    string txt = (_valueLabelFormatter != null) ? _valueLabelFormatter(v) : v.ToString();
-                    if (!string.IsNullOrEmpty(txt))
-                    {
-                        tag.text = txt;
-                        tag.style.display = DisplayStyle.Flex;
-                    }
-                    else
-                    {
-                        tag.text = "";
-                        tag.style.display = DisplayStyle.None;
-                    }
+                    string txt = _valueLabelFormatter != null ? _valueLabelFormatter(v) : v.ToString();
+                    tag.text = txt;
+                    tag.style.display = string.IsNullOrEmpty(txt) ? DisplayStyle.None : DisplayStyle.Flex;
                 }
                 else
                 {
@@ -701,14 +730,16 @@ namespace KMusic.UI
                     // tiny per-cell tag (for chop IDs)
                     var tag = new Label();
                     tag.name = "CellTag";
-                    tag.AddToClassList("km-step-tag");
+                    tag.style.color = Color.white;
+                    tag.style.display = DisplayStyle.None;
                     tag.pickingMode = PickingMode.Ignore;
                     tag.style.position = Position.Absolute;
                     tag.style.left = 2;
                     tag.style.top = 1;
                     tag.style.fontSize = 10;
                     tag.style.unityFontStyleAndWeight = FontStyle.Bold;
-                    tag.style.display = DisplayStyle.None;
+
+                    // ✅ make sure the tag actually exists in the cell
                     cell.Add(tag);
 
                     _cells[r, c] = cell;
@@ -744,18 +775,27 @@ namespace KMusic.UI
 
         private void ApplyPaint(int r, int c)
         {
+            int cur = _val[r, c];
+
             // Paint value 0 = erase
             if (_paintValue == 0)
             {
-                if (_val[r, c] != 0) SetValue(r, c, 0);
+                if (cur != 0) SetValue(r, c, 0);
+                return;
             }
-            else
+
+            // ✅ Toggle erase if clicking the same value again
+            if (_toggleEraseOnSameValue && cur == _paintValue)
             {
-                if (_val[r, c] != _paintValue) SetValue(r, c, _paintValue);
+                SetValue(r, c, 0);
+                return;
             }
+
+            // Normal paint
+            if (cur != _paintValue) SetValue(r, c, _paintValue);
         }
     }
-
+    
     // --- Preset Browser Overlay (scaffold) ---
     public class PresetBrowser : VisualElement
     {
