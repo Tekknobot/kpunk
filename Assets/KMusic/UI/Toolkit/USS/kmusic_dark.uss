@@ -37,7 +37,7 @@
 
   padding-left: 20px;
   padding-right: 20px;
-  padding-top: 24px;
+  padding-top: 0px;
   padding-bottom: 24px;
 
   flex-direction: column;
@@ -192,7 +192,7 @@
 
 .km-tool {
   width: 96px;
-  height: 34px;
+  height: 48px;
   margin-right: 10px;
   border-radius: 14px;
   background-color: #1C1F28;
@@ -204,7 +204,7 @@
 
 .km-tool-label {
   color: var(--muted);
-  font-size: 16px;
+  font-size: 24px;
 }
 
 .km-seq-grid {

@@ -2,7 +2,7 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:km="KMusic.UI">
   <ui:VisualElement name="Root" class="km-root">
     <ui:VisualElement class="km-topbar">
-      <ui:Label class="km-title" text="kmusic" />
+      <ui:Label class="km-title" text="Z-Punk" />
       <ui:VisualElement class="km-presetbar">
         <ui:Label name="PresetLabel" class="km-presetlabel" text="Preset: PROJECT 0" />
       </ui:VisualElement>
@@ -27,13 +27,6 @@
         <ui:VisualElement class="km-card">
           <ui:VisualElement class="km-row" style="align-items: center;">
             <ui:Label class="km-subtitle" text="SEQUENCER"/>
-            <ui:VisualElement class="km-step-tools">
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Paint"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Erase"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Vel"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Prob"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Len"/></ui:VisualElement>
-            </ui:VisualElement>
           </ui:VisualElement>
 
           <km:StepGrid name="StepGrid" />
@@ -138,13 +131,6 @@
         <ui:VisualElement class="km-card">
           <ui:VisualElement class="km-row" style="align-items: center;">
             <ui:Label class="km-subtitle" text="SAMPLE SEQUENCER"/>
-            <ui:VisualElement class="km-step-tools">
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Paint"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Erase"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Vel"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Prob"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Len"/></ui:VisualElement>
-            </ui:VisualElement>
           </ui:VisualElement>
 
           <!-- Dedicated grid for sample chops -->
@@ -171,13 +157,6 @@
         <ui:VisualElement class="km-card">
           <ui:VisualElement class="km-row" style="align-items: center;">
             <ui:Label class="km-subtitle" text="DRUM SEQUENCER"/>
-            <ui:VisualElement class="km-step-tools">
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Paint"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Erase"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Vel"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Prob"/></ui:VisualElement>
-              <ui:VisualElement class="km-tool"><ui:Label class="km-tool-label" text="Len"/></ui:VisualElement>
-            </ui:VisualElement>
           </ui:VisualElement>
 
           <!-- Dedicated grid for drums -->
