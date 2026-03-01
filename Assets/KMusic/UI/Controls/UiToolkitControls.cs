@@ -528,6 +528,9 @@ namespace KMusic.UI
 
         // Fallback visible tint when no USS styles active cells
         private Color _defaultActiveTint = new Color(1f, 1f, 1f, 0.18f);
+        // Background for EMPTY cells (v==0). If you leave v==0 as Null, USS/default can turn them white.
+        private Color _emptyCellTint = new Color(0.08f, 0.10f, 0.14f, 1f);
+
 
         public new class UxmlFactory : UxmlFactory<StepGrid, UxmlTraits> { }
 
@@ -685,10 +688,10 @@ namespace KMusic.UI
             RefreshAll();
         }
 
-        public void EnableValueTint(bool on, Func<int, Color> tintForValue)
+        public void EnableValueTint(bool enabled, Func<int, Color> tintFunc)
         {
-            _useValueTint = on;
-            _valueTint = tintForValue;
+            _useValueTint = enabled;
+            _valueTint = tintFunc;
             RefreshAll();
         }
 
@@ -760,12 +763,11 @@ namespace KMusic.UI
 
         public void SetValue(int r, int c, int v, bool fireEvent = true)
         {
+            if (r < 0 || r >= Rows || c < 0 || c >= Cols) return;
+
             _val[r, c] = v;
-            var cell = _cells[r, c];
 
-            if (v != 0) cell.AddToClassList("km-step--active");
-            else cell.RemoveFromClassList("km-step--active");
-
+            // let UpdateCellVisual decide active class + bg
             UpdateCellVisual(r, c);
 
             if (fireEvent)
@@ -778,27 +780,29 @@ namespace KMusic.UI
             var cell = _cells[r, c];
             if (cell == null) return;
 
-            // ✅ ensure the CSS selector can match if you keep `.km-step.km-step--playhead`
-            cell.AddToClassList("km-step");
-
             int idx = r * Cols + c;
             bool isPlayhead = (_playheadStep == idx);
+
             if (isPlayhead) cell.AddToClassList("is-playhead");
             else cell.RemoveFromClassList("is-playhead");
 
-            // active background tint
-            if (v != 0)
+            // ✅ EMPTY background MUST be explicit, otherwise you get white from defaults/USS.
+            if (v == 0)
             {
-                if (_useValueTint && _valueTint != null)
-                    cell.style.backgroundColor = _valueTint(v);
-                else if (_useActiveTint)
-                    cell.style.backgroundColor = _activeTint;
-                else
-                    cell.style.backgroundColor = _defaultActiveTint;
+                cell.RemoveFromClassList("km-step--active");
+                cell.style.backgroundColor = new StyleColor(_emptyCellTint);
             }
             else
             {
-                cell.style.backgroundColor = StyleKeyword.Null;
+                cell.AddToClassList("km-step--active");
+
+                // active background tint
+                if (_useValueTint && _valueTint != null)
+                    cell.style.backgroundColor = new StyleColor(_valueTint(v));
+                else if (_useActiveTint)
+                    cell.style.backgroundColor = new StyleColor(_activeTint);
+                else
+                    cell.style.backgroundColor = new StyleColor(_defaultActiveTint);
             }
 
             // label

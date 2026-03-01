@@ -69,13 +69,16 @@ namespace KMusic.UI
                 _piano.OnCellPicked += OnPianoPicked;
                 _step.OnCellClicked += OnStepClicked;
 
-                // default brush
+                // ✅ CRITICAL: cache the ENTIRE palette so loaded steps know their label/color
+                CacheAllPaletteValues();
+
+                // default brush (top-left)
                 int v0 = _piano.GetCellValueId(0, 0);
-                CacheValue(v0, _piano.GetCellLabel(0, 0), _piano.GetCellColor(0, 0));
                 _step.SetPaintValue(v0);
 
-                // LOAD after wiring
+                // LOAD after wiring + after cache
                 LoadStepGrid();
+
             }).Every(100);
         }
 
@@ -109,27 +112,41 @@ namespace KMusic.UI
             if (_piano == null || _step == null)
                 return false;
 
-            // picker mode = choose value, not paint piano grid
             _piano.EnablePickerMode(true);
 
-            // show labels + tint on StepGrid
             _step.EnableValueLabels(true, FormatValueLabel);
             _step.EnableValueTint(true, TintForValue);
 
             _piano.OnCellPicked += OnPianoPicked;
             _step.OnCellClicked += OnStepClicked;
 
+            // ✅ CRITICAL: cache the ENTIRE palette so loaded steps know their label/color
+            CacheAllPaletteValues();
+
             // default brush
             int v0 = _piano.GetCellValueId(0, 0);
-            CacheValue(v0, _piano.GetCellLabel(0, 0), _piano.GetCellColor(0, 0));
             _step.SetPaintValue(v0);
 
-            // Restore saved sequencer pattern (note ids) if any.
             LoadStepGrid();
-
             return true;
         }
+        private void CacheAllPaletteValues()
+        {
+            if (_piano == null) return;
 
+            _labelByValue.Clear();
+            _colorByValue.Clear();
+
+            for (int r = 0; r < _piano.RowCount; r++)
+            for (int c = 0; c < _piano.ColCount; c++)
+            {
+                int valueId = _piano.GetCellValueId(r, c);
+                string label = _piano.GetCellLabel(r, c);
+                Color color = _piano.GetCellColor(r, c);
+
+                CacheValue(valueId, label, color);
+            }
+        }        
         private void Unbind()
         {
             if (_piano != null) _piano.OnCellPicked -= OnPianoPicked;
@@ -234,8 +251,23 @@ namespace KMusic.UI
 
         private Color TintForValue(int v)
         {
-            if (v <= 0) return new Color(0,0,0,0);
-            return _colorByValue.TryGetValue(v, out var c) ? c : Color.white;
+            if (v <= 0) return new Color(0, 0, 0, 0);
+
+            // If cache exists, use it
+            if (_colorByValue.TryGetValue(v, out var c))
+                return c;
+
+            // Safety fallback: try to recover from valueId -> (r,c)
+            if (_piano != null)
+            {
+                int idx = v - 1;
+                int r = idx / _piano.ColCount;
+                int col = idx % _piano.ColCount;
+                if (r >= 0 && r < _piano.RowCount)
+                    return _piano.GetCellColor(r, col);
+            }
+
+            return Color.white;
         }
     }
 }

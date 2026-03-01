@@ -23,6 +23,7 @@
           </ui:VisualElement>
 
           <km:StepGrid name="StepGrid" />
+          
         </ui:VisualElement>
 
         <ui:VisualElement class="km-card">

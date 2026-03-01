@@ -214,7 +214,8 @@ public void ClearAll(bool fireEvent = false)
 
         public void RefreshAll()
         {
-            if (_cells == null) return;
+            if (_cells == null || _labels == null) return;
+
             for (int r = 0; r < _rows; r++)
             for (int c = 0; c < _cols; c++)
                 UpdateCellVisual(r, c);
