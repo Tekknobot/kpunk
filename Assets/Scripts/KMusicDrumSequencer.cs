@@ -97,8 +97,12 @@ public class KMusicDrumSequencer : MonoBehaviour
     // kit clips per drum id
     private readonly Dictionary<int, AudioClip> _clipByDrumId = new();
 
-    // scheduling state
+    // scheduling state (absolute step number since play start)
+    private long _nextStepNumber = 0;      // monotonic step counter
+
     private bool _playing = false;
+    private float _playBpm = -1f;          // cached bpm at Play
+    private double _stepDur = 0.0;         // cached seconds per 16th note   
     private int _stepIndex = 0; // 0..15
     private double _nextStepDspTime = 0.0;
     private double _playStartDspTime = 0.0;
@@ -158,8 +162,11 @@ public class KMusicDrumSequencer : MonoBehaviour
     private void OnEnable()
     {
         if (uiDocument == null)
+            uiDocument = GetComponent<UIDocument>();
+
+        if (uiDocument == null)
         {
-            Debug.LogWarning("[KIT UI] UIDocument not assigned.");
+            Debug.LogError("[DrumSequencer] UIDocument missing");
             return;
         }
 
@@ -167,7 +174,26 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         root.schedule.Execute(() =>
         {
-            HookKitUI(root);
+            var playBtn = root.Q<Button>("PlayButton");
+            var stopBtn = root.Q<Button>("StopButton");
+
+            Debug.Log($"[DrumSequencer] playBtn={playBtn!=null} stopBtn={stopBtn!=null}");
+
+            if (playBtn != null)
+                playBtn.clicked += () =>
+                {
+                    Debug.Log("PLAY CLICK");
+                    _playing = true;
+                    _stepIndex = 0;
+                    _nextStepDspTime = AudioSettings.dspTime;
+                };
+
+            if (stopBtn != null)
+                stopBtn.clicked += () =>
+                {
+                    Debug.Log("STOP CLICK");
+                    _playing = false;
+                };
         });
     }
 
@@ -231,11 +257,6 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (_playBtn == null || _stopBtn == null || _grid == null)
             return false;
 
-        _playBtn.clicked -= OnPlayClicked;
-        _stopBtn.clicked -= OnStopClicked;
-        _playBtn.clicked += OnPlayClicked;
-        _stopBtn.clicked += OnStopClicked;
-
         _kitNameLabel = _root.Q<UnityEngine.UIElements.Label>("KitName");
         _kitPrevBtn = _root.Q<UnityEngine.UIElements.Button>("KitPrev");
         _kitNextBtn = _root.Q<UnityEngine.UIElements.Button>("KitNext");
@@ -255,7 +276,16 @@ public class KMusicDrumSequencer : MonoBehaviour
         _grid.SetPlayhead(-1);
 
         _grid.OnCellValueChanged -= OnGridValueChanged;
-        _grid.OnCellValueChanged += OnGridValueChanged;
+        void OnGridValueChanged(int r, int c, int value)
+        {
+            int step = r * 8 + c;
+            int lane = _activeDrumId - 1;
+
+            if (value == 0)
+                _stepMask[step] &= (byte)~(1 << lane);
+            else
+                _stepMask[step] |= (byte)(1 << lane);
+        }
 
         _grid.OnCellClicked -= OnGridCellClicked;
         _grid.OnCellClicked += OnGridCellClicked;
@@ -265,6 +295,19 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         UpdateBpmLabel();
         return true;
+    }
+
+    public void SetStepLane(int step, int lane, bool on)
+    {
+        // steps should match your sequencer length (usually 16)
+        if (_stepMask == null) return;
+        if (step < 0 || step >= _stepMask.Length) return;
+        if (lane < 0 || lane >= LANES) return;
+
+        byte bit = (byte)(1 << lane);
+
+        if (on) _stepMask[step] |= bit;
+        else    _stepMask[step] &= (byte)~bit;
     }
 
     private void LoadKits()
@@ -418,14 +461,16 @@ public class KMusicDrumSequencer : MonoBehaviour
         // StepGrid sends v==0 when clearing, v>0 when painting.
         // We treat it as ON/OFF for the current lane.
         if (v > 0) _stepMask[step] = (byte)(_stepMask[step] | bit);
-        else _stepMask[step] = (byte)(_stepMask[step] & ~bit);
+        else       _stepMask[step] = (byte)(_stepMask[step] & ~bit);
 
         // Keep the UI cell consistent with the current view:
         // show active drum ID if bit is set, else 0.
+        int shown = 0;
+
         _suppressGridCallbacks = true;
         try
         {
-            int shown = ((_stepMask[step] & bit) != 0) ? _activeDrumId : 0;
+            shown = ((_stepMask[step] & bit) != 0) ? _activeDrumId : 0;
             _grid.SetValue(r, c, shown);
         }
         finally
@@ -433,9 +478,12 @@ public class KMusicDrumSequencer : MonoBehaviour
             _suppressGridCallbacks = false;
         }
 
-        // Audition on edit (only when stopped)
-        if (!_playing && v > 0)
+        // ✅ Audition on edit (even while playing)
+        if (v > 0)
             TriggerDrumNow(_activeDrumId);
+
+        if (verbose)
+            Debug.Log($"[DRUM GRID] r={r} c={c} step={step} active={_activeDrumId} v={v} shown={shown} mask=0x{_stepMask[step]:X2}");
     }
 
     private void OnGridCellClicked(int r, int c)
@@ -477,30 +525,32 @@ public class KMusicDrumSequencer : MonoBehaviour
             _suppressGridCallbacks = false;
         }
     }
-
     private void OnPlayClicked()
     {
         if (_playing) return;
 
-        if (_sampler == null || _sampler.keyzones == null || _sampler.keyzones.Count == 0)
-            Debug.LogWarning("[KMusicDrumSequencer] Sampler has no keyzones; drum kit may not be loaded.");
-        if (_clipByDrumId.Count == 0)
-            Debug.LogWarning("[KMusicDrumSequencer] No drum clips loaded; for runtime builds, place clips under Assets/Resources/KMusic/Drums/.");
+        _playBpm = GetBpm();
+        _stepDur = 60.0 / Math.Max(1.0, _playBpm) / 4.0; // 16th
+        _nextStepNumber = 0;
+        _lastVisualStep = -999;
 
         _playing = true;
 
-        _stepIndex = 0;
-        _nextStepDspTime = AudioSettings.dspTime + startDelaySeconds;
-        _playStartDspTime = _nextStepDspTime;
+        _playStartDspTime = AudioSettings.dspTime + startDelaySeconds;
+        _nextStepDspTime = _playStartDspTime;
 
         if (_clock != null)
         {
-            _clock.bpm = GetBpm();
+            _clock.bpm = _playBpm;
             _clock.pause = false;
-            _clock.StartScheduled(_nextStepDspTime);
+            _clock.StartScheduled(_playStartDspTime);
         }
 
-        if (verbose) Debug.Log("[KMusicDrumSequencer] PLAY");
+        if (_grid != null)
+            _grid.SetPlayhead(-1);
+
+        if (verbose)
+            Debug.Log($"[KMusicDrumSequencer] PLAY bpm={_playBpm:0.##} stepDur={_stepDur:0.0000} start={_playStartDspTime:0.000}");
     }
 
     private void OnStopClicked()

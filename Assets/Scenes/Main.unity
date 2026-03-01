@@ -271,11 +271,11 @@ MonoBehaviour:
   fallbackBpm: 120
   lookaheadSeconds: 0.1
   startDelaySeconds: 0.05
-  resourcesDrumPath: KMusic/Drums
+  resourcesDrumPath: KMusic/Drums/DrumKits
   verbose: 1
   numVoices: 8
   steps: 16
-  drumKitResourcesPath: KMusic/Drums
+  drumKitResourcesPath: KMusic/Drums/DrumKits
 --- !u!1 &662830704
 GameObject:
   m_ObjectHideFlags: 0
