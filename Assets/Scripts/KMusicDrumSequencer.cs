@@ -26,8 +26,13 @@ using AudioHelm;
 [RequireComponent(typeof(UIDocument))]
 public class KMusicDrumSequencer : MonoBehaviour
 {
+    public double PlayStartDspTime => _playStartDspTime;
+    public double NextStepDspTime => _nextStepDspTime;
+    public double StepDurSeconds => _stepDur;
+    public int Steps => steps;
+
     private bool _allowSaving = false;
-    
+
     private const string PrefKey_DrumStepMask = "kmusic.drum.stepmask";
     private const string PrefKey_DrumMutes = "kmusic.drum.mutes";
     private const string PrefKey_DrumActive = "kmusic.drum.active";

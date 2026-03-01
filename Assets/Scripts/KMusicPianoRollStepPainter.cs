@@ -13,6 +13,9 @@ namespace KMusic.UI
     [RequireComponent(typeof(UIDocument))]
     public class KMusicPianoRollStepPainter : MonoBehaviour
     {
+        [SerializeField] private HelmSequencer helmSequencer;   // assign or auto-find
+        [SerializeField] private int helmChannelOverride = -1;  // -1 = use HelmController.channel
+        [SerializeField, Range(0.1f, 1.0f)] private float gateSixteenths = 0.90f; // note length in 16ths              
         private const string PrefKey_SeqStepGrid = "kmusic.seq.stepgrid";
 
         [Header("UXML element names")]
@@ -43,41 +46,54 @@ namespace KMusic.UI
 
         [SerializeField] private HelmController helm;
 
+        private bool _wasPlaying = false;
+
+        private bool _sequenceBuilt = false;
+
         private void Update()
         {
-            // Sync Helm playback to the drum transport (your Play button drives that).
-            if (_step == null) return;
-
             if (_drumSeq == null)
                 _drumSeq = FindObjectOfType<KMusicDrumSequencer>();
 
-            if (_drumSeq == null) return;
-            if (!_drumSeq.IsPlaying) { _lastTransportStep = -999; return; }
+            if (_drumSeq == null || helmSequencer == null)
+                return;
 
-            int stepIndex = _drumSeq.CurrentStepIndex; // 0..15
-            if (stepIndex == _lastTransportStep) return;
-            _lastTransportStep = stepIndex;
-
-            // Read the StepGrid value at this step (this is the stored "note id" from piano roll).
-            int r = stepIndex / _step.ColCount; // should be 2 rows, 8 cols
-            int c = stepIndex % _step.ColCount;
-
-            int valueId = _step.GetValue(r, c);
-            if (valueId <= 0) return;
-
-            // Compute tempo-based length so it feels musical.
-            float bpm = GetTempoBpm();
-            float stepDur = 60f / Mathf.Max(1f, bpm) / 4f;      // 16th note
-            float len = Mathf.Clamp(stepDur * 0.9f, 0.05f, 0.25f);
-
-            PlayHelmValueId(valueId, velocity: 1.0f, length: len);
+            if (_drumSeq.IsPlaying)
+            {
+                // build once when playback starts
+                if (!_sequenceBuilt)
+                {
+                    RebuildHelmSequenceFromGrid();
+                    _sequenceBuilt = true;
+                }
+            }
+            else
+            {
+                _sequenceBuilt = false;
+            }
         }
-
         private void OnEnable()
         {
             _doc = GetComponent<UIDocument>();
             _helm = FindObjectOfType<HelmController>();
             _drumSeq = FindObjectOfType<KMusicDrumSequencer>();
+
+
+            if (helmSequencer == null)
+                helmSequencer = FindObjectOfType<HelmSequencer>();
+
+            if (helmSequencer == null)
+            {
+                var go = new GameObject("KMusicHelmSequencer");
+                helmSequencer = go.AddComponent<HelmSequencer>();
+            }
+
+            // match channel + timing
+            int ch = (helmChannelOverride >= 0) ? helmChannelOverride : (_helm != null ? _helm.channel : 0);
+            helmSequencer.channel = ch;
+            helmSequencer.length = 16;
+            helmSequencer.loop = true;
+            helmSequencer.division = Sequencer.Division.kSixteenth;
 
             if (_doc == null) return;
 
@@ -123,6 +139,30 @@ namespace KMusic.UI
 
             }).Every(100);
         }
+
+        private void RebuildHelmSequenceFromGrid()
+        {
+            if (helmSequencer == null || _step == null) return;
+
+            helmSequencer.Clear();
+
+            // StepGrid is 16 steps (2x8). Sequencer start/end are in SIXTEENTHS.
+            for (int stepIndex = 0; stepIndex < 16; stepIndex++)
+            {
+                int r = stepIndex / _step.ColCount;
+                int c = stepIndex % _step.ColCount;
+
+                int valueId = _step.GetValue(r, c);
+                if (valueId <= 0) continue;
+
+                int midi = MidiFromValueIdChromatic(valueId, baseMidi: 60);
+
+                float start = stepIndex;
+                float end = stepIndex + gateSixteenths;
+
+                helmSequencer.AddNote(midi, start, end, 1.0f);
+            }
+        }        
         private IEnumerator BindWhenReady()
         {
             yield return null;
@@ -169,6 +209,7 @@ namespace KMusic.UI
             _step.SetPaintValue(v0);
 
             LoadStepGrid();
+            RebuildHelmSequenceFromGrid();
             return true;
         }
         private void CacheAllPaletteValues()
@@ -222,6 +263,7 @@ namespace KMusic.UI
             if (v <= 0) return;
 
             _step.SetPaintValue(v);
+            RebuildHelmSequenceFromGrid();
 
             // preview the stored note when clicking a painted step
             PlayHelmValueId(v, velocity: 1.0f, length: 0.18f);
