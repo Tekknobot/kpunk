@@ -244,6 +244,7 @@ MonoBehaviour:
   pianoRollName: SeqPianoRoll
   stepGridName: StepGrid
   verboseLogs: 1
+  helm: {fileID: 0}
 --- !u!114 &161364357
 MonoBehaviour:
   m_ObjectHideFlags: 0

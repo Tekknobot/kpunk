@@ -37,10 +37,48 @@ namespace KMusic.UI
         private readonly Dictionary<int, string> _labelByValue = new();
         private readonly Dictionary<int, Color> _colorByValue = new();
 
+        private KMusicDrumSequencer _drumSeq;
+        private int _lastTransportStep = -999;
+        private float _lastBpm = -1f;
+
+        [SerializeField] private HelmController helm;
+
+        private void Update()
+        {
+            // Sync Helm playback to the drum transport (your Play button drives that).
+            if (_step == null) return;
+
+            if (_drumSeq == null)
+                _drumSeq = FindObjectOfType<KMusicDrumSequencer>();
+
+            if (_drumSeq == null) return;
+            if (!_drumSeq.IsPlaying) { _lastTransportStep = -999; return; }
+
+            int stepIndex = _drumSeq.CurrentStepIndex; // 0..15
+            if (stepIndex == _lastTransportStep) return;
+            _lastTransportStep = stepIndex;
+
+            // Read the StepGrid value at this step (this is the stored "note id" from piano roll).
+            int r = stepIndex / _step.ColCount; // should be 2 rows, 8 cols
+            int c = stepIndex % _step.ColCount;
+
+            int valueId = _step.GetValue(r, c);
+            if (valueId <= 0) return;
+
+            // Compute tempo-based length so it feels musical.
+            float bpm = GetTempoBpm();
+            float stepDur = 60f / Mathf.Max(1f, bpm) / 4f;      // 16th note
+            float len = Mathf.Clamp(stepDur * 0.9f, 0.05f, 0.25f);
+
+            PlayHelmValueId(valueId, velocity: 1.0f, length: len);
+        }
+
         private void OnEnable()
         {
             _doc = GetComponent<UIDocument>();
             _helm = FindObjectOfType<HelmController>();
+            _drumSeq = FindObjectOfType<KMusicDrumSequencer>();
+
             if (_doc == null) return;
 
             var root = _doc.rootVisualElement;
@@ -69,19 +107,19 @@ namespace KMusic.UI
                 _piano.OnCellPicked += OnPianoPicked;
                 _step.OnCellClicked += OnStepClicked;
 
-                // ✅ CRITICAL: cache the ENTIRE palette so loaded steps know their label/color
-                CacheAllPaletteValues();
-
-                // default brush (top-left)
+                // default brush
                 int v0 = _piano.GetCellValueId(0, 0);
+                CacheValue(v0, _piano.GetCellLabel(0, 0), _piano.GetCellColor(0, 0));
                 _step.SetPaintValue(v0);
 
-                // LOAD after wiring + after cache
+                // LOAD after wiring
                 LoadStepGrid();
+
+                // reset transport tracking so first tick plays correctly
+                _lastTransportStep = -999;
 
             }).Every(100);
         }
-
         private IEnumerator BindWhenReady()
         {
             yield return null;
@@ -163,7 +201,10 @@ namespace KMusic.UI
             CacheValue(valueId, label, _piano.GetCellColor(r, c));
             _step.SetPaintValue(valueId);
 
-            // Audition the picked note on the synth.
+            // ALWAYS audition on pick (and prove it in logs)
+            if (_helm == null) _helm = FindObjectOfType<HelmController>();
+            Debug.Log($"[PianoRollPainter] PICK r={r} c={c} label={label} valueId={valueId} helm={(_helm!=null)}");
+
             TryAuditionSynthNote(r, c);
 
             if (verboseLogs)
@@ -179,23 +220,98 @@ namespace KMusic.UI
 
             _step.SetPaintValue(v);
 
+            // preview the stored note when clicking a painted step
+            PlayHelmValueId(v, velocity: 1.0f, length: 0.18f);
+
             if (verboseLogs)
                 Debug.Log($"Step clicked -> brush={v}");
         }
 
-        private void TryAuditionSynthNote(int r, int c)
+        private float GetTempoBpm()
+        {
+            // Try to match whatever your drum sequencer uses (KMusicApp Bus "tempo").
+            var app = FindObjectOfType<KMusicApp>();
+            if (app != null && app.Bus != null && app.Bus.TryGet("tempo", out var p))
+                return p.Value;
+
+            return 120f;
+        }
+
+        private void PlayHelmValueId(int valueId, float velocity, float length)
+        {
+            if (_helm == null)
+                _helm = FindObjectOfType<HelmController>();
+
+            if (_helm == null) return;
+
+            // Chromatic mapping: valueId(1..48) => MIDI from C4 upward.
+            int midi = MidiFromValueIdChromatic(valueId, baseMidi: 60);
+            _helm.NoteOn(midi, Mathf.Clamp01(velocity), Mathf.Max(0.01f, length));
+
+            if (verboseLogs)
+                Debug.Log($"[PianoRollPainter] HELM NoteOn valueId={valueId} midi={midi} len={length:0.000}");
+        }
+
+        private static int MidiFromValueIdChromatic(int valueId, int baseMidi = 60)
+        {
+            int idx = Mathf.Max(0, valueId - 1);      // 0..47
+            int midi = baseMidi + idx;                // chromatic steps
+            return Mathf.Clamp(midi, 0, 127);
+        }
+
+        private void AuditionValueId(int valueId, int pianoRowHint = -1, int pianoColHint = -1)
         {
             if (_helm == null) _helm = FindObjectOfType<HelmController>();
             if (_helm == null) return;
 
-            string lbl = _piano != null ? _piano.GetCellLabel(r, c) : null;
+            // We prefer the cached label because it matches your palette.
+            string lbl = _labelByValue.TryGetValue(valueId, out var s) ? s : null;
+
+            // If cache missing, derive from id -> (r,c)
+            int r = pianoRowHint;
+            if (string.IsNullOrEmpty(lbl) && _piano != null)
+            {
+                int idx = valueId - 1;
+                r = idx / _piano.ColCount;
+                int c = idx % _piano.ColCount;
+                if (r >= 0 && r < _piano.RowCount)
+                    lbl = _piano.GetCellLabel(r, c);
+            }
+
             if (string.IsNullOrEmpty(lbl)) return;
 
-            int midi = MidiFromLabel(lbl, r);
+            int midi = MidiFromLabel(lbl, r >= 0 ? r : 0);
             if (midi < 0) return;
 
-            // Short note so it feels like a "preview".
             _helm.NoteOn(midi, 1.0f, 0.18f);
+        }
+
+        private void TryAuditionSynthNote(int r, int c)
+        {
+            if (_piano == null) return;
+
+            var h = helm != null ? helm : FindObjectOfType<HelmController>();
+            if (h == null)
+            {
+                Debug.LogWarning("[PianoRollPainter] HelmController NOT FOUND - add one to the scene or assign it in inspector.");
+                return;
+            }
+
+            int valueId = _piano.GetCellValueId(r, c);
+            int midi = Mathf.Clamp(60 + (valueId - 1), 0, 127);
+
+            Debug.Log($"[PianoRollPainter] HELM NoteOn midi={midi} valueId={valueId} channel={h.channel}");
+            h.NoteOn(midi, 1.0f, 0.18f);
+        }
+
+        // Maps your 6x8 palette to a real chromatic keyboard.
+        // valueId is 1-based (from PianoRollGrid.GetCellValueId).
+        // baseMidi = the MIDI note for palette cell (row 0, col 0). C4 = 60.
+        private static int MidiFromValueIdChromatic(int valueId, int cols, int baseMidi = 60)
+        {
+            int idx = Mathf.Max(0, valueId - 1);     // 0..(rows*cols-1)
+            int midi = baseMidi + idx;               // +1 semitone per cell
+            return Mathf.Clamp(midi, 0, 127);
         }
 
         // Map the A..G labels from your 6x8 palette to a musically sensible MIDI range.
