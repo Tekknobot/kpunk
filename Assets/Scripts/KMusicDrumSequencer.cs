@@ -26,6 +26,48 @@ using AudioHelm;
 [RequireComponent(typeof(UIDocument))]
 public class KMusicDrumSequencer : MonoBehaviour
 {
+    private StepGrid _drumGrid;
+    private readonly Dictionary<int, AudioSource> _drumSources = new();
+
+    private AudioSource GetOrCreateDrumSource(int drumId, AudioClip clip)
+    {
+        if (_drumSources.TryGetValue(drumId, out var src) && src != null)
+            return src;
+
+        var go = new GameObject($"DrumSource_{drumId}");
+        go.transform.SetParent(this.transform, false);
+
+        src = go.AddComponent<AudioSource>();
+        src.playOnAwake = false;
+        src.clip = clip;
+
+        _drumSources[drumId] = src;
+        return src;
+    }
+
+    private void ScheduleDrum(int drumId, double dspTime)
+    {
+        if (!_drumSources.TryGetValue(drumId, out var src) || src == null)
+            return;
+
+        // If there’s no clip, nothing to play.
+        if (src.clip == null)
+            return;
+
+        // Scheduled playback (tight timing)
+        src.Stop();
+        src.PlayScheduled(dspTime);
+    }
+
+    private void PreviewDrum(int drumId)
+    {
+        if (!_drumSources.TryGetValue(drumId, out var src) || src == null) return;
+        if (src.clip == null) return;
+
+        src.Stop();
+        src.PlayOneShot(src.clip);
+    }
+
     [SerializeField] private UIDocument uiDocument; 
     
     [Header("UI Names")]
@@ -113,6 +155,61 @@ public class KMusicDrumSequencer : MonoBehaviour
     private float _lastBpmShown = -1f;
 
     private int _lastPlayhead = -1;
+
+    private static int DrumBit(int drumId) => 1 << (drumId - 1);
+
+    private void ToggleStepForActiveDrum(int stepIndex)
+    {
+        int bit = DrumBit(_activeDrumId);
+
+        // toggle bit
+        _stepMask[stepIndex] = (byte)(_stepMask[stepIndex] ^ bit);
+        
+        // update UI view for the currently selected drum
+        RefreshDrumGridView();
+
+        PreviewDrum(_activeDrumId);
+
+    }
+
+    private void RefreshDrumGridView()
+    {
+        // use the grid you actually bound
+        var g = _gridDrum != null ? _gridDrum : _grid;
+        if (g == null) return;
+
+        int bit = DrumBit(_activeDrumId);
+
+        _suppressGridCallbacks = true;
+        try
+        {
+            for (int step = 0; step < 16; step++)
+            {
+                int r = step / 8;
+                int c = step % 8;
+
+                bool onForThisDrum = (_stepMask[step] & bit) != 0;
+                g.SetValue(r, c, onForThisDrum ? _activeDrumId : 0);
+            }
+        }
+        finally
+        {
+            _suppressGridCallbacks = false;
+        }
+    }
+
+    private void PlayStep(int stepIndex, double dspTime)
+    {
+        int mask = _stepMask[stepIndex];
+        if (mask == 0) return;
+
+        for (int drumId = 1; drumId <= 8; drumId++)
+        {
+            int bit = DrumBit(drumId);
+            if ((mask & bit) != 0)
+                ScheduleDrum(drumId, dspTime);
+        }
+    }
 
     private static string DrumLabelForValue(int v)
     {
@@ -314,70 +411,64 @@ public class KMusicDrumSequencer : MonoBehaviour
     private bool BindUI()
     {
         if (_doc == null) return false;
+
         _root = _doc.rootVisualElement;
         if (_root == null) return false;
 
+        // --- Find UI ---
         _playBtn = _root.Q<Button>(playButtonName);
         _stopBtn = _root.Q<Button>(stopButtonName);
 
-        _gridDrum = _root.Q<StepGrid>("DrumStepGrid") ?? _root.Q<StepGrid>(drumGridName);
-        _gridSeq = _root.Q<StepGrid>("StepGrid");
+        _gridDrum   = _root.Q<StepGrid>("DrumStepGrid") ?? _root.Q<StepGrid>(drumGridName);
+        _gridSeq    = _root.Q<StepGrid>("StepGrid");
         _gridSample = _root.Q<StepGrid>("SampleStepGrid") ?? _root.Q<StepGrid>("SamplerStepGrid");
 
-        // if old code expects _grid, just alias it once:
+        // Back-compat alias (only if other code expects _grid)
         _grid = _gridDrum;
 
-        _gridDrum.EnableValueLabels(true, DrumLabelForValue);
+        _drumGrid = _gridDrum;
 
         _bpmLabel = _root.Q<Label>("BpmLabel");
 
         if (verbose)
-            Debug.Log($"[KMusicDrumSequencer] bind play={(_playBtn != null)} stop={(_stopBtn != null)} drumGrid found={(_grid != null)}");
+            Debug.Log($"[KMusicDrumSequencer] bind play={(_playBtn != null)} stop={(_stopBtn != null)} drumGrid={(_gridDrum != null)}");
 
-        if (_playBtn == null || _stopBtn == null || _grid == null)
+        if (_playBtn == null || _stopBtn == null || _gridDrum == null)
             return false;
 
-        _kitNameLabel = _root.Q<UnityEngine.UIElements.Label>("KitName");
-        _kitPrevBtn = _root.Q<UnityEngine.UIElements.Button>("KitPrev");
-        _kitNextBtn = _root.Q<UnityEngine.UIElements.Button>("KitNext");
+        // --- Kit UI ---
+        _kitNameLabel = _root.Q<Label>("KitName");
+        _kitPrevBtn   = _root.Q<Button>("KitPrev");
+        _kitNextBtn   = _root.Q<Button>("KitNext");
 
         if (_kitPrevBtn != null) _kitPrevBtn.clicked += PrevKit;
         if (_kitNextBtn != null) _kitNextBtn.clicked += NextKit;
 
         WireDrumButtons();
 
-        // Grid renders values as drum IDs (0 or 1..8) — but ONLY for the current active drum layer.
-        _grid.EnableValueLabels(true, DrumLabel);
-        _grid.EnableValueTint(true, DrumTint);
-        _grid.ClearAll();
+        // --- Grid visuals ---
+        _gridDrum.EnableValueLabels(true, DrumLabel);
+        _gridDrum.EnableValueTint(true, DrumTint);
 
-        // Make StepGrid paint use the active drum ID (so its own label/tint works)
-        _grid.SetPaintValue(_activeDrumId);
-        _grid.SetPlayheadStep(-1);
+        // IMPORTANT: start in a clean state, but do NOT accidentally write to _stepMask here
+        _suppressGridEvents = true;
+        _gridDrum.ClearAll();
+        _gridDrum.SetPaintValue(_activeDrumId);
+        _gridDrum.SetPlayheadStep(-1);
+        _suppressGridEvents = false;
 
-        _grid.OnCellValueChanged -= OnGridValueChanged;
-        _grid.OnCellValueChanged += OnGridValueChanged;
+        // --- Events ---
+        _gridDrum.OnCellValueChanged -= OnGridValueChanged;
+        _gridDrum.OnCellValueChanged += OnGridValueChanged;
 
-        void OnGridValueChanged(int r, int c, int value)
-        {
-            int step = r * 8 + c;
-            int lane = _activeDrumId - 1;
+        _gridDrum.OnCellClicked -= OnGridCellClicked;
+        _gridDrum.OnCellClicked += OnGridCellClicked;
 
-            if (value == 0)
-                _stepMask[step] &= (byte)~(1 << lane);
-            else
-                _stepMask[step] |= (byte)(1 << lane);
-        }
-
-        _grid.OnCellClicked -= OnGridCellClicked;
-        _grid.OnCellClicked += OnGridCellClicked;
-
-        // Sync UI to current layer
+        // --- Initial draw from existing mask ---
         RefreshGridForActiveDrum();
 
         UpdateBpmLabel();
         return true;
-        _gridDrum?.SetPlayheadStep(3);
     }
 
     public void SetStepLane(int step, int lane, bool on)
@@ -510,7 +601,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private void SelectDrum(int drumId)
     {
-        _activeDrumId = Mathf.Clamp(_activeDrumId, 1, 8);
+        _activeDrumId = (byte)Mathf.Clamp(drumId, 1, 8);
 
         if (_grid != null)
         {
@@ -609,27 +700,33 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private void RefreshGridForActiveDrum()
     {
-        if (_grid == null) return;
+        if (_gridDrum == null || _stepMask == null) return;
 
-        int lane = _activeDrumId - 1;
+        int lane = Mathf.Clamp(_activeDrumId - 1, 0, 7);
         byte bit = (byte)(1 << lane);
 
         _suppressGridCallbacks = true;
         try
         {
-            for (int step = 0; step < steps; step++)
+            for (int step = 0; step < 16; step++)
             {
                 int r = step / 8;
                 int c = step % 8;
-                int shown = ((_stepMask[step] & bit) != 0) ? _activeDrumId : 0;
-                _grid.SetValue(r, c, shown);
+
+                bool on = (_stepMask[step] & bit) != 0;
+                int cellValue = on ? _activeDrumId : 0;
+
+                _gridDrum.SetValue(r, c, cellValue);
             }
+
+            _gridDrum.SetPaintValue(_activeDrumId);
         }
         finally
         {
             _suppressGridCallbacks = false;
         }
     }
+
     private void OnPlayClicked()
     {
         if (_playing) return;

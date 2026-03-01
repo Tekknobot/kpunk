@@ -164,7 +164,7 @@
                 <ui:Label class="km-drum-kit-label" text="KIT"/>
                 <ui:VisualElement class="km-kit-spacer"/>
                 <ui:Button name="KitPrev" class="km-kit-nav" text="◀"/>
-                <ui:Label name="KitName" class="km-kit-name" text="808 CORE"/>
+                <ui:Label name="KitName" class="km-kit-name" text="707"/>
                 <ui:Button name="KitNext" class="km-kit-nav" text="▶"/>
               </ui:VisualElement>         
           </ui:VisualElement>
