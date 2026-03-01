@@ -546,9 +546,6 @@ namespace KMusic.UI
 
         private VisualElement[,] _cells = new VisualElement[Rows, Cols];
 
-        // Playhead visualization (0..Rows*Cols-1, -1 = none)
-        private int _playheadIndex = -1;
-
         // Optional: tint all "active" cells with a color (useful for drum lanes)
         private bool _useActiveTint = false;
         private Color _activeTint = Color.white;
@@ -556,47 +553,6 @@ namespace KMusic.UI
         // ✅ Optional: clicking a cell that already has the paint value will erase it.
         // Great for drum sequencers (toggle on/off).
         private bool _toggleEraseOnSameValue = false;
-
-        // inside StepGrid
-        private int _playheadStep = -1;
-        private bool _showPlayhead = true;
-
-        public void SetPlayheadVisible(bool visible)
-        {
-            _showPlayhead = visible;
-            if (!visible) ClearPlayheadVisual();
-            else ApplyPlayheadVisual(_playheadStep);
-        }
-
-        public void SetPlayheadStep(int step)
-        {
-            step = Mathf.Clamp(step, -1, 15);
-            if (_playheadStep == step) return;
-
-            // remove old
-            ClearPlayheadVisual();
-
-            _playheadStep = step;
-
-            // add new
-            if (_showPlayhead) ApplyPlayheadVisual(_playheadStep);
-        }
-
-        private void ClearPlayheadVisual()
-        {
-            if (_playheadStep < 0) return;
-            int r = _playheadStep / 8;
-            int c = _playheadStep % 8;
-            _cells[r, c].RemoveFromClassList("is-playhead");
-        }
-
-        private void ApplyPlayheadVisual(int step)
-        {
-            if (step < 0) return;
-            int r = step / 8;
-            int c = step % 8;
-            _cells[r, c].AddToClassList("is-playhead");
-        }
 
         private static string DrumLabelForValue(int v)
         {
@@ -613,6 +569,72 @@ namespace KMusic.UI
                 case 8: return "CR";
                 default: return v.ToString();
             }
+        }
+
+        // --- Playhead (single system) ---
+        // Uses the class: "is-playhead"
+        private int _playheadStep = -1;
+        private bool _showPlayhead = true;
+
+        public void SetPlayheadVisible(bool visible)
+        {
+            _showPlayhead = visible;
+
+            if (!visible)
+            {
+                ClearPlayheadVisual();
+            }
+            else
+            {
+                // re-apply to current playhead if any
+                ApplyPlayheadVisual(_playheadStep);
+            }
+        }
+
+        public void SetPlayheadStep(int step)
+        {
+            // allow clear + clamp
+            if (step < 0 || step >= (Rows * Cols))
+                step = -1;
+
+            if (_playheadStep == step)
+                return;
+
+            int prev = _playheadStep;
+            _playheadStep = step;
+
+            // refresh only the affected cells so visuals always update
+            if (prev >= 0)
+                UpdateCellVisual(prev / Cols, prev % Cols);
+
+            if (_playheadStep >= 0)
+                UpdateCellVisual(_playheadStep / Cols, _playheadStep % Cols);
+        }
+        
+        private void ClearPlayheadVisual()
+        {
+            if (_playheadStep < 0)
+                return;
+
+            int r = _playheadStep / Cols;
+            int c = _playheadStep % Cols;
+
+            var cell = _cells[r, c];
+            if (cell != null)
+                cell.RemoveFromClassList("is-playhead");
+        }
+
+        private void ApplyPlayheadVisual(int step)
+        {
+            if (step < 0)
+                return;
+
+            int r = step / Cols;
+            int c = step % Cols;
+
+            var cell = _cells[r, c];
+            if (cell != null)
+                cell.AddToClassList("is-playhead");
         }
 
         // Fired when user clicks/paints a cell
@@ -634,25 +656,6 @@ namespace KMusic.UI
             RegisterCallback<PointerCaptureOutEvent>(OnGridPointerCaptureOut);
 
             ClearAll(); // ✅ no default highlights
-            SetPlayheadStep(0);
-        }
-
-        /// <summary>
-        /// Set current playhead step (0..15). Highlights the corresponding cell.
-        /// </summary>
-        private int _playhead = -1;
-
-        // inside StepGrid class
-        private VisualElement _playheadCell = null;
-
-        public void ClearPlayhead()
-        {
-            _playheadIndex = -1;
-            if (_playheadCell != null)
-            {
-                _playheadCell.RemoveFromClassList("km-playhead");
-                _playheadCell = null;
-            }
         }
 
         public void SetPaintValue(int v) => _paintValue = Mathf.Clamp(v, 0, 999);
@@ -728,11 +731,10 @@ namespace KMusic.UI
             // ✅ ensure the CSS selector can match if you keep `.km-step.km-step--playhead`
             cell.AddToClassList("km-step");
 
-            // playhead class
             int idx = r * Cols + c;
-            bool isPlayhead = (_playheadIndex == idx);
-            if (isPlayhead) cell.AddToClassList("km-step--playhead");
-            else cell.RemoveFromClassList("km-step--playhead");
+            bool isPlayhead = (_playheadStep == idx);
+            if (isPlayhead) cell.AddToClassList("is-playhead");
+            else cell.RemoveFromClassList("is-playhead");
 
             // active background tint
             if (v != 0)

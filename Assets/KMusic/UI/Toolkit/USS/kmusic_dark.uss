@@ -529,16 +529,13 @@
 }
 
 .is-playhead {
+    background-color: rgba(255,255,255,0.2);
     border-left-width: 4px;
     border-right-width: 4px;
     border-top-width: 4px;
     border-bottom-width: 4px;
-
     border-left-color: white;
     border-right-color: white;
     border-top-color: white;
     border-bottom-color: white;
-
-    /* makes it super obvious even if borders don’t render */
-    background-color: rgba(255,255,255,0.12);
 }

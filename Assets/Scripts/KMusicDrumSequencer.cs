@@ -135,13 +135,12 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private void UpdateVisualPlayhead(double now, double stepDur)
     {
-        Debug.Log($"[PLAYHEAD] tick playing={_playing} stepIndex={_stepIndex} last={_lastPlayhead}");
-
         if (!_playing)
         {
             if (_lastPlayhead != -1)
             {
                 _lastPlayhead = -1;
+
                 _gridSeq?.SetPlayheadStep(-1);
                 _gridSample?.SetPlayheadStep(-1);
                 _gridDrum?.SetPlayheadStep(-1);
@@ -150,9 +149,17 @@ public class KMusicDrumSequencer : MonoBehaviour
             return;
         }
 
-        int current = _stepIndex % steps;
+        // If you start playback with a scheduled offset, don’t show playhead until it actually begins
+        if (now < _playStartDspTime)
+            return;
 
-        if (current == _lastPlayhead) return;
+        // Visual playhead step based on elapsed DSP time since play start
+        double elapsed = now - _playStartDspTime;
+        int current = ((int)Math.Floor(elapsed / stepDur)) % steps;
+
+        if (current == _lastPlayhead)
+            return;
+
         _lastPlayhead = current;
 
         _gridSeq?.SetPlayheadStep(current);
@@ -224,43 +231,43 @@ public class KMusicDrumSequencer : MonoBehaviour
         }
     }
 
-    private void OnEnable()
-    {
-        if (uiDocument == null)
-            uiDocument = GetComponent<UIDocument>();
-
-        if (uiDocument == null)
+        private void OnEnable()
         {
-            Debug.LogError("[DrumSequencer] UIDocument missing");
-            return;
+            if (uiDocument == null)
+                uiDocument = GetComponent<UIDocument>();
+
+            if (uiDocument == null)
+            {
+                Debug.LogError("[DrumSequencer] UIDocument missing");
+                return;
+            }
+
+            StartCoroutine(BindWhenReady()); // ✅ THIS WAS MISSING
+
+            var root = uiDocument.rootVisualElement;
+
+            root.schedule.Execute(() =>
+            {
+                var playBtn = root.Q<Button>("PlayButton");
+                var stopBtn = root.Q<Button>("StopButton");
+
+                Debug.Log($"[DrumSequencer] playBtn={playBtn!=null} stopBtn={stopBtn!=null}");
+
+                if (playBtn != null)
+                    playBtn.clicked += () =>
+                    {
+                        Debug.Log("PLAY CLICK");
+                        OnPlayClicked(); // ✅ call the real play that sets dsp start etc
+                    };
+
+                if (stopBtn != null)
+                    stopBtn.clicked += () =>
+                    {
+                        Debug.Log("STOP CLICK");
+                        OnStopClicked();
+                    };
+            });
         }
-
-        var root = uiDocument.rootVisualElement;
-
-        root.schedule.Execute(() =>
-        {
-            var playBtn = root.Q<Button>("PlayButton");
-            var stopBtn = root.Q<Button>("StopButton");
-
-            Debug.Log($"[DrumSequencer] playBtn={playBtn!=null} stopBtn={stopBtn!=null}");
-
-            if (playBtn != null)
-                playBtn.clicked += () =>
-                {
-                    Debug.Log("PLAY CLICK");
-                    _playing = true;
-                    _stepIndex = 0;
-                    _nextStepDspTime = AudioSettings.dspTime;
-                };
-
-            if (stopBtn != null)
-                stopBtn.clicked += () =>
-                {
-                    Debug.Log("STOP CLICK");
-                    _playing = false;
-                };
-        });
-    }
 
     private void HookKitUI(VisualElement root)
     {
@@ -299,9 +306,9 @@ public class KMusicDrumSequencer : MonoBehaviour
         while (!BindUI())
             yield return null;
 
-        _gridSeq?.SetPlayheadStep(0);
-        _gridSample?.SetPlayheadStep(0);
-        _gridDrum?.SetPlayheadStep(0);            
+        _gridSeq?.SetPlayheadStep(-1);
+        _gridSample?.SetPlayheadStep(-1);
+        _gridDrum?.SetPlayheadStep(-1);            
     }
 
     private bool BindUI()
@@ -370,6 +377,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         UpdateBpmLabel();
         return true;
+        _gridDrum?.SetPlayheadStep(3);
     }
 
     public void SetStepLane(int step, int lane, bool on)

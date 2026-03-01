@@ -55,6 +55,8 @@ namespace KMusic.UI
         private bool _isDragging = false;
         private bool _dragTargetValue = true;
 
+        private int _playheadStep = -1;
+
         // event
         public event Action<int, int, bool> OnCellChanged; // (row, col, isOn)
 
@@ -513,6 +515,24 @@ cell.RegisterCallback<PointerUpEvent>(e =>
                 new Color(0.30f, 0.75f, 0.95f, 1f),
                 new Color(0.10f, 0.35f, 0.65f, 1f),
             };
+        }
+
+        public void SetPlayheadStep(int step)
+        {
+            if (step < 0 || step >= (_rows * _cols))
+                step = -1;
+
+            if (_playheadStep == step)
+                return;
+
+            int prev = _playheadStep;
+            _playheadStep = step;
+
+            if (prev >= 0)
+                UpdateCellVisual(prev / _cols, prev % _cols);
+
+            if (_playheadStep >= 0)
+                UpdateCellVisual(_playheadStep / _cols, _playheadStep % _cols);
         }
     }
 }

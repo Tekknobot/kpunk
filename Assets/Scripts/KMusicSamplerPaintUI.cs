@@ -162,10 +162,13 @@ public class KMusicSamplerPaintUI : MonoBehaviour
 
     private void SaveGridToDrumLane(int lane)
     {
-        if(drumGrid==null) return;
-        drumPatterns[lane]=drumGrid.ExportBools();
-    }
+        if (drumGrid == null) return;
 
+        for (int r = 0; r < drumGrid.RowCount; r++)
+        for (int c = 0; c < drumGrid.ColCount; c++)
+            drumPatterns[lane][r, c] = (drumGrid.GetValue(r, c) != 0);
+    }
+    
     private void LoadDrumLaneToGrid(int lane)
     {
         if (drumGrid == null) return;
