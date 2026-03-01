@@ -73,8 +73,8 @@ public class KMusicDrumSequencer : MonoBehaviour
     private StepGrid _gridSeq;
     private StepGrid _gridSample;
     private StepGrid _gridDrum;
-
     private Label _bpmLabel;
+    private bool[] _drumMute = new bool[9]; // index 1..8
 
     private int _activeDrumId = 1; // current "view/brush" drum id 1..8
 
@@ -417,7 +417,9 @@ public class KMusicDrumSequencer : MonoBehaviour
                         if (verbose)
                             Debug.Log($"[KMusicDrumSequencer] SCHED drumId={drumId} note={note} clip={clip.name} t={_nextStepDspTime:0.000}");
 
-                        _sampler.NoteOnScheduled(note, 1.0f, _nextStepDspTime, end);
+                        float vel = GetDrumGain(drumId);
+                        if (vel > 0f)
+                            _sampler.NoteOnScheduled(note, vel, _nextStepDspTime, end);
                     }
                     else if (verbose)
                     {
@@ -542,6 +544,7 @@ public class KMusicDrumSequencer : MonoBehaviour
     private void EnsureSamplerEngine()
     {
         _sampler = FindObjectOfType<Sampler>();
+
         if (_sampler == null)
         {
             var go = new GameObject("KMusicDrumSampler");
@@ -554,8 +557,12 @@ public class KMusicDrumSequencer : MonoBehaviour
         }
 
         // Ensure these apply whether we created or found it.
+        _sampler.velocityTracking = 1.0f;   // ✅ moved here
         _sampler.numVoices = Mathf.Max(1, numVoices);
-        if (_sampler.keyzones != null)
+
+        if (_sampler.keyzones == null)
+            _sampler.keyzones = new List<Keyzone>();
+        else
             _sampler.keyzones.Clear();
 
         if (verbose)
@@ -616,6 +623,20 @@ public class KMusicDrumSequencer : MonoBehaviour
                 Debug.Log($"[KMusicDrumSequencer] drumId={id} clip={(clip ? clip.name : "NULL")}");
             }
         }
+    }
+
+    private float GetDrumGain(int drumId)
+    {
+        float linear = 1f;
+
+        if (_app != null && _app.Bus != null)
+            linear = _app.Bus.GetValue($"drum.vol{drumId:00}");
+
+        linear = Mathf.Clamp01(linear);
+        if (linear <= 0f) return 0f;
+
+        // pro mixer curve
+        return Mathf.Pow(linear, 2.2f);
     }
 
     private void WarnIfMissing(int drumId, string label)

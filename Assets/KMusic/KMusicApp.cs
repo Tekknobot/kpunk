@@ -161,6 +161,15 @@ _doc.panelSettings = ps;
 
             // Tempo
             _bus.Add(new Parameter("tempo", 40, 200, 107, unit:"bpm"));
+                    
+            _bus.Add(new Parameter("drum.vol01", 0f, 1f, 0.8f));
+            _bus.Add(new Parameter("drum.vol02", 0f, 1f, 0.8f));
+            _bus.Add(new Parameter("drum.vol03", 0f, 1f, 0.8f));
+            _bus.Add(new Parameter("drum.vol04", 0f, 1f, 0.8f));
+            _bus.Add(new Parameter("drum.vol05", 0f, 1f, 0.8f));
+            _bus.Add(new Parameter("drum.vol06", 0f, 1f, 0.8f));
+            _bus.Add(new Parameter("drum.vol07", 0f, 1f, 0.8f));
+            _bus.Add(new Parameter("drum.vol08", 0f, 1f, 0.8f));     
         }
     }
 }

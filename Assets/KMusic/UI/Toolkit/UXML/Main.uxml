@@ -2,7 +2,7 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:km="KMusic.UI">
   <ui:VisualElement name="Root" class="km-root">
     <ui:VisualElement class="km-topbar">
-      <ui:Label class="km-title" text="z-punk" />
+      <ui:Label class="km-title" text="zpunk" />
       <ui:VisualElement class="km-presetbar">
         <ui:Label name="PresetLabel" class="km-presetlabel" text="Preset: PROJECT 0" />
       </ui:VisualElement>
@@ -156,6 +156,72 @@
           <km:StepGrid name="DrumStepGrid" />
         </ui:VisualElement>
 
+        <!-- Drum Mixer -->
+        <ui:VisualElement class="km-card km-drum-mixer">
+          <ui:VisualElement class="km-row">
+            <ui:Label class="km-subtitle" text="DRUM MIXER"/>
+              <ui:VisualElement class="km-drum-kit-row">
+                <ui:Label class="km-drum-kit-label" text="KIT"/>
+                <ui:VisualElement class="km-kit-spacer"/>
+                <ui:Button name="KitPrev" class="km-kit-nav" text="◀"/>
+                <ui:Label name="KitName" class="km-kit-name" text="808 CORE"/>
+                <ui:Button name="KitNext" class="km-kit-nav" text="▶"/>
+              </ui:VisualElement>         
+          </ui:VisualElement>
+
+          <ui:VisualElement class="km-drum-mixer-strip">
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Kick"/>
+              <km:FaderElement name="DrumVol01" label="" paramId="drum.vol01"/>
+              <ui:Button name="DrumMute01" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Snare"/>
+              <km:FaderElement name="DrumVol02" label="" paramId="drum.vol02"/>
+              <ui:Button name="DrumMute02" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Clap"/>
+              <km:FaderElement name="DrumVol03" label="" paramId="drum.vol03"/>
+              <ui:Button name="DrumMute03" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Hat C"/>
+              <km:FaderElement name="DrumVol04" label="" paramId="drum.vol04"/>
+              <ui:Button name="DrumMute04" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Hat O"/>
+              <km:FaderElement name="DrumVol05" label="" paramId="drum.vol05"/>
+              <ui:Button name="DrumMute05" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Ride"/>
+              <km:FaderElement name="DrumVol06" label="" paramId="drum.vol06"/>
+              <ui:Button name="DrumMute06" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Rim"/>
+              <km:FaderElement name="DrumVol07" label="" paramId="drum.vol07"/>
+              <ui:Button name="DrumMute07" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Crash"/>
+              <km:FaderElement name="DrumVol08" label="" paramId="drum.vol08"/>
+              <ui:Button name="DrumMute08" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+          </ui:VisualElement>
+        </ui:VisualElement>
+        
       </ui:VisualElement>
 
       <!-- ARP (stub for now) -->

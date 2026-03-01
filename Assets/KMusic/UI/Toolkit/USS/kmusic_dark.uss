@@ -38,7 +38,7 @@
   padding-left: 20px;
   padding-right: 20px;
   padding-top: 0px;
-  padding-bottom: 24px;
+  padding-bottom: 48px;
 
   flex-direction: column;
 
@@ -165,7 +165,7 @@
   color: var(--muted);
   font-size: 24px;
   -unity-font-style: bold;
-  margin-bottom: 10px;
+  margin-bottom: 0px;
 }
 
 .km-controls {
@@ -379,4 +379,151 @@
 
 .km-step--playhead {
   border-style: solid;
+}
+
+/* --- Drum Mixer --- */
+
+.km-drum-mixer {
+  /* uses km-card base */
+}
+
+.km-drum-mixer-strip {
+  margin-top: 12px;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: flex-end; /* faders line up at bottom */
+  flex-wrap: nowrap;
+}
+
+.km-drum-channel {
+  width: 100px;                 /* matches drum buttons */
+  margin-right: 18px;           /* matches your strip spacing */
+  padding: 10px 10px 12px 10px;
+
+  border-radius: var(--radius-md);
+  background-color: var(--panel2);
+  border-width: 2px;
+  border-color: var(--border);
+
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.km-drum-chan-label {
+  color: var(--muted);
+  font-size: 18px;
+  -unity-font-style: bold;
+  margin-bottom: 8px;
+}
+
+/* Vertical slider styling (Unity UI Toolkit) */
+.km-drum-fader {
+  height: 220px;
+  width: 28px;
+
+  margin-bottom: 10px;
+
+  -unity-slider-direction: vertical;
+
+  /* force vertical layout */
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Track */
+.km-drum-fader .unity-slider__track {
+  width: 8px;
+  height: 100%;
+}
+
+/* Fill */
+.km-drum-fader .unity-slider__dragger-track {
+  width: 10px;
+  border-radius: 999px;
+  background-color: #202532;
+}
+
+/* Thumb */
+.km-drum-fader .unity-slider__dragger {
+  width: 28px;
+  height: 18px;
+
+  border-radius: 10px;
+
+  background-color: #596381;
+  border-width: 2px;
+  border-color: var(--border);
+}
+
+.km-drum-fader:hover .unity-slider__dragger {
+  border-color: var(--accent);
+}
+
+/* Mute button */
+.km-drum-mute {
+  width: 64px;
+  height: 44px;
+
+  border-radius: 14px;
+
+  background-color: #1C1F28;
+  border-width: 2px;
+  border-color: var(--border);
+
+  justify-content: center;
+  align-items: center;
+}
+
+.km-drum-mute:hover {
+  border-color: var(--accent);
+}
+
+.km-drum-mute > .unity-text-element {
+  color: var(--muted);
+  font-size: 22px;
+  -unity-font-style: bold;
+}
+
+/* Mute ON state (your C# should toggle this class) */
+.km-drum-mute.km-mute--on {
+  background-color: #202532;
+  border-color: var(--danger);
+}
+
+.km-drum-mute.km-mute--on > .unity-text-element {
+  color: var(--text);
+}
+
+.km-drum-kit-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;   /* 👉 pushes it right */
+  margin-bottom: 24px;
+}
+
+.km-drum-kit-label {
+  color: var(--muted);
+  font-size: 24px;
+  margin-right: 10px;
+}
+
+.km-kit-name {
+  color: var(--text);
+  font-size: 24px;
+  -unity-font-style: bold;
+  margin-left: 10px;
+  margin-right: 10px;
+}
+
+.km-kit-nav {
+  width: 48px;
+  height: 40px;
+  border-radius: 10px;
+  background-color: #667090;
+  border-width: 2px;
+  border-color: var(--border);
+  justify-content: center;
+  align-items: center;
 }
