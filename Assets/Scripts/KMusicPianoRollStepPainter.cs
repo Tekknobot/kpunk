@@ -25,6 +25,9 @@ namespace KMusic.UI
         [Header("Debug")]
         public bool verboseLogs = false;
 
+        private bool _seqDirty = false;
+        private IVisualElementScheduledItem _seqRebuildJob;
+
         private UIDocument _doc;
         private VisualElement _root;
         private PianoRollGrid _piano;
@@ -123,6 +126,19 @@ namespace KMusic.UI
                 _piano.OnCellPicked += OnPianoPicked;
                 _step.OnCellClicked += OnStepClicked;
 
+                // ✅ PAINT/ERASE updates come from value-changed (drag painting)
+                _step.OnCellValueChanged -= OnStepValueChanged;
+                _step.OnCellValueChanged += OnStepValueChanged;
+
+                // ✅ Debounce so painting doesn't rebuild every single drag tick
+                _seqRebuildJob?.Pause();
+                _seqRebuildJob = _step.schedule.Execute(() =>
+                {
+                    if (!_seqDirty) return;
+                    _seqDirty = false;
+                    RebuildHelmSequenceFromGrid();
+                }).Every(30); // faster response while painting
+
                 // default brush
                 // ✅ cache ALL note labels & colors
                 CacheAllPaletteValues();
@@ -201,6 +217,32 @@ namespace KMusic.UI
             _piano.OnCellPicked += OnPianoPicked;
             _step.OnCellClicked += OnStepClicked;
 
+            // ✅ Rebuild sequencer when user PAINTS/ERASES (dragging triggers value-changed)
+            _step.OnCellValueChanged -= OnStepValueChanged;
+            _step.OnCellValueChanged += OnStepValueChanged;
+
+            // ✅ Debounce rebuild so drag painting doesn't rebuild constantly
+            _seqRebuildJob?.Pause();
+            _seqRebuildJob = _step.schedule.Execute(() =>
+            {
+                if (!_seqDirty) return;
+                _seqDirty = false;
+                RebuildHelmSequenceFromGrid();
+            }).Every(50);
+
+            // Rebuild sequencer when user PAINTS/ERASES (dragging triggers value-changed, not just clicks)
+            _step.OnCellValueChanged -= OnStepValueChanged;
+            _step.OnCellValueChanged += OnStepValueChanged;
+
+            // Debounce rebuild so drag painting doesn't rebuild 60x/sec
+            _seqRebuildJob?.Pause();
+            _seqRebuildJob = _step.schedule.Execute(() =>
+            {
+                if (!_seqDirty) return;
+                _seqDirty = false;
+                RebuildHelmSequenceFromGrid();
+            }).Every(50); // 20fps rebuild while painting feels fine            
+
             // ✅ CRITICAL: cache the ENTIRE palette so loaded steps know their label/color
             CacheAllPaletteValues();
 
@@ -210,8 +252,16 @@ namespace KMusic.UI
 
             LoadStepGrid();
             RebuildHelmSequenceFromGrid();
+            _sequenceBuilt = true; // so Update() doesn't need to rebuild again immediately
             return true;
         }
+
+        private void OnStepValueChanged(int r, int c, int v)
+        {
+            // Mark dirty; scheduled job will rebuild soon.
+            _seqDirty = true;
+        } 
+
         private void CacheAllPaletteValues()
         {
             if (_piano == null) return;
@@ -231,8 +281,19 @@ namespace KMusic.UI
         }        
         private void Unbind()
         {
-            if (_piano != null) _piano.OnCellPicked -= OnPianoPicked;
-            if (_step != null) _step.OnCellClicked -= OnStepClicked;
+            if (_piano != null)
+                _piano.OnCellPicked -= OnPianoPicked;
+
+            if (_step != null)
+            {
+                _step.OnCellClicked -= OnStepClicked;
+                _step.OnCellValueChanged -= OnStepValueChanged;
+            }
+
+            _seqRebuildJob?.Pause();
+            _seqRebuildJob = null;
+            _seqDirty = false;
+
             _piano = null;
             _step = null;
             _root = null;
