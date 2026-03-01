@@ -6,8 +6,8 @@
       <ui:VisualElement class="km-presetbar">
         <ui:Label name="PresetLabel" class="km-presetlabel" text="Preset: PROJECT 0" />
       </ui:VisualElement>
-      <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text="▶" />
-      <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text="■" />
+      <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text="PLAY" />
+      <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text="STOP" />
       <ui:Button name="NewFileButton" class="km-pillbtn" text="NEW" />
       <ui:Button name="LoadButton" class="km-pillbtn" text="LOAD" />
     </ui:VisualElement>
@@ -23,7 +23,7 @@
           </ui:VisualElement>
 
           <km:StepGrid name="StepGrid" />
-          
+
         </ui:VisualElement>
 
         <ui:VisualElement class="km-card">
@@ -164,9 +164,9 @@
               <ui:VisualElement class="km-drum-kit-row">
                 <ui:Label class="km-drum-kit-label" text="KIT"/>
                 <ui:VisualElement class="km-kit-spacer"/>
-                <ui:Button name="KitPrev" class="km-kit-nav" text="◀"/>
+                <ui:Button name="KitPrev" class="km-kit-nav" text="PREV"/>
                 <ui:Label name="KitName" class="km-kit-name" text="707"/>
-                <ui:Button name="KitNext" class="km-kit-nav" text="▶"/>
+                <ui:Button name="KitNext" class="km-kit-nav" text="NEXT"/>
               </ui:VisualElement>         
           </ui:VisualElement>
 

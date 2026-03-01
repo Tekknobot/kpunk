@@ -390,37 +390,6 @@ public class KMusicDrumSequencer : MonoBehaviour
         StartCoroutine(BindWhenReady()); // ✅ THIS WAS MISSING
 
         var root = uiDocument.rootVisualElement;
-
-        root.schedule.Execute(() =>
-        {
-            var playBtn = root.Q<Button>("PlayButton");
-            var stopBtn = root.Q<Button>("StopButton");
-            var kitPrev = root.Q<Button>("KitPrev");
-            var kitNext = root.Q<Button>("KitNext");
-
-            // Some Android builds can fail to render UTF-8 glyphs embedded in UXML.
-            // Force the transport/nav glyphs at runtime using unicode escapes.
-            if (playBtn != null) playBtn.text = "\u25B6"; // ▶
-            if (stopBtn != null) stopBtn.text = "\u25A0"; // ■
-            if (kitPrev != null) kitPrev.text = "\u25C0"; // ◀
-            if (kitNext != null) kitNext.text = "\u25B6"; // ▶
-
-            Debug.Log($"[DrumSequencer] playBtn={playBtn!=null} stopBtn={stopBtn!=null}");
-
-            if (playBtn != null)
-                playBtn.clicked += () =>
-                {
-                    Debug.Log("PLAY CLICK");
-                    OnPlayClicked(); // ✅ call the real play that sets dsp start etc
-                };
-
-            if (stopBtn != null)
-                stopBtn.clicked += () =>
-                {
-                    Debug.Log("STOP CLICK");
-                    OnStopClicked();
-                };
-        });
     }
 
     private void HookKitUI(VisualElement root)
