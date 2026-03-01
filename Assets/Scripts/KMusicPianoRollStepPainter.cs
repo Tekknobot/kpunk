@@ -136,8 +136,13 @@ namespace KMusic.UI
                 {
                     if (!_seqDirty) return;
                     _seqDirty = false;
+
                     RebuildHelmSequenceFromGrid();
-                }).Every(30); // faster response while painting
+
+                    // ✅ Forces AudioHelm to re-read the updated note list (older versions need this)
+                    helmSequencer.enabled = false;
+                    helmSequencer.enabled = true;
+                }).Every(30);
 
                 // default brush
                 // ✅ cache ALL note labels & colors
@@ -149,6 +154,10 @@ namespace KMusic.UI
 
                 // LOAD after wiring
                 LoadStepGrid();
+                RebuildHelmSequenceFromGrid();
+                helmSequencer.enabled = false;
+                helmSequencer.enabled = true;
+                _sequenceBuilt = true;
 
                 // reset transport tracking so first tick plays correctly
                 _lastTransportStep = -999;
@@ -179,14 +188,6 @@ namespace KMusic.UI
                 helmSequencer.AddNote(midi, start, end, 1.0f);
             }
         }        
-        private IEnumerator BindWhenReady()
-        {
-            yield return null;
-            yield return null;
-
-            while (!Bind())
-                yield return null;
-        }
 
         private void OnDisable()
         {
@@ -194,73 +195,15 @@ namespace KMusic.UI
             _rebindLoop?.Pause();
             Unbind();
         }
-        private bool Bind()
-        {
-            if (_doc == null) return false;
-            _root = _doc.rootVisualElement;
-            if (_root == null) return false;
-
-            _piano = _root.Q<PianoRollGrid>(pianoRollName);
-            _step  = _root.Q<StepGrid>(stepGridName);
-
-            if (verboseLogs)
-                Debug.Log($"[PianoRollPainter] piano found={_piano!=null} step found={_step!=null}");
-
-            if (_piano == null || _step == null)
-                return false;
-
-            _piano.EnablePickerMode(true);
-
-            _step.EnableValueLabels(true, FormatValueLabel);
-            _step.EnableValueTint(true, TintForValue);
-
-            _piano.OnCellPicked += OnPianoPicked;
-            _step.OnCellClicked += OnStepClicked;
-
-            // ✅ Rebuild sequencer when user PAINTS/ERASES (dragging triggers value-changed)
-            _step.OnCellValueChanged -= OnStepValueChanged;
-            _step.OnCellValueChanged += OnStepValueChanged;
-
-            // ✅ Debounce rebuild so drag painting doesn't rebuild constantly
-            _seqRebuildJob?.Pause();
-            _seqRebuildJob = _step.schedule.Execute(() =>
-            {
-                if (!_seqDirty) return;
-                _seqDirty = false;
-                RebuildHelmSequenceFromGrid();
-            }).Every(50);
-
-            // Rebuild sequencer when user PAINTS/ERASES (dragging triggers value-changed, not just clicks)
-            _step.OnCellValueChanged -= OnStepValueChanged;
-            _step.OnCellValueChanged += OnStepValueChanged;
-
-            // Debounce rebuild so drag painting doesn't rebuild 60x/sec
-            _seqRebuildJob?.Pause();
-            _seqRebuildJob = _step.schedule.Execute(() =>
-            {
-                if (!_seqDirty) return;
-                _seqDirty = false;
-                RebuildHelmSequenceFromGrid();
-            }).Every(50); // 20fps rebuild while painting feels fine            
-
-            // ✅ CRITICAL: cache the ENTIRE palette so loaded steps know their label/color
-            CacheAllPaletteValues();
-
-            // default brush
-            int v0 = _piano.GetCellValueId(0, 0);
-            _step.SetPaintValue(v0);
-
-            LoadStepGrid();
-            RebuildHelmSequenceFromGrid();
-            _sequenceBuilt = true; // so Update() doesn't need to rebuild again immediately
-            return true;
-        }
 
         private void OnStepValueChanged(int r, int c, int v)
         {
-            // Mark dirty; scheduled job will rebuild soon.
             _seqDirty = true;
-        } 
+
+            // ✅ Audition only when a note is placed (v > 0), never when erased (v == 0)
+            if (v > 0)
+                PlayHelmValueId(v, 1.0f, 0.18f);
+        }
 
         private void CacheAllPaletteValues()
         {
@@ -321,18 +264,21 @@ namespace KMusic.UI
             if (_step == null) return;
 
             int v = _step.GetValue(r, c);
-            if (v <= 0) return;
 
-            _step.SetPaintValue(v);
-            RebuildHelmSequenceFromGrid();
+            // Always let sequencer catch up on any interaction (paint OR erase)
+            _seqDirty = true;
 
-            // preview the stored note when clicking a painted step
-            PlayHelmValueId(v, velocity: 1.0f, length: 0.18f);
+            // Brush follows whatever is currently in the cell (if any)
+            if (v > 0)
+                _step.SetPaintValue(v);
+
+            // ✅ Audition ONLY when PAINTING / selecting a filled cell (never when erasing)
+            if (v > 0)
+                PlayHelmValueId(v, velocity: 1.0f, length: 0.18f);
 
             if (verboseLogs)
-                Debug.Log($"Step clicked -> brush={v}");
+                Debug.Log($"[PianoRollPainter] Step clicked r={r} c={c} v={v}");
         }
-
         private float GetTempoBpm()
         {
             // Try to match whatever your drum sequencer uses (KMusicApp Bus "tempo").
