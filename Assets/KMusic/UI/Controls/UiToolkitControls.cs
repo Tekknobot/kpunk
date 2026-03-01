@@ -610,7 +610,7 @@ namespace KMusic.UI
             if (_playheadStep >= 0)
                 UpdateCellVisual(_playheadStep / Cols, _playheadStep % Cols);
         }
-        
+
         private void ClearPlayheadVisual()
         {
             if (_playheadStep < 0)
@@ -708,6 +708,56 @@ namespace KMusic.UI
 
         public int GetValue(int r, int c) => _val[r, c];
 
+        /// <summary>
+        /// Export current grid values as a copy (Rows x Cols).
+        /// </summary>
+        public int[,] ExportValues()
+        {
+            var dst = new int[Rows, Cols];
+            Array.Copy(_val, dst, _val.Length);
+            return dst;
+        }
+
+        /// <summary>
+        /// Export current grid values as a flat array (length Rows*Cols).
+        /// </summary>
+        public int[] ExportValuesFlat()
+        {
+            var dst = new int[Rows * Cols];
+            int i = 0;
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    dst[i++] = _val[r, c];
+            return dst;
+        }
+
+        /// <summary>
+        /// Import values into the grid.
+        /// </summary>
+        public void ImportValues(int[,] src, bool fireEvent = false)
+        {
+            if (src == null) return;
+            if (src.GetLength(0) != Rows || src.GetLength(1) != Cols) return;
+
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    SetValue(r, c, src[r, c], fireEvent: fireEvent);
+        }
+
+        /// <summary>
+        /// Import values from a flat array (length must be Rows*Cols).
+        /// </summary>
+        public void ImportValuesFlat(int[] src, bool fireEvent = false)
+        {
+            if (src == null) return;
+            if (src.Length != Rows * Cols) return;
+
+            int i = 0;
+            for (int r = 0; r < Rows; r++)
+                for (int c = 0; c < Cols; c++)
+                    SetValue(r, c, src[i++], fireEvent: fireEvent);
+        }
+
         public void SetValue(int r, int c, int v, bool fireEvent = true)
         {
             _val[r, c] = v;
@@ -767,23 +817,6 @@ namespace KMusic.UI
                     tag.style.display = DisplayStyle.None;
                 }
             }
-        }
-
-        public int[,] ExportValues()
-        {
-            var copy = new int[Rows, Cols];
-            Array.Copy(_val, copy, _val.Length);
-            return copy;
-        }
-
-        public void ImportValues(int[,] src, bool fireEvent = false)
-        {
-            if (src == null || src.GetLength(0) != Rows || src.GetLength(1) != Cols)
-                return;
-
-            for (int r = 0; r < Rows; r++)
-                for (int c = 0; c < Cols; c++)
-                    SetValue(r, c, src[r, c], fireEvent);
         }
 
         public bool[,] ExportBools()

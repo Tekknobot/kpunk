@@ -6,6 +6,8 @@ namespace KMusic
 {
     public sealed class KMusicApp : MonoBehaviour
     {
+        private const string PrefKey_Bus = "kmusic.bus";
+
         [Header("UI Toolkit")]
         public VisualTreeAsset mainUxml;
         public StyleSheet darkTheme;
@@ -48,6 +50,25 @@ _doc.panelSettings = ps;
                 _doc.visualTreeAsset = mainUxml;
 
             BuildParameters();
+
+            // Load saved mixer/fader values (if present) after defaults are created.
+            KMusicSaveState.LoadBus(_bus, PrefKey_Bus);
+        }
+
+        private void OnApplicationPause(bool pause)
+        {
+            if (pause)
+                KMusicSaveState.SaveBus(_bus, PrefKey_Bus);
+        }
+
+        private void OnApplicationQuit()
+        {
+            KMusicSaveState.SaveBus(_bus, PrefKey_Bus);
+        }
+
+        private void OnDisable()
+        {
+            KMusicSaveState.SaveBus(_bus, PrefKey_Bus);
         }
 
         private void OnEnable()

@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
+using AudioHelm;
 
 namespace KMusic.UI
 {
@@ -12,6 +13,8 @@ namespace KMusic.UI
     [RequireComponent(typeof(UIDocument))]
     public class KMusicPianoRollStepPainter : MonoBehaviour
     {
+        private const string PrefKey_SeqStepGrid = "kmusic.seq.stepgrid";
+
         [Header("UXML element names")]
         public string pianoRollName = "SeqPianoRoll";
         public string stepGridName = "StepGrid";
@@ -24,6 +27,12 @@ namespace KMusic.UI
         private PianoRollGrid _piano;
         private StepGrid _step;
 
+        private IVisualElementScheduledItem _rebindLoop;
+        private StepGrid _lastStep;
+        private PianoRollGrid _lastPiano;
+
+        private HelmController _helm;
+
         // valueId -> label/color
         private readonly Dictionary<int, string> _labelByValue = new();
         private readonly Dictionary<int, Color> _colorByValue = new();
@@ -31,7 +40,43 @@ namespace KMusic.UI
         private void OnEnable()
         {
             _doc = GetComponent<UIDocument>();
-            StartCoroutine(BindWhenReady());
+            _helm = FindObjectOfType<HelmController>();
+            if (_doc == null) return;
+
+            var root = _doc.rootVisualElement;
+            if (root == null) return;
+
+            _rebindLoop?.Pause();
+            _rebindLoop = root.schedule.Execute(() =>
+            {
+                var piano = root.Q<PianoRollGrid>(pianoRollName);
+                var step  = root.Q<StepGrid>(stepGridName);
+                if (piano == null || step == null) return;
+
+                // only rebind if instances changed (UI rebuilt)
+                if (piano == _lastPiano && step == _lastStep) return;
+                _lastPiano = piano;
+                _lastStep = step;
+
+                Unbind();
+                _piano = piano;
+                _step = step;
+
+                _piano.EnablePickerMode(true);
+                _step.EnableValueLabels(true, FormatValueLabel);
+                _step.EnableValueTint(true, TintForValue);
+
+                _piano.OnCellPicked += OnPianoPicked;
+                _step.OnCellClicked += OnStepClicked;
+
+                // default brush
+                int v0 = _piano.GetCellValueId(0, 0);
+                CacheValue(v0, _piano.GetCellLabel(0, 0), _piano.GetCellColor(0, 0));
+                _step.SetPaintValue(v0);
+
+                // LOAD after wiring
+                LoadStepGrid();
+            }).Every(100);
         }
 
         private IEnumerator BindWhenReady()
@@ -45,9 +90,10 @@ namespace KMusic.UI
 
         private void OnDisable()
         {
+            SaveStepGrid();
+            _rebindLoop?.Pause();
             Unbind();
         }
-
         private bool Bind()
         {
             if (_doc == null) return false;
@@ -78,6 +124,9 @@ namespace KMusic.UI
             CacheValue(v0, _piano.GetCellLabel(0, 0), _piano.GetCellColor(0, 0));
             _step.SetPaintValue(v0);
 
+            // Restore saved sequencer pattern (note ids) if any.
+            LoadStepGrid();
+
             return true;
         }
 
@@ -97,6 +146,9 @@ namespace KMusic.UI
             CacheValue(valueId, label, _piano.GetCellColor(r, c));
             _step.SetPaintValue(valueId);
 
+            // Audition the picked note on the synth.
+            TryAuditionSynthNote(r, c);
+
             if (verboseLogs)
                 Debug.Log($"Picked {label} -> brush={valueId}");
         }
@@ -112,6 +164,59 @@ namespace KMusic.UI
 
             if (verboseLogs)
                 Debug.Log($"Step clicked -> brush={v}");
+        }
+
+        private void TryAuditionSynthNote(int r, int c)
+        {
+            if (_helm == null) _helm = FindObjectOfType<HelmController>();
+            if (_helm == null) return;
+
+            string lbl = _piano != null ? _piano.GetCellLabel(r, c) : null;
+            if (string.IsNullOrEmpty(lbl)) return;
+
+            int midi = MidiFromLabel(lbl, r);
+            if (midi < 0) return;
+
+            // Short note so it feels like a "preview".
+            _helm.NoteOn(midi, 1.0f, 0.18f);
+        }
+
+        // Map the A..G labels from your 6x8 palette to a musically sensible MIDI range.
+        // Top half is a bit higher so it feels responsive.
+        private static int MidiFromLabel(string label, int row)
+        {
+            int semitone;
+            switch (label)
+            {
+                case "C": semitone = 0; break;
+                case "D": semitone = 2; break;
+                case "E": semitone = 4; break;
+                case "F": semitone = 5; break;
+                case "G": semitone = 7; break;
+                case "A": semitone = 9; break;
+                case "B": semitone = 11; break;
+                default: return -1;
+            }
+
+            int octave = (row < 3) ? 5 : 4; // C5..B5 then C4..B4
+            return (octave + 1) * 12 + semitone;
+        }
+
+        private void SaveStepGrid()
+        {
+            if (_step == null) return;
+            KMusic.KMusicSaveState.SaveIntArray(PrefKey_SeqStepGrid, _step.ExportValuesFlat());
+        }
+
+        private void LoadStepGrid()
+        {
+            if (_step == null) return;
+            var v = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SeqStepGrid, _step.RowCount * _step.ColCount);
+            if (v == null) return;
+            _step.ImportValuesFlat(v, fireEvent: false);
+            _step.RefreshAll();
+
+            Debug.Log($"LOAD {PrefKey_SeqStepGrid} hasKey={PlayerPrefs.HasKey(PrefKey_SeqStepGrid)}");
         }
 
         private void CacheValue(int valueId, string label, Color color)

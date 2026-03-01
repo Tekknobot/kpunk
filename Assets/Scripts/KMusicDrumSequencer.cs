@@ -26,8 +26,21 @@ using AudioHelm;
 [RequireComponent(typeof(UIDocument))]
 public class KMusicDrumSequencer : MonoBehaviour
 {
+    private const string PrefKey_DrumStepMask = "kmusic.drum.stepmask";
+    private const string PrefKey_DrumMutes = "kmusic.drum.mutes";
+    private const string PrefKey_DrumActive = "kmusic.drum.active";
+    private const string PrefKey_DrumKitIndex = "kmusic.drum.kitIndex";
+
     private StepGrid _drumGrid;
+    private IVisualElementScheduledItem _rebindLoop;
+    private StepGrid _lastBoundDrumGrid;
+
     private readonly Dictionary<int, AudioSource> _drumSources = new();
+
+    private KMusicApp _app;
+    private ParameterBus _bus;
+
+    private readonly bool[] _drumMute = new bool[8];
 
     private AudioSource GetOrCreateDrumSource(int drumId, AudioClip clip)
     {
@@ -119,7 +132,7 @@ public class KMusicDrumSequencer : MonoBehaviour
     private UnityEngine.UIElements.Button _kitNextBtn;
 
     private const int LANES = 8;                        // 8 drums max in this UI
-    private readonly byte[] _stepMask = new byte[16];   // step -> bitmask (bit0=kick ... bit7=crash)
+    private byte[] _stepMask = new byte[16];
 
     private UIDocument _doc;
     private VisualElement _root;
@@ -131,7 +144,6 @@ public class KMusicDrumSequencer : MonoBehaviour
     private StepGrid _gridSample;
     private StepGrid _gridDrum;
     private Label _bpmLabel;
-    private bool[] _drumMute = new bool[9]; // index 1..8
 
     private int _activeDrumId = 1; // current "view/brush" drum id 1..8
 
@@ -294,15 +306,20 @@ public class KMusicDrumSequencer : MonoBehaviour
         {8, 49}, // crash
     };
 
-    private KMusicApp _app;
-
     private void Awake()
     {
         _doc = GetComponent<UIDocument>();
         _app = GetComponent<KMusicApp>();
+        if (_app == null)
+            _app = FindObjectOfType<KMusicApp>();
 
         EnsureAudioHelmClock();
         EnsureSamplerEngine();
+
+        // Restore saved kit index before loading kits.
+        if (PlayerPrefs.HasKey(PrefKey_DrumKitIndex))
+            _kitIndex = Mathf.Max(0, PlayerPrefs.GetInt(PrefKey_DrumKitIndex, 0));
+
         LoadKits();
 
 #if UNITY_EDITOR
@@ -347,6 +364,15 @@ public class KMusicDrumSequencer : MonoBehaviour
             {
                 var playBtn = root.Q<Button>("PlayButton");
                 var stopBtn = root.Q<Button>("StopButton");
+                var kitPrev = root.Q<Button>("KitPrev");
+                var kitNext = root.Q<Button>("KitNext");
+
+                // Some Android builds can fail to render UTF-8 glyphs embedded in UXML.
+                // Force the transport/nav glyphs at runtime using unicode escapes.
+                if (playBtn != null) playBtn.text = "\u25B6"; // ▶
+                if (stopBtn != null) stopBtn.text = "\u25A0"; // ■
+                if (kitPrev != null) kitPrev.text = "\u25C0"; // ◀
+                if (kitNext != null) kitNext.text = "\u25B6"; // ▶
 
                 Debug.Log($"[DrumSequencer] playBtn={playBtn!=null} stopBtn={stopBtn!=null}");
 
@@ -436,6 +462,10 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (_playBtn == null || _stopBtn == null || _gridDrum == null)
             return false;
 
+        // Cache bus for drum volume faders.
+        if (_app == null) _app = FindObjectOfType<KMusicApp>();
+        _bus = _app != null ? _app.Bus : null;
+
         // --- Kit UI ---
         _kitNameLabel = _root.Q<Label>("KitName");
         _kitPrevBtn   = _root.Q<Button>("KitPrev");
@@ -445,6 +475,16 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (_kitNextBtn != null) _kitNextBtn.clicked += NextKit;
 
         WireDrumButtons();
+        WireMuteButtons(_root);
+
+        // Restore saved pattern / mutes / active drum.
+        LoadDrumState();
+
+        // Ensure currently loaded kit matches restored index.
+        if (_kits != null && _kits.Length > 0)
+            _kitIndex = Mathf.Clamp(_kitIndex, 0, _kits.Length - 1);
+        if (_kits != null && _kits.Length > 0)
+            ApplyKit(_kitIndex);
 
         // --- Grid visuals ---
         _gridDrum.EnableValueLabels(true, DrumLabel);
@@ -467,8 +507,114 @@ public class KMusicDrumSequencer : MonoBehaviour
         // --- Initial draw from existing mask ---
         RefreshGridForActiveDrum();
 
+        // Make sure mute visuals match restored data.
+        WireMuteButtons(_root);
+
         UpdateBpmLabel();
         return true;
+    }
+
+    private void WireMuteButtons(VisualElement root)
+    {
+        if (root == null) return;
+
+        for (int i = 0; i < 8; i++)
+        {
+            int idx = i;
+            string name = $"DrumMute{(i + 1):00}";
+            var b = root.Q<Button>(name);
+            if (b == null) continue;
+
+            const string wiredClass = "km-drum-mute--wired";
+            if (!b.ClassListContains(wiredClass))
+            {
+                b.AddToClassList(wiredClass);
+                b.clicked += () =>
+                {
+                    _drumMute[idx] = !_drumMute[idx];
+                    ApplyMuteButtonVisual(b, _drumMute[idx]);
+                    SaveDrumState();
+                };
+            }
+
+            ApplyMuteButtonVisual(b, _drumMute[idx]);
+        }
+    }
+
+    private static void ApplyMuteButtonVisual(Button b, bool muted)
+    {
+        if (b == null) return;
+        if (muted) b.AddToClassList("is-muted");
+        else b.RemoveFromClassList("is-muted");
+    }
+
+    private float GetDrumVolume01To08(int drumId)
+    {
+        drumId = Mathf.Clamp(drumId, 1, 8);
+        if (_bus == null) return 1f;
+        string id = $"drum.vol{drumId:00}";
+        return Mathf.Clamp01(_bus.GetValue(id));
+    }
+
+    private bool IsDrumMuted(int drumId)
+    {
+        drumId = Mathf.Clamp(drumId, 1, 8);
+        return _drumMute[drumId - 1];
+    }
+
+    private void SaveDrumState()
+    {
+        try
+        {
+            if (_stepMask != null)
+            {
+                var b = new byte[_stepMask.Length];
+                for (int i = 0; i < _stepMask.Length; i++)
+                    b[i] = _stepMask[i];
+                KMusicSaveState.SaveBytes(PrefKey_DrumStepMask, b);
+            }
+
+            KMusicSaveState.SaveBools(PrefKey_DrumMutes, _drumMute);
+            PlayerPrefs.SetInt(PrefKey_DrumActive, _activeDrumId);
+            PlayerPrefs.SetInt(PrefKey_DrumKitIndex, _kitIndex);
+            PlayerPrefs.Save();
+        }
+        catch { }
+    }
+
+    private void LoadDrumState()
+    {
+        var m = KMusicSaveState.LoadBools(PrefKey_DrumMutes, 8);
+        if (m != null) Array.Copy(m, _drumMute, 8);
+
+        var b = KMusicSaveState.LoadBytes(PrefKey_DrumStepMask, 16);
+        if (b != null)
+        {
+            if (_stepMask == null || _stepMask.Length != 16)
+                _stepMask = new byte[16];
+            Array.Copy(b, _stepMask, 16);
+        }
+
+        if (PlayerPrefs.HasKey(PrefKey_DrumActive))
+            _activeDrumId = (byte)Mathf.Clamp(PlayerPrefs.GetInt(PrefKey_DrumActive, 1), 1, 8);
+
+        if (PlayerPrefs.HasKey(PrefKey_DrumKitIndex))
+            _kitIndex = Mathf.Max(0, PlayerPrefs.GetInt(PrefKey_DrumKitIndex, 0));
+    }
+
+    private void OnApplicationPause(bool pause)
+    {
+        if (pause) SaveDrumState();
+    }
+
+    private void OnApplicationQuit()
+    {
+        SaveDrumState();
+    }
+
+    private void OnDestroy()
+    {
+        SaveDrumState();
     }
 
     public void SetStepLane(int step, int lane, bool on)
@@ -532,6 +678,8 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         if (verbose)
             Debug.Log($"[KMusicDrumSequencer] Applied kit {index+1}/{_kits.Length}: {kit.kitName}");
+
+        SaveDrumState();
     }
 
     private void RebuildSamplerKeyzonesFromClipMap()
@@ -565,6 +713,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private void OnDisable()
     {
+        SaveDrumState();
         if (_grid != null)
         {
             _grid.OnCellValueChanged -= OnGridValueChanged;
@@ -619,6 +768,11 @@ public class KMusicDrumSequencer : MonoBehaviour
             if (i + 1 == _activeDrumId) b.AddToClassList("km-drum-btn--active");
             else b.RemoveFromClassList("km-drum-btn--active");
         }
+
+        // Audition when selecting a drum, so the user can hear it before painting.
+        TriggerDrumNow(_activeDrumId);
+
+        SaveDrumState();
     }
     private void RefreshGridView()
     {
@@ -677,6 +831,8 @@ public class KMusicDrumSequencer : MonoBehaviour
         // ✅ Audition on edit (even while playing)
         if (v > 0)
             TriggerDrumNow(_activeDrumId);
+
+        SaveDrumState();
 
         if (verbose)
             Debug.Log($"[DRUM GRID] r={r} c={c} step={step} active={_activeDrumId} v={v} shown={shown} mask=0x{_stepMask[step]:X2}");
@@ -848,7 +1004,9 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (verbose)
             Debug.Log($"[KMusicDrumSequencer] TRIG drumId={drumId} note={note} clip={clip.name}");
 
-        _sampler.NoteOnScheduled(note, 1.0f, start, end);
+        float vel = GetDrumGain(drumId);
+        if (vel > 0f)
+            _sampler.NoteOnScheduled(note, vel, start, end);
     }
 
     private float GetBpm()
@@ -992,6 +1150,9 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private float GetDrumGain(int drumId)
     {
+        if (IsDrumMuted(drumId))
+            return 0f;
+
         float linear = 1f;
 
         if (_app != null && _app.Bus != null)

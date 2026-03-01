@@ -6,13 +6,19 @@ using KMusic.UI;
 
 public class KMusicSampleSequencerUI : MonoBehaviour
 {
+    private const string PrefKey_SampleStepGrid = "kmusic.sample.stepgrid";
+
     [SerializeField] private UIDocument doc;
 
     private StepGrid sampleGrid;
+    private StepGrid _lastBoundGrid;
+
     private readonly Button[] chopBtns = new Button[16];
 
     private int activeChop = 1;                 // 1..16
     private readonly int[,] samplePattern = new int[2, 8]; // each cell = chop id (0 empty)
+
+    private IVisualElementScheduledItem _rebindLoop;
 
     private void Awake()
     {
@@ -22,67 +28,69 @@ public class KMusicSampleSequencerUI : MonoBehaviour
 
     private void OnEnable()
     {
-        Debug.Log("[KMusicSampleSequencerUI] OnEnable fired");
-
-        if (!doc)
-        {
-            Debug.LogError("[KMusicSampleSequencerUI] UIDocument not assigned and not found on this GameObject.");
-            return;
-        }
+        if (!doc) doc = GetComponent<UIDocument>();
+        if (!doc) return;
 
         var root = doc.rootVisualElement;
-        if (root == null)
-        {
-            Debug.LogError("[KMusicSampleSequencerUI] rootVisualElement is null.");
-            return;
-        }
+        if (root == null) return;
 
-        // UI Toolkit: wait a tick so the visual tree is fully built (esp. if tabs swap content)
-        root.schedule.Execute(() =>
+        // Poll because tabs often rebuild visual tree; we want to catch the grid when it exists.
+        _rebindLoop?.Pause();
+        _rebindLoop = root.schedule.Execute(() =>
         {
-            // ---- FIND GRID (real fallbacks; your project commonly uses SamplerStepGrid) ----
-            sampleGrid =
+            var g =
                 root.Q<StepGrid>("SamplerStepGrid") ??
                 root.Q<StepGrid>("SampleStepGrid") ??
                 root.Q<StepGrid>("SampleSequencerGrid") ??
                 root.Q<StepGrid>("SampleGrid");
 
-            Debug.Log($"[KMusicSampleSequencerUI] sampleGrid found={(sampleGrid != null)}");
+            if (g == null) return;
 
-            if (sampleGrid == null)
-            {
-                Debug.LogError("[KMusicSampleSequencerUI] sample StepGrid not found. Check your UXML <km:StepGrid name=\"...\">");
-                return;
-            }
+            // If UI rebuilt, we'll get a new StepGrid instance. Rebind + reload.
+            if (g == _lastBoundGrid) return;
+            _lastBoundGrid = g;
 
-            // ---- FIND CHOP BUTTONS (Chop01..Chop16) ----
-            for (int i = 0; i < 16; i++)
-            {
-                string name = $"Chop{(i + 1):00}";
-                chopBtns[i] = root.Q<Button>(name);
-                if (chopBtns[i] == null)
-                    Debug.LogWarning($"[KMusicSampleSequencerUI] Button '{name}' not found in UXML.");
-            }
+            sampleGrid = g;
 
+            // do your normal bind/wire
             WireChops();
             WireGrid();
 
-            // ---- LABELS ----
             sampleGrid.EnableValueLabels(true, v => (v >= 1 && v <= 16) ? v.ToString("00") : "");
-
-            // Optional per-value tint if your StepGrid has it
             TryEnableValueTint(sampleGrid, true, GetChopColor);
 
-            // Force a refresh so labels/tints show immediately
+            // LOAD AFTER everything is wired
+            var saved = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SampleStepGrid, sampleGrid.RowCount * sampleGrid.ColCount);
+            if (saved != null)
+                sampleGrid.ImportValuesFlat(saved, fireEvent: false);
+            else
+                sampleGrid.ClearAll();
+
             ForceGridRefresh(sampleGrid);
+            SelectChop(activeChop);
+        }).Every(100); // 10x per second is fine for UI binding
+    }
 
-            // Start clean + set default brush
-            sampleGrid.ClearAll();
-            ForceGridRefresh(sampleGrid);
+    private void OnDisable()
+    {
+        SavePattern();
+        _rebindLoop?.Pause();
+    }
 
-            SelectChop(1);
+    private void OnApplicationPause(bool pause)
+    {
+        if (pause) SavePattern();
+    }
 
-        }).ExecuteLater(0);
+    private void OnApplicationQuit()
+    {
+        SavePattern();
+    }
+
+    private void SavePattern()
+    {
+        if (sampleGrid == null) return;
+        KMusic.KMusicSaveState.SaveIntArray(PrefKey_SampleStepGrid, sampleGrid.ExportValuesFlat());
     }
 
     private void WireChops()
