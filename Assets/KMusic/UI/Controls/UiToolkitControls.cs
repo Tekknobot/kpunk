@@ -557,6 +557,23 @@ namespace KMusic.UI
         // Great for drum sequencers (toggle on/off).
         private bool _toggleEraseOnSameValue = false;
 
+        private static string DrumLabelForValue(int v)
+        {
+            if (v <= 0) return "";
+            switch (v)
+            {
+                case 1: return "K";
+                case 2: return "S";
+                case 3: return "C";
+                case 4: return "HC";
+                case 5: return "HO";
+                case 6: return "RD";
+                case 7: return "RM";
+                case 8: return "CR";
+                default: return v.ToString();
+            }
+        }
+
         // Fired when user clicks/paints a cell
         public event Action<int, int, int> OnCellValueChanged;
 
@@ -581,16 +598,61 @@ namespace KMusic.UI
         /// <summary>
         /// Set current playhead step (0..15). Highlights the corresponding cell.
         /// </summary>
-        public void SetPlayhead(int stepIndex)
+        private int _playhead = -1;
+
+        public void SetPlayhead(int index)
         {
-            if (stepIndex < -1) stepIndex = -1;
-            if (stepIndex >= Rows * Cols) stepIndex %= (Rows * Cols);
-            if (_playheadIndex == stepIndex) return;
+            if (_playheadIndex == index) return;
+
+            int prev = _playheadIndex;
+            _playheadIndex = index;
+
+            // update old cell (remove playhead class)
+            if (prev >= 0)
+                UpdateCellVisual(prev / Cols, prev % Cols);
+
+            // update new cell (add playhead class)
+            if (_playheadIndex >= 0)
+                UpdateCellVisual(_playheadIndex / Cols, _playheadIndex % Cols);
+        }
+        
+        // inside StepGrid class
+        private VisualElement _playheadCell = null;
+
+        public void SetPlayheadIndex(int stepIndex)
+        {
+            // clamp to valid range, or clear
+            if (stepIndex < 0 || stepIndex >= (Rows * Cols))
+            {
+                ClearPlayhead();
+                return;
+            }
+
+            if (_playheadIndex == stepIndex)
+                return;
+
             _playheadIndex = stepIndex;
 
-            for (int r = 0; r < Rows; r++)
-                for (int c = 0; c < Cols; c++)
-                    UpdateCellVisual(r, c);
+            // remove class from previous
+            if (_playheadCell != null)
+                _playheadCell.RemoveFromClassList("km-playhead");
+
+            int r = stepIndex / Cols; // 0..1
+            int c = stepIndex % Cols; // 0..7
+
+            _playheadCell = _cells[r, c];
+            if (_playheadCell != null)
+                _playheadCell.AddToClassList("km-playhead");
+        }
+
+        public void ClearPlayhead()
+        {
+            _playheadIndex = -1;
+            if (_playheadCell != null)
+            {
+                _playheadCell.RemoveFromClassList("km-playhead");
+                _playheadCell = null;
+            }
         }
 
         public void SetPaintValue(int v) => _paintValue = Mathf.Clamp(v, 0, 999);
@@ -662,6 +724,9 @@ namespace KMusic.UI
             int v = GetValue(r, c);
             var cell = _cells[r, c];
             if (cell == null) return;
+
+            // ✅ ensure the CSS selector can match if you keep `.km-step.km-step--playhead`
+            cell.AddToClassList("km-step");
 
             // playhead class
             int idx = r * Cols + c;

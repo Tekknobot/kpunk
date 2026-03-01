@@ -168,11 +168,18 @@ public class KMusicSamplerPaintUI : MonoBehaviour
 
     private void LoadDrumLaneToGrid(int lane)
     {
-        if(drumGrid==null) return;
-        drumGrid.ClearAll();
-        drumGrid.ImportBools(drumPatterns[lane],false);
-    }
+        if (drumGrid == null) return;
 
+        drumGrid.ClearAll();
+
+        // bool pattern -> show the CURRENT lane id as the cell value (lane+1)
+        for (int r = 0; r < drumGrid.RowCount; r++)
+        for (int c = 0; c < drumGrid.ColCount; c++)
+        {
+            int v = drumPatterns[lane][r, c] ? (lane + 1) : 0;
+            drumGrid.SetValue(r, c, v, fireEvent: false);
+        }
+    }
     private Color GetActiveDrumColor(int lane)
     {
         var btn=drumBtns[lane];
