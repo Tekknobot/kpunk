@@ -19,8 +19,9 @@ using AudioHelm;
 /// - Painting toggles the selected drum's bit for that step.
 /// - Playback schedules ALL drums set in the bitmask.
 ///
-/// NOTE: For now, drum samples are discovered in-editor by scanning:
-///   Assets/Audio/Kit Samples HMA/<kit folders>
+/// Drum sample discovery:
+/// - Editor: can scan Assets/Audio/Kit Samples HMA/<kit folders> (AssetDatabase).
+/// - Runtime (Android/iOS/Builds): loads from Resources/KMusic/Drums via Resources.LoadAll<AudioClip>().
 /// </summary>
 [RequireComponent(typeof(UIDocument))]
 public class KMusicDrumSequencer : MonoBehaviour
@@ -36,8 +37,8 @@ public class KMusicDrumSequencer : MonoBehaviour
     public string btnClap = "DrumClap";
     public string btnHatClosed = "DrumHatC";
     public string btnHatOpen = "DrumHatO";
-    public string btnRide = "DrumRide"; // UXML uses Perc as "ride/perc"
-    public string btnRim = "DrumPerc";   // UXML uses Tom as extra slot (we map to rim for now)
+    public string btnRide = "DrumRide";
+    public string btnRim = "DrumPerc";
     public string btnCrash = "DrumCrash";
 
     [Header("Timing")]
@@ -47,16 +48,21 @@ public class KMusicDrumSequencer : MonoBehaviour
     [Tooltip("Small start delay (seconds) when pressing Play so scheduling window can fill.")]
     public float startDelaySeconds = 0.05f;
 
+    [Header("Runtime Sample Loading")]
+    [Tooltip("Resources folder path to load drum clips from at runtime. Example: Assets/Resources/KMusic/Drums/*.wav")]
+    public string resourcesDrumPath = "KMusic/Drums";
+
     [Header("Debug")]
     public bool verbose = false;
 
-    public int numVoices = 8;
+    [Tooltip("Sampler polyphony / voices. Higher prevents drums cutting off when many hits overlap.")]
+    public int numVoices = 32;
 
     // 16 steps total in the 2x8 grid
     [SerializeField] private int steps = 16;
 
-    private const int LANES = 8;                 // 8 drums max in this UI
-    private readonly byte[] _stepMask = new byte[16]; // step -> bitmask (bit0=kick ... bit7=crash)
+    private const int LANES = 8;                        // 8 drums max in this UI
+    private readonly byte[] _stepMask = new byte[16];   // step -> bitmask (bit0=kick ... bit7=crash)
 
     private UIDocument _doc;
     private VisualElement _root;
@@ -114,10 +120,26 @@ public class KMusicDrumSequencer : MonoBehaviour
         EnsureSamplerEngine();
 
 #if UNITY_EDITOR
+        // Editor convenience: try to scan the first kit folder if present.
+        // NOTE: This does not exist in builds.
         TryLoadFirstKitFromAssets();
-#else
-        Debug.LogWarning("[KMusicDrumSequencer] Drum kit auto-scan is editor-only right now. We'll add a runtime DrumKitLibrary for mobile builds next.");
 #endif
+
+        // Always ensure runtime drums are available (Android/iOS/Standalone).
+        // If the editor scan loaded something, we keep it.
+        if (_clipByDrumId.Count == 0)
+        {
+            LoadKitFromResources();
+        }
+
+        if (_clipByDrumId.Count > 0)
+        {
+            BuildSamplerKeyzonesFromLoadedClips();
+        }
+        else
+        {
+            Debug.LogWarning("[KMusicDrumSequencer] No drum clips loaded. For runtime builds, put clips under Assets/Resources/KMusic/Drums/ and name them with keywords (kick/snare/clap/closed/open/ride/rim/crash).");
+        }
     }
 
     private void OnEnable()
@@ -143,14 +165,14 @@ public class KMusicDrumSequencer : MonoBehaviour
         _stopBtn = _root.Q<Button>(stopButtonName);
 
         _grid = _root.Q<StepGrid>("DrumStepGrid") ?? _root.Q<StepGrid>(drumGridName);
-        _gridSeq    = _root.Q<StepGrid>("StepGrid");
+        _gridSeq = _root.Q<StepGrid>("StepGrid");
         _gridSample = _root.Q<StepGrid>("SampleStepGrid") ?? _root.Q<StepGrid>("SamplerStepGrid");
-        _gridDrum   = _root.Q<StepGrid>("DrumStepGrid");
+        _gridDrum = _root.Q<StepGrid>("DrumStepGrid");
 
         _bpmLabel = _root.Q<Label>("BpmLabel");
 
         if (verbose)
-            Debug.Log($"[KMusicDrumSequencer] bind play={(_playBtn!=null)} stop={(_stopBtn!=null)} drumGrid found={(_grid!=null)}");
+            Debug.Log($"[KMusicDrumSequencer] bind play={(_playBtn != null)} stop={(_stopBtn != null)} drumGrid found={(_grid != null)}");
 
         if (_playBtn == null || _stopBtn == null || _grid == null)
             return false;
@@ -227,7 +249,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (_grid != null)
         {
             _grid.SetPaintValue(_activeDrumId);
-            RefreshGridForActiveDrum(); // ✅ THIS is what prevents “snare turns into kick” in the UI
+            RefreshGridForActiveDrum(); // prevents “snare turns into kick” in the UI
         }
 
         // update button highlight class
@@ -256,7 +278,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         // StepGrid sends v==0 when clearing, v>0 when painting.
         // We treat it as ON/OFF for the current lane.
         if (v > 0) _stepMask[step] = (byte)(_stepMask[step] | bit);
-        else       _stepMask[step] = (byte)(_stepMask[step] & ~bit);
+        else _stepMask[step] = (byte)(_stepMask[step] & ~bit);
 
         // Keep the UI cell consistent with the current view:
         // show active drum ID if bit is set, else 0.
@@ -323,7 +345,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (_sampler == null || _sampler.keyzones == null || _sampler.keyzones.Count == 0)
             Debug.LogWarning("[KMusicDrumSequencer] Sampler has no keyzones; drum kit may not be loaded.");
         if (_clipByDrumId.Count == 0)
-            Debug.LogWarning("[KMusicDrumSequencer] No drum clips loaded; check Assets/Audio/Kit Samples HMA and keyword mapping.");
+            Debug.LogWarning("[KMusicDrumSequencer] No drum clips loaded; for runtime builds, place clips under Assets/Resources/KMusic/Drums/.");
 
         _playing = true;
 
@@ -391,7 +413,15 @@ public class KMusicDrumSequencer : MonoBehaviour
                     {
                         int note = _noteByDrumId.TryGetValue(drumId, out var n) ? n : 36;
                         double end = _nextStepDspTime + Math.Max(0.05, clip.length);
+
+                        if (verbose)
+                            Debug.Log($"[KMusicDrumSequencer] SCHED drumId={drumId} note={note} clip={clip.name} t={_nextStepDspTime:0.000}");
+
                         _sampler.NoteOnScheduled(note, 1.0f, _nextStepDspTime, end);
+                    }
+                    else if (verbose)
+                    {
+                        Debug.LogWarning($"[KMusicDrumSequencer] Missing clip for drumId={drumId} (lane={lane}).");
                     }
                 }
             }
@@ -422,9 +452,9 @@ public class KMusicDrumSequencer : MonoBehaviour
         {
             _lastVisualStep = step;
 
-            if (_gridSeq != null)    _gridSeq.SetPlayhead(step);
+            if (_gridSeq != null) _gridSeq.SetPlayhead(step);
             if (_gridSample != null) _gridSample.SetPlayhead(step);
-            if (_gridDrum != null)   _gridDrum.SetPlayhead(step);
+            if (_gridDrum != null) _gridDrum.SetPlayhead(step);
         }
     }
 
@@ -447,6 +477,9 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         double start = AudioSettings.dspTime;
         double end = start + Math.Max(0.05, clip.length);
+
+        if (verbose)
+            Debug.Log($"[KMusicDrumSequencer] TRIG drumId={drumId} note={note} clip={clip.name}");
 
         _sampler.NoteOnScheduled(note, 1.0f, start, end);
     }
@@ -514,38 +547,161 @@ public class KMusicDrumSequencer : MonoBehaviour
             var go = new GameObject("KMusicDrumSampler");
             var src = go.AddComponent<AudioSource>();
             src.playOnAwake = false;
+            src.mute = false;
+            src.volume = 1f;
+
             _sampler = go.AddComponent<Sampler>();
-            // Increase polyphony so drums don’t steal voices and cut off.
-            _sampler.numVoices = 32;   // try 16 / 24 / 32
-            _sampler.keyzones.Clear();
         }
-        else
-        {
+
+        // Ensure these apply whether we created or found it.
+        _sampler.numVoices = Mathf.Max(1, numVoices);
+        if (_sampler.keyzones != null)
             _sampler.keyzones.Clear();
+
+        if (verbose)
+            Debug.Log($"[KMusicDrumSequencer] Sampler ready. voices={_sampler.numVoices}");
+    }
+
+    // -------- Runtime drum loading (Android-safe) --------
+
+    private void LoadKitFromResources()
+    {
+        _clipByDrumId.Clear();
+
+        var clips = Resources.LoadAll<AudioClip>(resourcesDrumPath);
+
+        if (verbose)
+            Debug.Log($"[KMusicDrumSequencer] Resources.LoadAll('{resourcesDrumPath}') => {clips?.Length ?? 0} clips");
+
+        if (clips == null || clips.Length == 0)
+        {
+            Debug.LogWarning($"[KMusicDrumSequencer] No clips found in Resources at '{resourcesDrumPath}'. Put files in Assets/Resources/{resourcesDrumPath}/");
+            return;
+        }
+
+        // Prefer explicit keywords in clip *name* (Unity uses asset name without extension).
+        AudioClip kick = FindClipByKeyword(clips, "kick");
+        AudioClip snare = FindClipByKeyword(clips, "snare");
+        AudioClip clap = FindClipByKeyword(clips, "clap");
+        AudioClip hatc = FindClipByKeyword(clips, "hh closed") ?? FindClipByKeyword(clips, "hat closed") ?? FindClipByKeyword(clips, "closed");
+        AudioClip hato = FindClipByKeyword(clips, "hh open") ?? FindClipByKeyword(clips, "hat open") ?? FindClipByKeyword(clips, "open");
+        AudioClip ride = FindClipByKeyword(clips, "ride") ?? FindClipByKeyword(clips, "perc");
+        AudioClip rim = FindClipByKeyword(clips, "rim");
+        AudioClip crash = FindClipByKeyword(clips, "crash");
+
+        _clipByDrumId[1] = kick;
+        _clipByDrumId[2] = snare;
+        _clipByDrumId[3] = clap;
+        _clipByDrumId[4] = hatc;
+        _clipByDrumId[5] = hato;
+        _clipByDrumId[6] = ride;
+        _clipByDrumId[7] = rim;
+        _clipByDrumId[8] = crash;
+
+        // Helpful warnings so device logs instantly show what's missing.
+        WarnIfMissing(1, "kick");
+        WarnIfMissing(2, "snare");
+        WarnIfMissing(3, "clap");
+        WarnIfMissing(4, "closed hat");
+        WarnIfMissing(5, "open hat");
+        WarnIfMissing(6, "ride/perc");
+        WarnIfMissing(7, "rim");
+        WarnIfMissing(8, "crash");
+
+        if (verbose)
+        {
+            for (int id = 1; id <= 8; id++)
+            {
+                _clipByDrumId.TryGetValue(id, out var clip);
+                Debug.Log($"[KMusicDrumSequencer] drumId={id} clip={(clip ? clip.name : "NULL")}");
+            }
         }
     }
 
+    private void WarnIfMissing(int drumId, string label)
+    {
+        if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
+            Debug.LogWarning($"[KMusicDrumSequencer] Missing '{label}' clip (drumId={drumId}) from Resources/{resourcesDrumPath}. Ensure the asset name contains the keyword.");
+    }
+
+    private AudioClip FindClipByKeyword(AudioClip[] clips, string keyword)
+    {
+        keyword = keyword.ToLowerInvariant();
+
+        foreach (var c in clips)
+        {
+            if (c == null) continue;
+
+            var name = c.name.ToLowerInvariant();
+            if (name.Contains(keyword))
+                return c;
+        }
+
+        return null;
+    }
+
+    private void BuildSamplerKeyzonesFromLoadedClips()
+    {
+        if (_sampler == null) return;
+
+        if (_sampler.keyzones == null)
+        {
+            Debug.LogWarning("[KMusicDrumSequencer] Sampler.keyzones is null.");
+            return;
+        }
+
+        _sampler.keyzones.Clear();
+
+        for (int id = 1; id <= 8; id++)
+        {
+            if (!_clipByDrumId.TryGetValue(id, out var clip) || clip == null)
+                continue;
+
+            int note = _noteByDrumId[id];
+
+            var kz = new Keyzone
+            {
+                minKey = note,
+                maxKey = note,
+                rootKey = note,
+                audioClip = clip
+            };
+
+            _sampler.keyzones.Add(kz);
+
+            if (verbose)
+                Debug.Log($"[KMusicDrumSequencer] Keyzone added drumId={id} note={note} clip={clip.name}");
+        }
+
+        if (verbose)
+            Debug.Log($"[KMusicDrumSequencer] Keyzones built: {_sampler.keyzones.Count}");
+    }
+
 #if UNITY_EDITOR
+    // -------- Editor-only kit scan (does NOT run on Android builds) --------
+
     private void TryLoadFirstKitFromAssets()
     {
         string root = "Assets/Audio/Kit Samples HMA";
         if (!AssetDatabase.IsValidFolder(root))
         {
-            Debug.LogWarning($"[KMusicDrumSequencer] Folder not found: {root}");
+            if (verbose)
+                Debug.LogWarning($"[KMusicDrumSequencer] Folder not found: {root}");
             return;
         }
 
         string[] sub = AssetDatabase.GetSubFolders(root);
         if (sub == null || sub.Length == 0)
         {
-            Debug.LogWarning($"[KMusicDrumSequencer] No kit folders under: {root}");
+            if (verbose)
+                Debug.LogWarning($"[KMusicDrumSequencer] No kit folders under: {root}");
             return;
         }
 
         string kitFolder = sub[0];
         LoadKitFolder(kitFolder);
 
-        if (verbose) Debug.Log($"[KMusicDrumSequencer] Loaded kit: {kitFolder}");
+        if (verbose) Debug.Log($"[KMusicDrumSequencer] Loaded kit (editor scan): {kitFolder}");
     }
 
     private void LoadKitFolder(string kitFolder)
@@ -570,25 +726,6 @@ public class KMusicDrumSequencer : MonoBehaviour
             else if (lower.Contains("ride") || lower.Contains("perc")) _clipByDrumId[6] = clip;
             else if (lower.Contains("rim")) _clipByDrumId[7] = clip;
             else if (lower.Contains("crash")) _clipByDrumId[8] = clip;
-        }
-
-        _sampler.keyzones.Clear();
-        for (int id = 1; id <= 8; id++)
-        {
-            if (!_clipByDrumId.TryGetValue(id, out var clip) || clip == null)
-                continue;
-
-            int note = _noteByDrumId[id];
-
-            var kz = new Keyzone
-            {
-                minKey = note,
-                maxKey = note,
-                rootKey = note,
-                audioClip = clip
-            };
-
-            _sampler.keyzones.Add(kz);
         }
     }
 #endif

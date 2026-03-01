@@ -270,6 +270,7 @@ MonoBehaviour:
   fallbackBpm: 120
   lookaheadSeconds: 0.1
   startDelaySeconds: 0.05
+  resourcesDrumPath: KMusic/Drums
   verbose: 1
   numVoices: 8
   steps: 16
