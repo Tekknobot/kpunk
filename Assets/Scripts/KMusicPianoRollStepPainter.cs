@@ -108,8 +108,11 @@ namespace KMusic.UI
                 _step.OnCellClicked += OnStepClicked;
 
                 // default brush
+                // ✅ cache ALL note labels & colors
+                CacheAllPaletteValues();
+
+                // default brush
                 int v0 = _piano.GetCellValueId(0, 0);
-                CacheValue(v0, _piano.GetCellLabel(0, 0), _piano.GetCellColor(0, 0));
                 _step.SetPaintValue(v0);
 
                 // LOAD after wiring
