@@ -140,8 +140,8 @@
             <ui:Button name="DrumClap"  class="km-drum-btn drum-clap"  text="Clap"/>
             <ui:Button name="DrumHatC"  class="km-drum-btn drum-hatc"  text="Closed"/>
             <ui:Button name="DrumHatO"  class="km-drum-btn drum-hato"  text="Open"/>
-            <ui:Button name="DrumRim"   class="km-drum-btn drum-rim"   text="Rim"/>
-            <ui:Button name="DrumPerc"  class="km-drum-btn drum-perc"  text="Perc"/>
+            <ui:Button name="DrumRide"  class="km-drum-btn drum-ride"  text="Ride"/>
+            <ui:Button name="DrumPerc"  class="km-drum-btn drum-rim"  text="Rim"/>
             <ui:Button name="DrumCrash" class="km-drum-btn drum-crash" text="Crash"/>
           </ui:VisualElement>
         </ui:VisualElement>

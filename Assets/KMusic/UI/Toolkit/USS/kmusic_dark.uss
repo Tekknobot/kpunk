@@ -339,8 +339,8 @@
 .drum-clap  { border-color: #FF4D9D; }
 .drum-hatc  { border-color: #00E5FF; }
 .drum-hato  { border-color: #4FC3F7; }
-.drum-rim   { border-color: #9B5DE5; }
-.drum-perc  { border-color: #80ED99; }
+.drum-ride  { border-color: #9B5DE5;}
+.drum-rim   { border-color: #80ED99; }
 .drum-crash { border-color: #FFD60A; }
 
 /* active selection highlight */

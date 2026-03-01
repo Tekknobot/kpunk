@@ -264,13 +264,14 @@ MonoBehaviour:
   btnClap: DrumClap
   btnHatClosed: DrumHatC
   btnHatOpen: DrumHatO
-  btnRide: DrumPerc
-  btnRim: DrumTom
+  btnRide: DrumRide
+  btnRim: DrumPerc
   btnCrash: DrumCrash
-  fallbackBpm: 107
+  fallbackBpm: 120
   lookaheadSeconds: 0.1
   startDelaySeconds: 0.05
   verbose: 1
+  numVoices: 8
   steps: 16
 --- !u!1 &662830704
 GameObject:

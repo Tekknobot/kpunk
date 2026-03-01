@@ -36,8 +36,8 @@ public class KMusicDrumSequencer : MonoBehaviour
     public string btnClap = "DrumClap";
     public string btnHatClosed = "DrumHatC";
     public string btnHatOpen = "DrumHatO";
-    public string btnRide = "DrumPerc"; // UXML uses Perc as "ride/perc"
-    public string btnRim = "DrumTom";   // UXML uses Tom as extra slot (we map to rim for now)
+    public string btnRide = "DrumRide"; // UXML uses Perc as "ride/perc"
+    public string btnRim = "DrumPerc";   // UXML uses Tom as extra slot (we map to rim for now)
     public string btnCrash = "DrumCrash";
 
     [Header("Timing")]
@@ -49,6 +49,8 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     [Header("Debug")]
     public bool verbose = false;
+
+    public int numVoices = 8;
 
     // 16 steps total in the 2x8 grid
     [SerializeField] private int steps = 16;
@@ -465,7 +467,7 @@ public class KMusicDrumSequencer : MonoBehaviour
             3 => "C",
             4 => "HC",
             5 => "HO",
-            6 => "R",
+            6 => "RD",
             7 => "RM",
             8 => "X",
             _ => ""
@@ -513,6 +515,8 @@ public class KMusicDrumSequencer : MonoBehaviour
             var src = go.AddComponent<AudioSource>();
             src.playOnAwake = false;
             _sampler = go.AddComponent<Sampler>();
+            // Increase polyphony so drums don’t steal voices and cut off.
+            _sampler.numVoices = 32;   // try 16 / 24 / 32
             _sampler.keyzones.Clear();
         }
         else
