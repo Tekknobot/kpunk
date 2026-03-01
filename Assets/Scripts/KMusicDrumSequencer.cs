@@ -26,10 +26,15 @@ using AudioHelm;
 [RequireComponent(typeof(UIDocument))]
 public class KMusicDrumSequencer : MonoBehaviour
 {
+    private bool _allowSaving = false;
+    
     private const string PrefKey_DrumStepMask = "kmusic.drum.stepmask";
     private const string PrefKey_DrumMutes = "kmusic.drum.mutes";
     private const string PrefKey_DrumActive = "kmusic.drum.active";
     private const string PrefKey_DrumKitIndex = "kmusic.drum.kitIndex";
+
+    // NEW: PlayerPrefs fallback key for stepmask (base64) so lane patterns survive even if KMusicSaveState isn’t available in builds.
+    private const string PrefKey_DrumStepMask_B64 = "kmusic.drum.stepmask.b64";
 
     private StepGrid _drumGrid;
     private IVisualElementScheduledItem _rebindLoop;
@@ -41,6 +46,20 @@ public class KMusicDrumSequencer : MonoBehaviour
     private ParameterBus _bus;
 
     private readonly bool[] _drumMute = new bool[8];
+
+    private bool _didLoadState = false;
+
+    private void EnsureStateLoaded()
+    {
+        if (_didLoadState) return;
+
+        LoadDrumState();
+        _didLoadState = true;
+
+        // If UI is bound, redraw what we loaded.
+        RefreshGridForActiveDrum();
+        WireMuteButtons(_root);
+    }
 
     private AudioSource GetOrCreateDrumSource(int drumId, AudioClip clip)
     {
@@ -81,8 +100,8 @@ public class KMusicDrumSequencer : MonoBehaviour
         src.PlayOneShot(src.clip);
     }
 
-    [SerializeField] private UIDocument uiDocument; 
-    
+    [SerializeField] private UIDocument uiDocument;
+
     [Header("UI Names")]
     public string playButtonName = "PlayButton";
     public string stopButtonName = "StopButton";
@@ -159,7 +178,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private bool _playing = false;
     private float _playBpm = -1f;          // cached bpm at Play
-    private double _stepDur = 0.0;         // cached seconds per 16th note   
+    private double _stepDur = 0.0;         // cached seconds per 16th note
     private int _stepIndex = 0; // 0..15
     private double _nextStepDspTime = 0.0;
     private double _playStartDspTime = 0.0;
@@ -170,18 +189,25 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private static int DrumBit(int drumId) => 1 << (drumId - 1);
 
+    private static bool IsAllZero(byte[] a)
+    {
+        if (a == null || a.Length == 0) return true;
+        for (int i = 0; i < a.Length; i++)
+            if (a[i] != 0) return false;
+        return true;
+    }
+
     private void ToggleStepForActiveDrum(int stepIndex)
     {
         int bit = DrumBit(_activeDrumId);
 
         // toggle bit
         _stepMask[stepIndex] = (byte)(_stepMask[stepIndex] ^ bit);
-        
+
         // update UI view for the currently selected drum
         RefreshDrumGridView();
 
         PreviewDrum(_activeDrumId);
-
     }
 
     private void RefreshDrumGridView()
@@ -345,52 +371,52 @@ public class KMusicDrumSequencer : MonoBehaviour
         }
     }
 
-        private void OnEnable()
+    private void OnEnable()
+    {
+        if (uiDocument == null)
+            uiDocument = GetComponent<UIDocument>();
+
+        if (uiDocument == null)
         {
-            if (uiDocument == null)
-                uiDocument = GetComponent<UIDocument>();
-
-            if (uiDocument == null)
-            {
-                Debug.LogError("[DrumSequencer] UIDocument missing");
-                return;
-            }
-
-            StartCoroutine(BindWhenReady()); // ✅ THIS WAS MISSING
-
-            var root = uiDocument.rootVisualElement;
-
-            root.schedule.Execute(() =>
-            {
-                var playBtn = root.Q<Button>("PlayButton");
-                var stopBtn = root.Q<Button>("StopButton");
-                var kitPrev = root.Q<Button>("KitPrev");
-                var kitNext = root.Q<Button>("KitNext");
-
-                // Some Android builds can fail to render UTF-8 glyphs embedded in UXML.
-                // Force the transport/nav glyphs at runtime using unicode escapes.
-                if (playBtn != null) playBtn.text = "\u25B6"; // ▶
-                if (stopBtn != null) stopBtn.text = "\u25A0"; // ■
-                if (kitPrev != null) kitPrev.text = "\u25C0"; // ◀
-                if (kitNext != null) kitNext.text = "\u25B6"; // ▶
-
-                Debug.Log($"[DrumSequencer] playBtn={playBtn!=null} stopBtn={stopBtn!=null}");
-
-                if (playBtn != null)
-                    playBtn.clicked += () =>
-                    {
-                        Debug.Log("PLAY CLICK");
-                        OnPlayClicked(); // ✅ call the real play that sets dsp start etc
-                    };
-
-                if (stopBtn != null)
-                    stopBtn.clicked += () =>
-                    {
-                        Debug.Log("STOP CLICK");
-                        OnStopClicked();
-                    };
-            });
+            Debug.LogError("[DrumSequencer] UIDocument missing");
+            return;
         }
+
+        StartCoroutine(BindWhenReady()); // ✅ THIS WAS MISSING
+
+        var root = uiDocument.rootVisualElement;
+
+        root.schedule.Execute(() =>
+        {
+            var playBtn = root.Q<Button>("PlayButton");
+            var stopBtn = root.Q<Button>("StopButton");
+            var kitPrev = root.Q<Button>("KitPrev");
+            var kitNext = root.Q<Button>("KitNext");
+
+            // Some Android builds can fail to render UTF-8 glyphs embedded in UXML.
+            // Force the transport/nav glyphs at runtime using unicode escapes.
+            if (playBtn != null) playBtn.text = "\u25B6"; // ▶
+            if (stopBtn != null) stopBtn.text = "\u25A0"; // ■
+            if (kitPrev != null) kitPrev.text = "\u25C0"; // ◀
+            if (kitNext != null) kitNext.text = "\u25B6"; // ▶
+
+            Debug.Log($"[DrumSequencer] playBtn={playBtn!=null} stopBtn={stopBtn!=null}");
+
+            if (playBtn != null)
+                playBtn.clicked += () =>
+                {
+                    Debug.Log("PLAY CLICK");
+                    OnPlayClicked(); // ✅ call the real play that sets dsp start etc
+                };
+
+            if (stopBtn != null)
+                stopBtn.clicked += () =>
+                {
+                    Debug.Log("STOP CLICK");
+                    OnStopClicked();
+                };
+        });
+    }
 
     private void HookKitUI(VisualElement root)
     {
@@ -431,7 +457,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         _gridSeq?.SetPlayheadStep(-1);
         _gridSample?.SetPlayheadStep(-1);
-        _gridDrum?.SetPlayheadStep(-1);            
+        _gridDrum?.SetPlayheadStep(-1);
     }
 
     private bool BindUI()
@@ -440,6 +466,9 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         _root = _doc.rootVisualElement;
         if (_root == null) return false;
+
+        // Block saves until we're fully bound + we've rendered the loaded pattern
+        _allowSaving = false;
 
         // --- Find UI ---
         _playBtn = _root.Q<Button>(playButtonName);
@@ -479,6 +508,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         // Restore saved pattern / mutes / active drum.
         LoadDrumState();
+        _didLoadState = true;
 
         // Ensure currently loaded kit matches restored index.
         if (_kits != null && _kits.Length > 0)
@@ -511,9 +541,12 @@ public class KMusicDrumSequencer : MonoBehaviour
         WireMuteButtons(_root);
 
         UpdateBpmLabel();
+
+        // Now that load+draw is complete, allow saving.
+        _allowSaving = true;
+
         return true;
     }
-
     private void WireMuteButtons(VisualElement root)
     {
         if (root == null) return;
@@ -562,45 +595,98 @@ public class KMusicDrumSequencer : MonoBehaviour
         return _drumMute[drumId - 1];
     }
 
+    // ---------------- SAVE/LOAD (PATCHED) ----------------
+    // Goal: lane patterns must reliably persist.
+    // - Primary: KMusicSaveState.SaveBytes/LoadBytes (your original path)
+    // - Fallback: PlayerPrefs base64 string (works on Android even if SaveState path breaks)
     private void SaveDrumState()
     {
+        // IMPORTANT: during startup/bind, we must NOT overwrite saved patterns with blank masks.
+        if (!_allowSaving) return;
+
         try
         {
+            // --- step mask (16 bytes bitmask; each bit = lane on/off) ---
             if (_stepMask != null)
             {
                 var b = new byte[_stepMask.Length];
                 for (int i = 0; i < _stepMask.Length; i++)
                     b[i] = _stepMask[i];
-                KMusicSaveState.SaveBytes(PrefKey_DrumStepMask, b);
+
+                // Primary save (your existing system)
+                try { KMusicSaveState.SaveBytes(PrefKey_DrumStepMask, b); } catch { }
+
+                // Fallback save (base64 in PlayerPrefs)
+                try
+                {
+                    string b64 = Convert.ToBase64String(b);
+                    PlayerPrefs.SetString(PrefKey_DrumStepMask_B64, b64);
+                }
+                catch { }
             }
 
-            KMusicSaveState.SaveBools(PrefKey_DrumMutes, _drumMute);
+            // --- mutes / ui state ---
+            try { KMusicSaveState.SaveBools(PrefKey_DrumMutes, _drumMute); } catch { }
+
             PlayerPrefs.SetInt(PrefKey_DrumActive, _activeDrumId);
             PlayerPrefs.SetInt(PrefKey_DrumKitIndex, _kitIndex);
             PlayerPrefs.Save();
+
+            if (verbose)
+                Debug.Log($"[DRUM SAVE] b64Len={PlayerPrefs.GetString(PrefKey_DrumStepMask_B64, "").Length} mask0=0x{_stepMask[0]:X2} allowSaving={_allowSaving}");
         }
         catch { }
     }
-
     private void LoadDrumState()
     {
-        var m = KMusicSaveState.LoadBools(PrefKey_DrumMutes, 8);
-        if (m != null) Array.Copy(m, _drumMute, 8);
+        // --- step mask (prefer KMusicSaveState, fallback to PlayerPrefs base64) ---
+        byte[] loaded = null;
 
-        var b = KMusicSaveState.LoadBytes(PrefKey_DrumStepMask, 16);
-        if (b != null)
+        // 1) Try SaveState
+        try
+        {
+            loaded = KMusicSaveState.LoadBytes(PrefKey_DrumStepMask, 16);
+            if (verbose) Debug.Log($"[DRUM LOAD] hasB64={PlayerPrefs.HasKey(PrefKey_DrumStepMask_B64)} mask0=0x{_stepMask[0]:X2}");
+        }
+        catch
+        {
+            loaded = null;
+        }
+
+        // IMPORTANT: if SaveState returns "blank but valid length", treat as missing
+        bool treatAsMissing = (loaded == null || loaded.Length == 0 || IsAllZero(loaded));
+
+        // 2) Fallback to PlayerPrefs base64 if missing/blank
+        if (treatAsMissing)
+        {
+            try
+            {
+                if (PlayerPrefs.HasKey(PrefKey_DrumStepMask_B64))
+                {
+                    string b64 = PlayerPrefs.GetString(PrefKey_DrumStepMask_B64, "");
+                    if (!string.IsNullOrEmpty(b64))
+                        loaded = Convert.FromBase64String(b64);
+                }
+            }
+            catch
+            {
+                loaded = null;
+            }
+        }
+
+        if (loaded != null && loaded.Length > 0)
         {
             if (_stepMask == null || _stepMask.Length != 16)
                 _stepMask = new byte[16];
-            Array.Copy(b, _stepMask, 16);
+
+            int n = Mathf.Min(_stepMask.Length, loaded.Length);
+            Array.Copy(loaded, _stepMask, n);
+
+            for (int i = n; i < _stepMask.Length; i++)
+                _stepMask[i] = 0;
         }
-
-        if (PlayerPrefs.HasKey(PrefKey_DrumActive))
-            _activeDrumId = (byte)Mathf.Clamp(PlayerPrefs.GetInt(PrefKey_DrumActive, 1), 1, 8);
-
-        if (PlayerPrefs.HasKey(PrefKey_DrumKitIndex))
-            _kitIndex = Mathf.Max(0, PlayerPrefs.GetInt(PrefKey_DrumKitIndex, 0));
     }
+    // ---------------- END SAVE/LOAD (PATCHED) ----------------
 
     private void OnApplicationPause(bool pause)
     {
@@ -674,12 +760,14 @@ public class KMusicDrumSequencer : MonoBehaviour
         RebuildSamplerKeyzonesFromClipMap();
 
         if (_kitNameLabel != null)
-            _kitNameLabel.text = string.IsNullOrEmpty(kit.kitName) ? $"KIT {index+1}" : kit.kitName;
+            _kitNameLabel.text = string.IsNullOrEmpty(kit.kitName) ? $"KIT {index + 1}" : kit.kitName;
 
         if (verbose)
-            Debug.Log($"[KMusicDrumSequencer] Applied kit {index+1}/{_kits.Length}: {kit.kitName}");
+            Debug.Log($"[KMusicDrumSequencer] Applied kit {index + 1}/{_kits.Length}: {kit.kitName}");
 
-        SaveDrumState();
+        // DO NOT save patterns during startup/bind unless saving is enabled.
+        if (_allowSaving)
+            SaveDrumState();
     }
 
     private void RebuildSamplerKeyzonesFromClipMap()
@@ -750,6 +838,8 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private void SelectDrum(int drumId)
     {
+        EnsureStateLoaded();
+
         _activeDrumId = (byte)Mathf.Clamp(drumId, 1, 8);
 
         if (_grid != null)
@@ -772,8 +862,11 @@ public class KMusicDrumSequencer : MonoBehaviour
         // Audition when selecting a drum, so the user can hear it before painting.
         TriggerDrumNow(_activeDrumId);
 
-        SaveDrumState();
+        // DO NOT save patterns during startup/bind unless saving is enabled.
+        if (_allowSaving)
+            SaveDrumState();
     }
+
     private void RefreshGridView()
     {
         if (_grid == null) return;
@@ -781,7 +874,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         int lane = _activeDrumId - 1;
         int bit = 1 << lane;
 
-        _suppressGridEvents = true;
+        _suppressGridCallbacks = true;
 
         for (int r = 0; r < 2; r++)
         for (int c = 0; c < 8; c++)
@@ -794,12 +887,19 @@ public class KMusicDrumSequencer : MonoBehaviour
             _grid.SetValue(r, c, active ? _activeDrumId : 0);
         }
 
-        _suppressGridEvents = false;
+        _suppressGridCallbacks = false;
     }
 
     private void OnGridValueChanged(int r, int c, int v)
     {
-        if (_suppressGridCallbacks) return;
+        // Ignore programmatic updates
+        if (_suppressGridCallbacks || _suppressGridEvents) return;
+
+        // First real user edit => allow saving from now on
+        _allowSaving = true;
+
+        EnsureStateLoaded();
+
         if (r < 0 || r >= 2 || c < 0 || c >= 8) return;
 
         int step = (r * 8) + c;
@@ -840,6 +940,10 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private void OnGridCellClicked(int r, int c)
     {
+        if (_suppressGridCallbacks || _suppressGridEvents) return;
+
+        EnsureStateLoaded();
+        
         if (_sampler == null) return;
         if (r < 0 || r >= 2 || c < 0 || c >= 8) return;
 
