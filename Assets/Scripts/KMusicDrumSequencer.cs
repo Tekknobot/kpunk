@@ -26,6 +26,8 @@ using AudioHelm;
 [RequireComponent(typeof(UIDocument))]
 public class KMusicDrumSequencer : MonoBehaviour
 {
+    [SerializeField] private UIDocument uiDocument; 
+    
     [Header("UI Names")]
     public string playButtonName = "PlayButton";
     public string stopButtonName = "StopButton";
@@ -60,6 +62,16 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     // 16 steps total in the 2x8 grid
     [SerializeField] private int steps = 16;
+
+    [SerializeField] private string drumKitResourcesPath = "DrumKits";
+
+    private DrumKit[] _kits;
+    private int _kitIndex = 0;
+
+    // UI
+    private UnityEngine.UIElements.Label _kitNameLabel;
+    private UnityEngine.UIElements.Button _kitPrevBtn;
+    private UnityEngine.UIElements.Button _kitNextBtn;
 
     private const int LANES = 8;                        // 8 drums max in this UI
     private readonly byte[] _stepMask = new byte[16];   // step -> bitmask (bit0=kick ... bit7=crash)
@@ -118,6 +130,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         EnsureAudioHelmClock();
         EnsureSamplerEngine();
+        LoadKits();
 
 #if UNITY_EDITOR
         // Editor convenience: try to scan the first kit folder if present.
@@ -144,7 +157,48 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private void OnEnable()
     {
-        StartCoroutine(BindWhenReady());
+        if (uiDocument == null)
+        {
+            Debug.LogWarning("[KIT UI] UIDocument not assigned.");
+            return;
+        }
+
+        var root = uiDocument.rootVisualElement;
+
+        root.schedule.Execute(() =>
+        {
+            HookKitUI(root);
+        });
+    }
+
+    private void HookKitUI(VisualElement root)
+    {
+        _kitPrevBtn = root.Q<Button>("KitPrev");
+        _kitNextBtn = root.Q<Button>("KitNext");
+        _kitNameLabel = root.Q<Label>("KitName");
+
+        Debug.Log($"[KIT UI] prev={(_kitPrevBtn!=null)} next={(_kitNextBtn!=null)} label={(_kitNameLabel!=null)}");
+
+        if (_kitPrevBtn != null)
+        {
+            _kitPrevBtn.clickable = new Clickable(() => { Debug.Log("[KIT UI] Prev clicked"); PrevKit(); });
+        }
+        if (_kitNextBtn != null)
+        {
+            _kitNextBtn.clickable = new Clickable(() => { Debug.Log("[KIT UI] Next clicked"); NextKit(); });
+        }
+
+        // Force an initial label refresh so you can SEE it’s wired
+        RefreshKitLabel();
+    }
+
+    private void RefreshKitLabel()
+    {
+        if (_kitNameLabel == null) return;
+        if (_kits == null || _kits.Length == 0)
+            _kitNameLabel.text = "NO KITS";
+        else
+            _kitNameLabel.text = _kits[_kitIndex] != null ? _kits[_kitIndex].kitName : $"KIT {_kitIndex+1}";
     }
 
     private System.Collections.IEnumerator BindWhenReady()
@@ -182,6 +236,13 @@ public class KMusicDrumSequencer : MonoBehaviour
         _playBtn.clicked += OnPlayClicked;
         _stopBtn.clicked += OnStopClicked;
 
+        _kitNameLabel = _root.Q<UnityEngine.UIElements.Label>("KitName");
+        _kitPrevBtn = _root.Q<UnityEngine.UIElements.Button>("KitPrev");
+        _kitNextBtn = _root.Q<UnityEngine.UIElements.Button>("KitNext");
+
+        if (_kitPrevBtn != null) _kitPrevBtn.clicked += PrevKit;
+        if (_kitNextBtn != null) _kitNextBtn.clicked += NextKit;
+
         WireDrumButtons();
 
         // Grid renders values as drum IDs (0 or 1..8) — but ONLY for the current active drum layer.
@@ -204,6 +265,85 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         UpdateBpmLabel();
         return true;
+    }
+
+    private void LoadKits()
+    {
+        _kits = Resources.LoadAll<DrumKit>(drumKitResourcesPath);
+        if (_kits == null || _kits.Length == 0)
+        {
+            Debug.LogWarning($"[KMusicDrumSequencer] No DrumKits found in Resources/{drumKitResourcesPath}");
+            return;
+        }
+
+        _kitIndex = Mathf.Clamp(_kitIndex, 0, _kits.Length - 1);
+        ApplyKit(_kitIndex);
+    }
+
+    private void NextKit()
+    {
+        if (_kits == null || _kits.Length == 0) return;
+        _kitIndex = (_kitIndex + 1) % _kits.Length;
+        ApplyKit(_kitIndex);
+    }
+
+    private void PrevKit()
+    {
+        if (_kits == null || _kits.Length == 0) return;
+        _kitIndex = (_kitIndex - 1 + _kits.Length) % _kits.Length;
+        ApplyKit(_kitIndex);
+    }
+
+    private void ApplyKit(int index)
+    {
+        if (_kits == null || _kits.Length == 0) return;
+        var kit = _kits[index];
+        if (kit == null) return;
+
+        // (Optional) stop currently playing voices so you don’t hear old kit tails
+        _sampler.AllNotesOff();
+
+        // Update clip map used by your scheduler
+        for (int drumId = 1; drumId <= LANES; drumId++)
+            _clipByDrumId[drumId] = kit.GetClipByDrumId(drumId);
+
+        // Rebuild sampler keyzones so NoteOnScheduled plays the new clips
+        RebuildSamplerKeyzonesFromClipMap();
+
+        if (_kitNameLabel != null)
+            _kitNameLabel.text = string.IsNullOrEmpty(kit.kitName) ? $"KIT {index+1}" : kit.kitName;
+
+        if (verbose)
+            Debug.Log($"[KMusicDrumSequencer] Applied kit {index+1}/{_kits.Length}: {kit.kitName}");
+    }
+
+    private void RebuildSamplerKeyzonesFromClipMap()
+    {
+        if (_sampler == null) return;
+
+        if (_sampler.keyzones == null)
+            _sampler.keyzones = new List<AudioHelm.Keyzone>();
+        else
+            _sampler.keyzones.Clear();
+
+        for (int drumId = 1; drumId <= LANES; drumId++)
+        {
+            if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
+                continue;
+
+            int note = _noteByDrumId.TryGetValue(drumId, out var n) ? n : 36;
+
+            var kz = new AudioHelm.Keyzone
+            {
+                minKey = note,
+                maxKey = note,
+                rootKey = note,
+                audioClip = clip,
+                // leave mixer null unless you’re using Unity AudioMixerGroups
+            };
+
+            _sampler.keyzones.Add(kz);
+        }
     }
 
     private void OnDisable()

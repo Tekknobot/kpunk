@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_05
+  m_EditorClassIdentifier: 
+  kitName: Lofi
+  kick: {fileID: 8300000, guid: f53b68e393c237643a7aed3f981f7b9a, type: 3}
+  snare: {fileID: 8300000, guid: ae799f2057a1d1e4ca108f53fe24a62d, type: 3}
+  clap: {fileID: 8300000, guid: e83dfc2d25a356741afdf7783712c556, type: 3}
+  hatClosed: {fileID: 8300000, guid: 2f4e9aba6362a054083e850c5d59d353, type: 3}
+  hatOpen: {fileID: 8300000, guid: d7622ba16cd841643a5fc09c30b2139a, type: 3}
+  ride: {fileID: 8300000, guid: 5471d8df55c7df14fb1a4117af754458, type: 3}
+  rim: {fileID: 8300000, guid: 2e9fcc27e3736c64a8ea69ba98ce35d8, type: 3}
+  crash: {fileID: 8300000, guid: 428185427bbcda147860c0efbb0961a7, type: 3}

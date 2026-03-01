@@ -256,6 +256,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0848513c2e0e46ad95896ed617bad804, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  uiDocument: {fileID: 161364351}
   playButtonName: PlayButton
   stopButtonName: StopButton
   drumGridName: SampleStepGrid
@@ -274,6 +275,7 @@ MonoBehaviour:
   verbose: 1
   numVoices: 8
   steps: 16
+  drumKitResourcesPath: KMusic/Drums
 --- !u!1 &662830704
 GameObject:
   m_ObjectHideFlags: 0
