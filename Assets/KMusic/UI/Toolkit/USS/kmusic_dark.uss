@@ -528,29 +528,17 @@
   align-items: center;
 }
 
-/* playhead cell */
-.km-step--playhead {
-  border-left-width: 8px;
-  border-right-width: 8px;
-  border-top-width: 8px;
-  border-bottom-width: 8px;
-  border-left-style: solid;
-  border-right-style: solid;
-  border-top-style: solid;
-  border-bottom-style: solid;
-  border-left-color: white;
-  border-right-color: white;
-  border-top-color: white;
-  border-bottom-color: white;
-  background-color: rgba(32, 32, 32, 0.65);
-}
+.is-playhead {
+    border-left-width: 4px;
+    border-right-width: 4px;
+    border-top-width: 4px;
+    border-bottom-width: 4px;
 
-/* Playhead highlight */
-.km-playhead {
-  /* pick any look you like */
-  opacity: 1;
-  border-left-width: 2px;
-  border-right-width: 2px;
-  border-top-width: 2px;
-  border-bottom-width: 2px;
+    border-left-color: white;
+    border-right-color: white;
+    border-top-color: white;
+    border-bottom-color: white;
+
+    /* makes it super obvious even if borders don’t render */
+    background-color: rgba(255,255,255,0.12);
 }

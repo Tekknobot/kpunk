@@ -132,6 +132,7 @@ public class KMusicDrumSequencer : MonoBehaviour
     }
 
     private bool _suppressGridEvents = false;
+
     private void UpdateVisualPlayhead(double now, double stepDur)
     {
         Debug.Log($"[PLAYHEAD] tick playing={_playing} stepIndex={_stepIndex} last={_lastPlayhead}");
@@ -141,10 +142,10 @@ public class KMusicDrumSequencer : MonoBehaviour
             if (_lastPlayhead != -1)
             {
                 _lastPlayhead = -1;
-                _gridSeq?.SetPlayhead(-1);
-                _gridSample?.SetPlayhead(-1);
-                _gridDrum?.SetPlayhead(-1);
-                _grid?.SetPlayhead(-1);
+                _gridSeq?.SetPlayheadStep(-1);
+                _gridSample?.SetPlayheadStep(-1);
+                _gridDrum?.SetPlayheadStep(-1);
+                _grid?.SetPlayheadStep(-1);
             }
             return;
         }
@@ -154,22 +155,23 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (current == _lastPlayhead) return;
         _lastPlayhead = current;
 
-        _gridSeq?.SetPlayhead(current);
-        _gridSample?.SetPlayhead(current);
-        _gridDrum?.SetPlayhead(current);
-        _grid?.SetPlayhead(current);
+        _gridSeq?.SetPlayheadStep(current);
+        _gridSample?.SetPlayheadStep(current);
+        _gridDrum?.SetPlayheadStep(current);
+        _grid?.SetPlayheadStep(current);
     }
+
     private void SetAllPlayheads(int step)
     {
         // your main SEQ step grid
-        _gridSeq?.SetPlayhead(step);
+        _gridSeq?.SetPlayheadStep(step);
 
         // sampler grids
-        _gridSample?.SetPlayhead(step);
-        _gridDrum?.SetPlayhead(step);
+        _gridSample?.SetPlayheadStep(step);
+        _gridDrum?.SetPlayheadStep(step);
 
         // if you also track _grid as drumGrid alias
-        _grid?.SetPlayhead(step);
+        _grid?.SetPlayheadStep(step);
     }
 
     // prevent recursion while we programmatically refresh grid
@@ -297,9 +299,9 @@ public class KMusicDrumSequencer : MonoBehaviour
         while (!BindUI())
             yield return null;
 
-        _gridSeq?.SetPlayhead(0);
-        _gridSample?.SetPlayhead(0);
-        _gridDrum?.SetPlayhead(0);            
+        _gridSeq?.SetPlayheadStep(0);
+        _gridSample?.SetPlayheadStep(0);
+        _gridDrum?.SetPlayheadStep(0);            
     }
 
     private bool BindUI()
@@ -344,7 +346,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         // Make StepGrid paint use the active drum ID (so its own label/tint works)
         _grid.SetPaintValue(_activeDrumId);
-        _grid.SetPlayhead(-1);
+        _grid.SetPlayheadStep(-1);
 
         _grid.OnCellValueChanged -= OnGridValueChanged;
         _grid.OnCellValueChanged += OnGridValueChanged;
@@ -642,7 +644,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         }
 
         if (_grid != null)
-            _grid.SetPlayhead(-1);
+            _grid.SetPlayheadStep(-1);
 
         if (verbose)
             Debug.Log($"[KMusicDrumSequencer] PLAY bpm={_playBpm:0.##} stepDur={_stepDur:0.0000} start={_playStartDspTime:0.000}");
@@ -661,7 +663,7 @@ public class KMusicDrumSequencer : MonoBehaviour
             _sampler.AllNotesOff();
 
         if (_grid != null)
-            _grid.SetPlayhead(-1);
+            _grid.SetPlayheadStep(-1);
 
         if (verbose) Debug.Log("[KMusicDrumSequencer] STOP");
     }

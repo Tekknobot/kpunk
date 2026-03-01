@@ -557,6 +557,47 @@ namespace KMusic.UI
         // Great for drum sequencers (toggle on/off).
         private bool _toggleEraseOnSameValue = false;
 
+        // inside StepGrid
+        private int _playheadStep = -1;
+        private bool _showPlayhead = true;
+
+        public void SetPlayheadVisible(bool visible)
+        {
+            _showPlayhead = visible;
+            if (!visible) ClearPlayheadVisual();
+            else ApplyPlayheadVisual(_playheadStep);
+        }
+
+        public void SetPlayheadStep(int step)
+        {
+            step = Mathf.Clamp(step, -1, 15);
+            if (_playheadStep == step) return;
+
+            // remove old
+            ClearPlayheadVisual();
+
+            _playheadStep = step;
+
+            // add new
+            if (_showPlayhead) ApplyPlayheadVisual(_playheadStep);
+        }
+
+        private void ClearPlayheadVisual()
+        {
+            if (_playheadStep < 0) return;
+            int r = _playheadStep / 8;
+            int c = _playheadStep % 8;
+            _cells[r, c].RemoveFromClassList("is-playhead");
+        }
+
+        private void ApplyPlayheadVisual(int step)
+        {
+            if (step < 0) return;
+            int r = step / 8;
+            int c = step % 8;
+            _cells[r, c].AddToClassList("is-playhead");
+        }
+
         private static string DrumLabelForValue(int v)
         {
             if (v <= 0) return "";
@@ -593,6 +634,7 @@ namespace KMusic.UI
             RegisterCallback<PointerCaptureOutEvent>(OnGridPointerCaptureOut);
 
             ClearAll(); // ✅ no default highlights
+            SetPlayheadStep(0);
         }
 
         /// <summary>
@@ -600,50 +642,8 @@ namespace KMusic.UI
         /// </summary>
         private int _playhead = -1;
 
-        public void SetPlayhead(int index)
-        {
-            if (_playheadIndex == index) return;
-
-            int prev = _playheadIndex;
-            _playheadIndex = index;
-
-            // update old cell (remove playhead class)
-            if (prev >= 0)
-                UpdateCellVisual(prev / Cols, prev % Cols);
-
-            // update new cell (add playhead class)
-            if (_playheadIndex >= 0)
-                UpdateCellVisual(_playheadIndex / Cols, _playheadIndex % Cols);
-        }
-        
         // inside StepGrid class
         private VisualElement _playheadCell = null;
-
-        public void SetPlayheadIndex(int stepIndex)
-        {
-            // clamp to valid range, or clear
-            if (stepIndex < 0 || stepIndex >= (Rows * Cols))
-            {
-                ClearPlayhead();
-                return;
-            }
-
-            if (_playheadIndex == stepIndex)
-                return;
-
-            _playheadIndex = stepIndex;
-
-            // remove class from previous
-            if (_playheadCell != null)
-                _playheadCell.RemoveFromClassList("km-playhead");
-
-            int r = stepIndex / Cols; // 0..1
-            int c = stepIndex % Cols; // 0..7
-
-            _playheadCell = _cells[r, c];
-            if (_playheadCell != null)
-                _playheadCell.AddToClassList("km-playhead");
-        }
 
         public void ClearPlayhead()
         {
