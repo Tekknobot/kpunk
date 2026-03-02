@@ -204,6 +204,53 @@ namespace KMusic
         {
             _bus = new ParameterBus();
 
+            // -----------------
+            // SYNTH (MISSING!)
+            // -----------------
+
+            // MASTER
+            _bus.Add(new Parameter("master.vol",   0f, 1f, 0.80f));        // 0..1 feels right for volume
+            _bus.Add(new Parameter("master.porta", 0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("master.poly",  0f, 100f, 0f, unit: "%"));
+
+            // OSC1
+            _bus.Add(new Parameter("osc1.vol",    0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc1.tune",   0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc1.trans",  0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc1.uni",    0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc1.detune", 0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc1.harm",   0f, 100f, 0f, unit: "%"));
+
+            // OSC2
+            _bus.Add(new Parameter("osc2.vol",    0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc2.tune",   0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc2.trans",  0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc2.uni",    0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc2.detune", 0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc2.harm",   0f, 100f, 0f, unit: "%"));
+
+            // SUB / NOISE / MISC
+            _bus.Add(new Parameter("sub.vol",       0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("sub.oct",       0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("noise.vol",     0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("synth.xmod",    0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("filter.keytrk", 0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("synth.vel",     0f, 100f, 0f, unit: "%"));
+
+            // FX: DELAY
+            _bus.Add(new Parameter("fx.delay.mix",  0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("fx.delay.fb",   0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("fx.delay.time", 0f, 100f, 0f, unit: "%"));
+
+            // FX: REVERB
+            _bus.Add(new Parameter("fx.rev.mix",  0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("fx.rev.fb",   0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("fx.rev.damp", 0f, 100f, 0f, unit: "%"));
+
+            // -----------------
+            // EXISTING STUFF
+            // -----------------
+
             // Filter
             _bus.Add(new Parameter("filter.cutoff", 20, 20000, 3200, log: true, unit: "hz"));
             _bus.Add(new Parameter("filter.res", 0, 100, 30, unit: "%"));
