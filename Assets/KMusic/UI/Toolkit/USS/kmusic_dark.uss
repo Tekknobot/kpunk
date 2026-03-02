@@ -741,9 +741,7 @@
 }
 
 /* subtle accent for PLAY button */
-.player-btn-transport:first-child {
-    border-color: #6ae4ff;
-}
+.player-btn-play { border-color: #6ae4ff; }
 
 
 /* =========================

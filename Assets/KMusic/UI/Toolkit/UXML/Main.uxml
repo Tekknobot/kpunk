@@ -215,7 +215,7 @@
           <km:WaveformView name="Waveform" class="km-waveform" />
 
           <ui:VisualElement class="player-transport-row">
-              <ui:Button name="TrackPlay" class="player-btn player-btn-transport" text="PLAY"/>
+              <ui:Button name="TrackPlay" class="player-btn player-btn-transport player-btn-play" text="PLAY"/>
               <ui:Button name="TrackStop" class="player-btn player-btn-transport" text="STOP"/>
 
               <ui:Button name="TrackPrev" class="player-btn player-btn-nav" text="PREV"/>

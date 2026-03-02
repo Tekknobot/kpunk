@@ -45,6 +45,15 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private bool _chopArmed = false;
 
+    // CHOP extra UI
+    private Button _btnAuto4, _btnAuto8, _btnAuto16;
+    private Button _btnAddMode, _btnDelMode, _btnSnap, _btnReset;
+
+    // CHOP state
+    private bool _markerAddMode = true;  // true = ADD (place markers), false = DEL (delete nearest)
+    private bool _snapEnabled = true;
+    private int _snapDiv = 16;           // snap grid division (4/8/16)
+
     // Resources clips
     private AudioClip[] _clips = Array.Empty<AudioClip>();
     private int _clipIndex = -1;
@@ -117,6 +126,16 @@ public class KMusicPlayerUI : MonoBehaviour
         _btnChop  = page.Q<Button>("ChopToggle");
         _btnApply = page.Q<Button>("ChopApply");
 
+        // CHOP extra buttons
+        _btnAuto4  = page.Q<Button>("Auto4");
+        _btnAuto8  = page.Q<Button>("Auto8");
+        _btnAuto16 = page.Q<Button>("Auto16");
+
+        _btnAddMode = page.Q<Button>("MarkerAddMode");
+        _btnDelMode = page.Q<Button>("MarkerDelMode");
+        _btnSnap    = page.Q<Button>("SnapToggle");
+        _btnReset   = page.Q<Button>("ResetMarkers");
+
         _timeLabel = page.Q<Label>("TimeLabel");
         _durLabel  = page.Q<Label>("DurLabel");
         _trackNameLabel = page.Q<Label>("TrackName");
@@ -150,10 +169,35 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_btnNext != null) _btnNext.clicked += CycleNextTrack;
         if (_btnLoad != null) _btnLoad.clicked += CycleNextTrack; // LOAD cycles to next
 
+        // CHOP main
         if (_btnChop != null)  _btnChop.clicked += ToggleChop;
         if (_btnApply != null) _btnApply.clicked += ApplyChops;
 
-        // Keyboard: Enter drops chop marker while armed (editor/desktop)
+        // CHOP auto divisions
+        if (_btnAuto4 != null)  _btnAuto4.clicked += () => AutoChop(4);
+        if (_btnAuto8 != null)  _btnAuto8.clicked += () => AutoChop(8);
+        if (_btnAuto16 != null) _btnAuto16.clicked += () => AutoChop(16);
+
+        // CHOP modes + snap/reset
+        if (_btnAddMode != null) _btnAddMode.clicked += () =>
+        {
+            SetMarkerMode(true);
+            DropChopMarkerAtPlayhead();   // ✅ immediate action on mobile
+        };
+
+        if (_btnDelMode != null) _btnDelMode.clicked += () =>
+        {
+            SetMarkerMode(false);
+            DeleteNearestMarkerToPlayhead(); // ✅ immediate action on mobile
+        };
+        if (_btnSnap != null)    _btnSnap.clicked += () => ToggleSnap();
+        if (_btnReset != null)   _btnReset.clicked += ResetAllMarkers;
+
+        // Init CHOP UI state
+        SetMarkerMode(true);
+        SetSnapState(_snapEnabled);
+
+        // Keyboard: Enter applies ADD/DEL while CHOP is armed (editor/desktop + hardware keyboards)
         page.RegisterCallback<KeyDownEvent>(OnKeyDown);
 
         // Update playhead ~30fps (schedule from root so it keeps ticking)
@@ -194,11 +238,9 @@ public class KMusicPlayerUI : MonoBehaviour
                         AndroidMusicLibrary.DebugLastJsonHead
                     );
 
-                    // keep fallback so app still works
+                    // keep fallback so app still works (but don't overwrite the debug title)
                     RefreshClipList();
-                    // don't auto-load; leave debug message visible.
                     // user can press Next/Prev to pick Resources manually if needed.
-                    //if (_clips.Length > 0 && _clip == null) LoadClipByIndex(0);
                 }
             }, deviceTrackLimit);
 
@@ -224,6 +266,15 @@ public class KMusicPlayerUI : MonoBehaviour
 
         if (_btnChop != null)  _btnChop.clicked -= ToggleChop;
         if (_btnApply != null) _btnApply.clicked -= ApplyChops;
+
+        if (_btnAuto4 != null)  _btnAuto4.clicked -= () => AutoChop(4);
+        if (_btnAuto8 != null)  _btnAuto8.clicked -= () => AutoChop(8);
+        if (_btnAuto16 != null) _btnAuto16.clicked -= () => AutoChop(16);
+
+        if (_btnAddMode != null) _btnAddMode.clicked -= () => SetMarkerMode(true);
+        if (_btnDelMode != null) _btnDelMode.clicked -= () => SetMarkerMode(false);
+        if (_btnSnap != null)    _btnSnap.clicked -= () => ToggleSnap();
+        if (_btnReset != null)   _btnReset.clicked -= ResetAllMarkers;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
         if (_loadDeviceCoroutine != null)
@@ -391,7 +442,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private void UpdateTrackTitle(string title)
     {
         if (_trackNameLabel == null) return;
-        _trackNameLabel.text = "[TITLE] " + (string.IsNullOrEmpty(title) ? "TRACK" : title);
+        _trackNameLabel.text = string.IsNullOrEmpty(title) ? "TRACK" : title;
     }
 
     private void EnsureClipLoaded()
@@ -448,7 +499,9 @@ public class KMusicPlayerUI : MonoBehaviour
 
         if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
         {
-            DropChopMarkerAtPlayhead();
+            if (_markerAddMode) DropChopMarkerAtPlayhead();
+            else DeleteNearestMarkerToPlayhead();
+
             evt.StopPropagation();
         }
     }
@@ -461,6 +514,14 @@ public class KMusicPlayerUI : MonoBehaviour
             if (_chopArmed) _btnChop.AddToClassList("km-pillbtn--active");
             else _btnChop.RemoveFromClassList("km-pillbtn--active");
         }
+
+        // When arming CHOP, default to ADD mode (sampler-friendly)
+        if (_chopArmed) SetMarkerMode(true);
+
+        // ✅ MOBILE: tapping CHOP should DO something right away
+        // Drop a marker at current playhead when turning ON
+        if (_chopArmed)
+            DropChopMarkerAtPlayhead();
     }
 
     private void DropChopMarkerAtPlayhead()
@@ -469,6 +530,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_chops01.Count >= 16) return;
 
         float t01 = Mathf.Clamp01(audioSource.time / _clip.length);
+        if (_snapEnabled) t01 = Snap01(t01, _snapDiv);
 
         for (int i = 0; i < _chops01.Count; i++)
             if (Mathf.Abs(_chops01[i] - t01) < 0.005f) return;
@@ -476,21 +538,42 @@ public class KMusicPlayerUI : MonoBehaviour
         _chops01.Add(t01);
         _chops01.Sort();
         SyncMarkersToWave();
+
+        UpdateTrackTitle($"MARKER + {t01:0.000}");
     }
 
     private void ApplyChops()
     {
-        var boundaries = new List<float>(18) { 0f };
+        if (_clip == null || _clip.length <= 0f || audioSource == null || audioSource.clip != _clip)
+            return;
+
+        // Boundaries: 0 + markers + 1
+        var boundaries = new List<float>(_chops01.Count + 2) { 0f };
         boundaries.AddRange(_chops01);
         boundaries.Add(1f);
+        boundaries.Sort();
 
-        for (int i = 0; i < 16; i++)
+        float t01 = Mathf.Clamp01(audioSource.time / _clip.length);
+
+        // Find slice containing playhead
+        int slice = 0;
+        for (int i = 0; i < boundaries.Count - 1; i++)
         {
-            if (i + 1 >= boundaries.Count) break;
-            float a = boundaries[i];
-            float b = boundaries[i + 1];
-            Debug.Log($"CHOP {i + 1:00}: {a:0.000} -> {b:0.000}");
+            if (t01 >= boundaries[i] && t01 < boundaries[i + 1])
+            {
+                slice = i;
+                break;
+            }
         }
+
+        float start01 = boundaries[slice];
+        float end01 = boundaries[Mathf.Min(slice + 1, boundaries.Count - 1)];
+        float startSec = start01 * _clip.length;
+
+        audioSource.time = startSec;
+        if (!audioSource.isPlaying) audioSource.Play();
+
+        UpdateTrackTitle($"SLICE {slice + 1}  {start01:0.000}->{end01:0.000}");
     }
 
     private void SyncMarkersToWave()
@@ -526,5 +609,121 @@ public class KMusicPlayerUI : MonoBehaviour
         int m = (int)(seconds / 60f);
         int s = (int)(seconds % 60f);
         return $"{m}:{s:00}";
+    }
+
+    // ----------------------------
+    // CHOP helpers
+    // ----------------------------
+
+    private void AutoChop(int slices)
+    {
+        if (_clip == null || _clip.length <= 0f) return;
+        slices = Mathf.Clamp(slices, 2, 64);
+
+        _snapDiv = slices;
+        _chops01.Clear();
+
+        // Add internal boundaries only (exclude 0 and 1)
+        int internalCount = Mathf.Min(16, slices - 1); // respect 16 marker max
+        for (int i = 1; i <= internalCount; i++)
+        {
+            // If slices is large, internalCount caps, so we space within slices anyway
+            float t01 = i / (float)slices;
+            if (_snapEnabled) t01 = Snap01(t01, _snapDiv);
+            _chops01.Add(t01);
+        }
+
+        _chops01.Sort();
+        SyncMarkersToWave();
+
+        // Arm chop when auto-chopping (feels right)
+        _chopArmed = true;
+        if (_btnChop != null) _btnChop.AddToClassList("km-pillbtn--active");
+        SetMarkerMode(true);
+
+        UpdateTrackTitle($"AUTO {slices}");
+    }
+
+    private void ResetAllMarkers()
+    {
+        _chops01.Clear();
+        SyncMarkersToWave();
+        UpdateTrackTitle("RESET");
+    }
+
+    private void SetMarkerMode(bool addMode)
+    {
+        _markerAddMode = addMode;
+
+        if (_btnAddMode != null)
+        {
+            if (_markerAddMode) _btnAddMode.AddToClassList("km-pillbtn--active");
+            else _btnAddMode.RemoveFromClassList("km-pillbtn--active");
+        }
+
+        if (_btnDelMode != null)
+        {
+            if (!_markerAddMode) _btnDelMode.AddToClassList("km-pillbtn--active");
+            else _btnDelMode.RemoveFromClassList("km-pillbtn--active");
+        }
+
+        UpdateTrackTitle(_markerAddMode ? "MODE: ADD" : "MODE: DEL");
+    }
+
+    private void ToggleSnap()
+    {
+        _snapEnabled = !_snapEnabled;
+        SetSnapState(_snapEnabled);
+        UpdateTrackTitle(_snapEnabled ? $"SNAP ON ({_snapDiv})" : "SNAP OFF");
+    }
+
+    private void SetSnapState(bool on)
+    {
+        if (_btnSnap != null)
+        {
+            if (on) _btnSnap.AddToClassList("km-pillbtn--active");
+            else _btnSnap.RemoveFromClassList("km-pillbtn--active");
+        }
+    }
+
+    private void DeleteNearestMarkerToPlayhead()
+    {
+        if (_clip == null || _clip.length <= 0f) return;
+        if (_chops01.Count == 0) return;
+
+        float t01 = Mathf.Clamp01(audioSource.time / _clip.length);
+
+        int best = -1;
+        float bestDist = float.MaxValue;
+        for (int i = 0; i < _chops01.Count; i++)
+        {
+            float d = Mathf.Abs(_chops01[i] - t01);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                best = i;
+            }
+        }
+
+        // Require playhead reasonably near a marker to delete (prevents accidental deletes)
+        if (best >= 0 && bestDist <= 0.06f)
+        {
+            float v = _chops01[best];
+            _chops01.RemoveAt(best);
+            SyncMarkersToWave();
+            UpdateTrackTitle($"MARKER - {v:0.000}");
+        }
+        else
+        {
+            UpdateTrackTitle("NO MARKER NEAR");
+        }
+    }
+
+    private static float Snap01(float t01, int div)
+    {
+        div = Mathf.Clamp(div, 2, 64);
+        float step = 1f / div;
+        int k = Mathf.RoundToInt(t01 / step);
+        return Mathf.Clamp01(k * step);
     }
 }
