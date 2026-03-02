@@ -210,15 +210,16 @@
           <ui:VisualElement class="km-row" style="align-items:center;">
             <ui:Label name="TrackName" class="km-subtitle" text="TRACK"/>
             <ui:VisualElement style="flex-grow:1;"/>
+
+            <!-- Dedicated PLAYER transport + track navigation -->
+            <ui:Button name="TrackPlay" class="km-pillbtn km-pillbtn--transport" text="PLAY"/>
+            <ui:Button name="TrackStop" class="km-pillbtn km-pillbtn--transport" text="STOP"/>
+            <ui:Button name="TrackPrev" class="km-pillbtn" text="PREV"/>
+            <ui:Button name="TrackNext" class="km-pillbtn" text="NEXT"/>
             <ui:Button name="TrackLoad" class="km-pillbtn" text="LOAD"/>
           </ui:VisualElement>
 
           <km:WaveformView name="Waveform" class="km-waveform" />
-          <ui:VisualElement class="km-row" style="align-items:center;">
-            <ui:Label name="TimeLabel" class="km-label" text="0:00"/>
-            <ui:VisualElement style="flex-grow:1;"/>
-            <ui:Label name="DurLabel" class="km-label" text="0:00"/>
-          </ui:VisualElement>
         </ui:VisualElement>
 
         <!-- CHOP -->

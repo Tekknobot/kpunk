@@ -1,6 +1,6 @@
 // Assets/Scripts/KMusicPlayerUI.cs
 // Player page: load AudioClip(s) from Resources/<resourcesFolder>/, render waveform,
-// show playhead + chop markers, and hook global PLAY/STOP buttons.
+// show playhead + chop markers, and hook PLAYER-local transport/buttons only.
 
 using System;
 using System.Collections.Generic;
@@ -11,6 +11,9 @@ using KMusic.UI;
 public class KMusicPlayerUI : MonoBehaviour
 {
     [SerializeField] private UIDocument doc;
+
+    [Header("Dedicated player AudioSource (do NOT point at Helm)")]
+    [Tooltip("If null, a child GameObject named 'PlayerAudioSource' will be created with an AudioSource.")]
     [SerializeField] private AudioSource audioSource;
 
     [Header("Resources audio folder")]
@@ -19,12 +22,8 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private VisualElement _root;
 
-    // Global topbar transport
-    private Button _globalPlay;
-    private Button _globalStop;
-
-    // Player page UI
-    private Button _btnLoad, _btnChop, _btnApply;
+    // Player page UI (DEDICATED)
+    private Button _btnPlay, _btnStop, _btnPrev, _btnNext, _btnLoad, _btnChop, _btnApply;
     private Label _timeLabel, _durLabel, _trackNameLabel;
     private WaveformView _wave;
 
@@ -41,27 +40,55 @@ public class KMusicPlayerUI : MonoBehaviour
     private void Awake()
     {
         if (!doc) doc = GetComponent<UIDocument>();
-        if (!audioSource) audioSource = GetComponent<AudioSource>();
-        if (!audioSource) audioSource = gameObject.AddComponent<AudioSource>();
+
+        // ✅ IMPORTANT: ensure the Player uses its own AudioSource (not Helm’s).
+        EnsureDedicatedPlayerAudioSource();
+    }
+
+    private void EnsureDedicatedPlayerAudioSource()
+    {
+        if (audioSource != null) return;
+
+        // If the same GO has an AudioSource, it might be Helm’s. Don’t risk it.
+        // Create a dedicated child AudioSource for tracks.
+        var child = transform.Find("PlayerAudioSource");
+        if (child == null)
+        {
+            var go = new GameObject("PlayerAudioSource");
+            go.transform.SetParent(transform, false);
+            child = go.transform;
+        }
+
+        audioSource = child.GetComponent<AudioSource>();
+        if (audioSource == null) audioSource = child.gameObject.AddComponent<AudioSource>();
+
+        // Safe defaults
+        audioSource.playOnAwake = false;
+        audioSource.loop = false;
+        audioSource.spatialBlend = 0f; // 2D
+        audioSource.volume = 1f;
+
+        Debug.Log("[PlayerUI] Using dedicated AudioSource: PlayerAudioSource");
     }
 
     private void OnEnable()
     {
+        EnsureDedicatedPlayerAudioSource();
+
         _root = doc != null ? doc.rootVisualElement : null;
         if (_root == null) return;
-
-        // --- GLOBAL PLAY/STOP (topbar) ---
-        _globalPlay = _root.Q<Button>("PlayButton");
-        _globalStop = _root.Q<Button>("StopButton");
-
-        if (_globalPlay != null) _globalPlay.clicked += OnGlobalPlayClicked;
-        if (_globalStop != null) _globalStop.clicked += OnGlobalStopClicked;
 
         // --- PLAYER PAGE ---
         var page = _root.Q<VisualElement>("PagePlayer");
         if (page == null) return;
 
-        _btnLoad  = page.Q<Button>("TrackLoad");
+        // Dedicated track controls
+        _btnPlay = page.Q<Button>("TrackPlay");
+        _btnStop = page.Q<Button>("TrackStop");
+        _btnPrev = page.Q<Button>("TrackPrev");
+        _btnNext = page.Q<Button>("TrackNext");
+        _btnLoad = page.Q<Button>("TrackLoad");
+
         _btnChop  = page.Q<Button>("ChopToggle");
         _btnApply = page.Q<Button>("ChopApply");
 
@@ -69,7 +96,9 @@ public class KMusicPlayerUI : MonoBehaviour
         _durLabel  = page.Q<Label>("DurLabel");
         _trackNameLabel = page.Q<Label>("TrackName");
 
-        // --- Waveform host (UXML is a plain VisualElement) ---
+        Debug.Log($"[PlayerUI] page={(page!=null)} playBtn={(_btnPlay!=null)} stopBtn={(_btnStop!=null)} prevBtn={(_btnPrev!=null)} nextBtn={(_btnNext!=null)} loadBtn={(_btnLoad!=null)}");
+
+        // --- Waveform host ---
         var host = page.Q<VisualElement>("Waveform");
         if (host == null)
         {
@@ -81,23 +110,30 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_wave == null)
         {
             _wave = new WaveformView { name = "WaveformView" };
-            _wave.AddToClassList("km-waveform"); // keep your styling
+            _wave.AddToClassList("km-waveform");
             _wave.style.width = Length.Percent(100);
             _wave.style.height = Length.Percent(100);
             host.Clear();
             host.Add(_wave);
         }
-        if (_btnLoad != null)  _btnLoad.clicked += CycleNextTrack;
+
+        // Wire dedicated buttons
+        if (_btnPlay != null) _btnPlay.clicked += OnPlayClicked;
+        if (_btnStop != null) _btnStop.clicked += OnStopClicked;
+        if (_btnPrev != null) _btnPrev.clicked += CyclePrevTrack;
+        if (_btnNext != null) _btnNext.clicked += CycleNextTrack;
+        if (_btnLoad != null) _btnLoad.clicked += CycleNextTrack; // LOAD cycles to next
+
         if (_btnChop != null)  _btnChop.clicked += ToggleChop;
         if (_btnApply != null) _btnApply.clicked += ApplyChops;
 
-        // Keyboard: Enter drops chop marker while armed (mainly editor/desktop)
+        // Keyboard: Enter drops chop marker while armed (editor/desktop)
         page.RegisterCallback<KeyDownEvent>(OnKeyDown);
 
-        // Update playhead ~30fps
-        page.schedule.Execute(UpdatePlayheadUI).Every(33);
+        // Update playhead ~30fps (schedule from root so it keeps ticking)
+        _root.schedule.Execute(UpdatePlayheadUI).Every(33);
 
-        // Load all clips in folder and auto-load first
+        // Load clips + auto-load first
         RefreshClipList();
         if (_clips.Length > 0 && _clip == null)
             LoadClipByIndex(0);
@@ -107,30 +143,40 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private void OnDisable()
     {
-        if (_globalPlay != null) _globalPlay.clicked -= OnGlobalPlayClicked;
-        if (_globalStop != null) _globalStop.clicked -= OnGlobalStopClicked;
+        if (_btnPlay != null) _btnPlay.clicked -= OnPlayClicked;
+        if (_btnStop != null) _btnStop.clicked -= OnStopClicked;
+        if (_btnPrev != null) _btnPrev.clicked -= CyclePrevTrack;
+        if (_btnNext != null) _btnNext.clicked -= CycleNextTrack;
+        if (_btnLoad != null) _btnLoad.clicked -= CycleNextTrack;
 
-        if (_btnLoad != null)  _btnLoad.clicked -= CycleNextTrack;
         if (_btnChop != null)  _btnChop.clicked -= ToggleChop;
         if (_btnApply != null) _btnApply.clicked -= ApplyChops;
     }
 
     private void RefreshClipList()
     {
-        // Loads everything under Resources/<resourcesFolder> as AudioClip
         _clips = Resources.LoadAll<AudioClip>(resourcesFolder) ?? Array.Empty<AudioClip>();
 
-        // Keep index valid
         if (_clips.Length == 0) _clipIndex = -1;
         else _clipIndex = Mathf.Clamp(_clipIndex, 0, _clips.Length - 1);
 
-        // Optional: log what we found
+        Debug.Log($"[PlayerUI] RefreshClipList found {_clips.Length} clips in Resources/{resourcesFolder}");
+
         if (_clips.Length > 0)
         {
             var names = new string[_clips.Length];
             for (int i = 0; i < _clips.Length; i++) names[i] = _clips[i] != null ? _clips[i].name : "null";
             Debug.Log($"KMusicPlayerUI: Found {_clips.Length} clip(s) in Resources/{resourcesFolder}: {string.Join(", ", names)}");
         }
+    }
+
+    private void CyclePrevTrack()
+    {
+        RefreshClipList();
+        if (_clips.Length == 0) return;
+
+        int prev = (_clipIndex <= 0) ? (_clips.Length - 1) : (_clipIndex - 1);
+        LoadClipByIndex(prev);
     }
 
     private void CycleNextTrack()
@@ -159,6 +205,8 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
         }
 
+        // ✅ Force the dedicated player AudioSource to use THIS track clip.
+        audioSource.Stop();
         audioSource.clip = _clip;
         audioSource.time = 0f;
 
@@ -167,25 +215,35 @@ public class KMusicPlayerUI : MonoBehaviour
         UpdateTimeLabels(0f, _clip.length);
         UpdateTrackTitle(_clip.name);
 
-        Debug.Log($"KMusicPlayerUI: Loaded {_clip.name} len={_clip.length:0.00}s");
+        Debug.Log($"KMusicPlayerUI: Loaded {_clip.name} len={_clip.length:0.00}s (audioSource.clip={audioSource.clip.name})");
     }
 
     private void UpdateTrackTitle(string title)
     {
         if (_trackNameLabel == null) return;
-        // You can format however you like. Keeping it simple:
         _trackNameLabel.text = string.IsNullOrEmpty(title) ? "TRACK" : title;
     }
 
-    private void OnGlobalPlayClicked()
+    private void EnsureClipLoaded()
     {
-        if (_clip == null)
-        {
-            RefreshClipList();
-            if (_clips.Length > 0) LoadClipByIndex(0);
-        }
+        if (_clip != null && audioSource != null && audioSource.clip == _clip) return;
 
-        if (audioSource.clip == null) return;
+        if (_clip == null || _clips == null || _clips.Length == 0)
+            RefreshClipList();
+
+        if (_clips.Length > 0)
+        {
+            int idx = (_clipIndex < 0) ? 0 : Mathf.Clamp(_clipIndex, 0, _clips.Length - 1);
+            LoadClipByIndex(idx);
+        }
+    }
+
+    private void OnPlayClicked()
+    {
+        EnsureClipLoaded();
+        if (audioSource == null || audioSource.clip == null) return;
+
+        Debug.Log($"[PlayerUI] PLAY clicked. trackClip={(_clip!=null?_clip.name:"null")} audioSource.clip={audioSource.clip.name} isPlaying={audioSource.isPlaying} time={audioSource.time:0.000}");
 
         // If at end, restart
         if (audioSource.time >= audioSource.clip.length - 0.01f)
@@ -194,12 +252,12 @@ public class KMusicPlayerUI : MonoBehaviour
         audioSource.Play();
     }
 
-    private void OnGlobalStopClicked()
+    private void OnStopClicked()
     {
         if (audioSource == null) return;
         audioSource.Stop();
         audioSource.time = 0f;
-        UpdatePlayheadUI(); // snap UI back to 0
+        UpdatePlayheadUI();
     }
 
     private void OnKeyDown(KeyDownEvent evt)
@@ -226,16 +284,10 @@ public class KMusicPlayerUI : MonoBehaviour
     private void DropChopMarkerAtPlayhead()
     {
         if (_clip == null || _clip.length <= 0f) return;
-
-        if (_chops01.Count >= 16)
-        {
-            Debug.Log("KMusicPlayerUI: Max 16 chop markers reached.");
-            return;
-        }
+        if (_chops01.Count >= 16) return;
 
         float t01 = Mathf.Clamp01(audioSource.time / _clip.length);
 
-        // Avoid duplicates (within ~0.5% of length)
         for (int i = 0; i < _chops01.Count; i++)
             if (Mathf.Abs(_chops01[i] - t01) < 0.005f) return;
 
@@ -246,7 +298,6 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private void ApplyChops()
     {
-        // Boundaries = [0] + chops + [1]
         var boundaries = new List<float>(18) { 0f };
         boundaries.AddRange(_chops01);
         boundaries.Add(1f);
@@ -267,10 +318,10 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private void UpdatePlayheadUI()
     {
-        if (_clip == null || _clip.length <= 0f)
+        if (_clip == null || _clip.length <= 0f || audioSource == null || audioSource.clip != _clip)
         {
             _wave?.SetPlayhead01(0f);
-            UpdateTimeLabels(0f, 0f);
+            UpdateTimeLabels(0f, _clip != null ? _clip.length : 0f);
             return;
         }
 

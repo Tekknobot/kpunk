@@ -27,7 +27,7 @@ namespace KMusic.UI
         public WaveformView()
         {
             style.flexGrow = 1;
-            style.height = 160;
+            style.height = 320;
             style.marginTop = 8;
             style.marginBottom = 8;
 
