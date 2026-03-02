@@ -139,6 +139,7 @@ GameObject:
   - component: {fileID: 161364356}
   - component: {fileID: 161364357}
   - component: {fileID: 161364362}
+  - component: {fileID: 161364363}
   - component: {fileID: 161364360}
   - component: {fileID: 161364359}
   - component: {fileID: 161364358}
@@ -341,7 +342,7 @@ AudioSource:
   m_Enabled: 1
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 24300002, guid: 09156e7a2a9be2540871dda397a09286, type: 2}
-  m_audioClip: {fileID: 1040315158}
+  m_audioClip: {fileID: 1279970032}
   m_PlayOnAwake: 1
   m_Volume: 1
   m_Pitch: 1
@@ -599,9 +600,29 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   helm: {fileID: 0}
   epsilon: 0.0005
-  logBusChanges: 0
-  logApply: 0
-  logPull: 0
+  logBusChanges: 1
+  logApply: 1
+  logPull: 1
+--- !u!114 &161364363
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 161364349}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f46f4e765dde49444a8dd4a0ba5d6d7e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  doc: {fileID: 0}
+  helm: {fileID: 0}
+  presetsRootFolder: HelmPresets
+  indexFileName: presets_index.txt
+  patchPrevBtnName: PatchPrevButton
+  patchNextBtnName: PatchNextButton
+  patchNameLabelName: PatchNameLabel
+  patchIndexLabelName: PatchIndexLabel
 --- !u!1 &660768143
 GameObject:
   m_ObjectHideFlags: 0
@@ -791,7 +812,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!83 &1040315158
+--- !u!83 &1279970032
 AudioClip:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}

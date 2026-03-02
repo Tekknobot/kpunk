@@ -601,3 +601,88 @@
     border-top-color: white;
     border-bottom-color: white;
 }
+
+/* --- Patch Picker --- */
+#PatchSearchField {
+  border-radius: 16px;
+  background-color: #1C1F28;
+  border-width: 2px;
+  border-color: var(--border);
+  padding-left: 16px;
+  padding-right: 16px;
+  color: var(--text);
+}
+
+#PatchSearchField:focus {
+  border-color: var(--accent);
+}
+
+/* make scroll view look clean */
+#PatchScroll {
+  border-radius: 16px;
+  background-color: var(--panel2);
+  border-width: 2px;
+  border-color: var(--border);
+  padding: 12px;
+}
+
+/* --- Synth Patch Browser --- */
+.km-patch-card {
+  /* uses km-card base */
+}
+
+.km-patch-row {
+  margin-top: 12px;
+  flex-direction: row;
+  align-items: center;
+}
+
+.km-patch-nav {
+  width: 140px;   /* bigger tap target */
+}
+
+/* Row that contains PREV | PATCH NAME | NEXT */
+.km-patch-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+/* PREV/NEXT buttons in the patch row */
+.km-patch-nav {
+  min-width: 72px;
+  height: 48px;
+}
+
+/* Patch name pill */
+.km-patch-name {
+  flex-grow: 1;
+  flex-shrink: 1;
+  min-width: 0;
+
+  height: 48px;
+  padding-left: 14px;
+  padding-right: 14px;
+
+  background-color: #1C1F28;
+  border-width: 2px;
+  border-color: var(--border);
+  border-radius: 16px;
+
+  color: var(--text);
+  font-size: 22px;          /* 48 was way too big */
+  -unity-font-style: bold;
+  unity-text-align: middle-center;
+
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* “1 / 100” under it */
+.km-patch-index {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 16px;
+  unity-text-align: middle-center;
+}

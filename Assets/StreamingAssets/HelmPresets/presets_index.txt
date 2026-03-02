@@ -1,0 +1,309 @@
+Arp/CM Kleer Arp.helm
+Arp/CM Tremolo.helm
+Arp/COA Running Toy.helm
+Arp/MT On the Run.helm
+Arp/OZ Prarie Arp.helm
+Arp/SF Arp 1.helm
+Arp/SF Arp 2.helm
+Bass/CM Diddly.helm
+Bass/CM Electro Bass.helm
+Bass/CM Grit Bass.helm
+Bass/CM Subsine.helm
+Bass/COA Hard Bass 1.helm
+Bass/COA Hard Bass 10.helm
+Bass/COA Hard Bass 11.helm
+Bass/COA Hard Bass 2.helm
+Bass/COA Hard Bass 3.helm
+Bass/COA Hard Bass 4.helm
+Bass/COA Hard Bass 5.helm
+Bass/COA Hard Bass 6.helm
+Bass/COA Hard Bass 7.helm
+Bass/COA Hard Bass 8.helm
+Bass/COA Hard Bass 9.helm
+Bass/COA Killer Chipsound Pluck 1.helm
+Bass/COA Killer Chipsound Pluck 2.helm
+Bass/COA Scary Rotten DNB.helm
+Bass/COA Stab Bass Vocal Sound.helm
+Bass/COA Stab Bass.helm
+Bass/COA Sub-Layer for Trap Kick 1.helm
+Bass/COA Sub-Layer for Trap Kick 2.helm
+Bass/COA Sub-Layer for Trap Kick 3.helm
+Bass/COA Sub-Layer for Trap Kick 4.helm
+Bass/COA Sub-Layer for Trap Kick 5.helm
+Bass/COA Terror Bass 1.helm
+Bass/COA Terror Bass 2.helm
+Bass/COA Terror Bass 3.helm
+Bass/COA Terror Bass 4.helm
+Bass/COA Timpani Digital Bass.helm
+Bass/COA Trap Bass 1.helm
+Bass/COA Trap Bass 2.helm
+Bass/COA Trap Bass 3.helm
+Bass/COA Trap Bass 4.helm
+Bass/COA Trap Bass 5.helm
+Bass/COA Trap Bass 6.helm
+Bass/COA Trap Bass 7.helm
+Bass/COA Trap Bass 8.helm
+Bass/COA Trap Bass 9.helm
+Bass/MT Cracklette.helm
+Bass/MT Filtered Bass 1.helm
+Bass/MT Filtered Bass 2.helm
+Bass/MT Spectrum.helm
+Bass/MT Stinky Bass 1.helm
+Bass/MT Stinky Bass 2.helm
+Bass/MT Stinky Bass 3.helm
+Bass/SF Bass Formant.helm
+Bass/SF Bass Picked.helm
+Bass/SF Bass.helm
+Bass/SF Contrabass.helm
+Bass/SF Double Bass.helm
+Bass/UG Can't Afford the Real, You Know.helm
+Bass/UG FM ON and On.helm
+Bass/UG Lately I've Been Using This Bass.helm
+Bass/UG Liebe Ist Moog.helm
+Bass/UG Major Orbits.helm
+Bass/UG Old Minis Drift.helm
+Bass/UG One Note Acid (Draw MIDI).helm
+Bass/UG Please Hold for Techno.helm
+Bass/UG Ravers Unite!.helm
+Bass/UG Show Me the M1.helm
+Bass/UG Taiko Attacks Bass (Try Vel=74).helm
+Bass/UG Who Plays the Doctor.helm
+Chip/COA Insane Gamer.helm
+Chip/COA Random Chip Bass.helm
+Chip/MT Bounce.helm
+Chip/MT Chip Waltz.helm
+Chip/MT Easy Vibrato.helm
+Chip/MT Octaves.helm
+Chip/MT Punch.helm
+Chip/MT Wind Up.helm
+Harsh/CM Hard (Style).helm
+Harsh/CM Skreech Bass.helm
+Harsh/CM Ugly Mess.helm
+Keys/CM Bells.helm
+Keys/CM Pluck Time.helm
+Keys/CM Xylo.helm
+Keys/COA 90 Videogame Pluck.helm
+Keys/COA Alien Ocarina 1.helm
+Keys/COA Alien Ocarina 2.helm
+Keys/COA Broken Digital Organ.helm
+Keys/COA Pluck Digital String 1.helm
+Keys/COA Pluck Digital String 2.helm
+Keys/COA Pluck Digital String 3.helm
+Keys/COA Plucked Digital String.helm
+Keys/COA Post Funk Keys 1.helm
+Keys/COA Post Funk Keys 2.helm
+Keys/COA Steampunk Phantom of the Opera.helm
+Keys/MIDI Demo.helm
+Keys/MT Bouncy Balls.helm
+Keys/MT Duper Saw.helm
+Keys/MT Eighties Science Movie.helm
+Keys/MT Organ 1.helm
+Keys/MT Organ 2.helm
+Keys/MT Striking Discovery.helm
+Keys/MT Stuttering Organ.helm
+Keys/MT Toy Piano.helm
+Keys/Not the M1.helm
+Keys/OZ Drifter 1.helm
+Keys/OZ Drifter 2.helm
+Keys/OZ Drifter 3.helm
+Keys/OZ Homebase.helm
+Keys/OZ Natures Best.helm
+Keys/OZ Portamento One.helm
+Keys/OZ Prarie.helm
+Keys/OZ Skewd with Noise.helm
+Keys/OZ Skewd.helm
+Keys/SF Brass CC2 A.helm
+Keys/SF Brass CC2.helm
+Keys/SF Brass Soft Stutter.helm
+Keys/SF Brass Soft.helm
+Keys/SF Celesta.helm
+Keys/SF Formant 1.helm
+Keys/SF Formant 2.helm
+Keys/SF Piano 1.helm
+Keys/SF Piano 2.helm
+Keys/SF Piano 3.helm
+Keys/SF Piano 4.helm
+Keys/SF Piano Tremolo 1.helm
+Keys/SF Piano Tremolo 2.helm
+Keys/UG I Prepared a Piano for You.helm
+Keys/UG I Want to Move to Canada.helm
+Keys/UG Old Organs Have Their Charms.helm
+Keys/UG Steve Reich Playing 5 Notes.helm
+Keys/UG Synths Can Sing Too.helm
+Keys/UG Your Next Chiptune Track.helm
+Lead/CM Hoboe.helm
+Lead/CM Monstah Lead.helm
+Lead/CM Super(er) Saw.helm
+Lead/CM Supersaw Gate.helm
+Lead/CM Supersaw.helm
+Lead/COA Acid Distorted Lead.helm
+Lead/COA Alien Lead Guitar.helm
+Lead/COA Arabian Android Flute.helm
+Lead/COA Convolution.helm
+Lead/COA Digital Reflected Glass 1.helm
+Lead/COA Digital Reflected Glass 2.helm
+Lead/COA Digital Reflected Glass 3.helm
+Lead/COA Electro Bell.helm
+Lead/COA Hard Lead 1.helm
+Lead/COA Hard Lead 2.helm
+Lead/COA Hard Lead 3.helm
+Lead/COA Hard Terror Lead.helm
+Lead/COA Leadgun.helm
+Lead/COA Tension 1.helm
+Lead/COA Tension 2.helm
+Lead/COA Tension 3.helm
+Lead/COA Tension 4.helm
+Lead/COA Trumpet.helm
+Lead/COA Witchy Lead 1.helm
+Lead/COA Witchy Lead 2.helm
+Lead/COA Witchy Lead 3.helm
+Lead/COA Zap Hard.helm
+Lead/MT Formantish.helm
+Lead/OZ Freedom.helm
+Lead/OZ Gold.helm
+Lead/OZ Platinum Poly.helm
+Lead/OZ Platinum.helm
+Lead/OZ Silverrr.helm
+Lead/SF Brass_Portamento.helm
+Lead/SF Clarinet.helm
+Lead/SF Nasty.helm
+Lead/SF Pizz.helm
+Lead/UG Let's Build a Replicant.helm
+Lead/UG Psycho Marcatos.helm
+Lead/UG Reverb Is in Your Hands.helm
+Lead/UG Welcome to The Solo My Friend.helm
+Lead/UG Write More Tracks in Lydian.helm
+Pad/CM Epic.helm
+Pad/CM Soothing.helm
+Pad/CM Stars.helm
+Pad/COA Ambient Metallic.helm
+Pad/COA Broken Old Analog.helm
+Pad/COA Crispy Pad Organ.helm
+Pad/COA Digital Enigma.helm
+Pad/COA Digital Wind Ensemble 1.helm
+Pad/COA Digital Wind Ensemble 2.helm
+Pad/COA Hard Brass Synth Ensemble.helm
+Pad/COA Lofi Soft Pad 1.helm
+Pad/COA Lofi Soft Pad 2.helm
+Pad/COA Lofi Soft Pad 3.helm
+Pad/COA Pulsating Pad.helm
+Pad/COA Resonant Pad.helm
+Pad/COA Sad Scifi Strings 1.helm
+Pad/COA Sad Scifi Strings 2.helm
+Pad/COA Sad Scifi Strings 3.helm
+Pad/COA Scifi Interference.helm
+Pad/COA Soft Neo Church Organ.helm
+Pad/COA Soft Scifi Pad 1.helm
+Pad/COA Soft Scifi Pad 2.helm
+Pad/COA Soft Scifi Pad 3.helm
+Pad/COA Soft Scifi Pad 4.helm
+Pad/COA Soft Scifi Pad 5.helm
+Pad/COA Soft Scifi Pad 6.helm
+Pad/MT Chamber Chatter.helm
+Pad/MT Electrobike Cruise.helm
+Pad/MT Fluffy Landscape.helm
+Pad/MT Hypnotizing Pulse.helm
+Pad/MT Pulsing Daisies.helm
+Pad/MT Stuck in the Basement.helm
+Pad/MT Talk Radio.helm
+Pad/MT Waiting for Takeoff.helm
+Pad/MT Wandering Lost.helm
+Pad/MT Watching the Clock.helm
+Pad/SF Mandolin.helm
+Pad/SF OSC 2.helm
+Pad/SF Soft Pulse 1.helm
+Pad/SF Soft Pulse 2.helm
+Pad/UG Aren't You Bored with SAW+LPF.helm
+Pad/UG Chorales in Space.helm
+Pad/UG Her Skin Was So Soft.helm
+Pad/UG I Dream of Antarctica.helm
+Pad/UG No String Machine Can Do This.helm
+Pad/UG Obi-Wan Will Help You.helm
+Pad/UG The Earth Pulses with Music.helm
+Percussion/CM House Pluck.helm
+Percussion/CM Lo-Fi Pluck.helm
+Percussion/COA Broken Digital Snare.helm
+Percussion/COA Cinematic Hit.helm
+Percussion/COA Closed Hat.helm
+Percussion/COA Dark Perc 1.helm
+Percussion/COA Dark Perc 2.helm
+Percussion/COA Electro Clsd HH.helm
+Percussion/COA Electro Crash Ride.helm
+Percussion/COA Electro Kick 1.helm
+Percussion/COA Electro Kick 2.helm
+Percussion/COA Electro Kick 3.helm
+Percussion/COA Electro Kick 4.helm
+Percussion/COA Electro Metal Perc 1.helm
+Percussion/COA Electro Metal Perc 2.helm
+Percussion/COA Electro Open HH.helm
+Percussion/COA Electro Semiopen HH.helm
+Percussion/COA Electro Tom 1.helm
+Percussion/COA Electro Tom 2.helm
+Percussion/COA Fat HH Clsd.helm
+Percussion/COA Kung Fu Crash.helm
+Percussion/COA Kung Fu Fight Crash.helm
+Percussion/COA Pluck Tom.helm
+Percussion/COA Toy Snare 1.helm
+Percussion/COA Toy Snare 2.helm
+Percussion/OZ Bass 1.helm
+Percussion/OZ Hat 1.helm
+Percussion/OZ Hat 2.helm
+Percussion/OZ Kick 1.helm
+Percussion/OZ Kick 2.helm
+Percussion/OZ Snare 1.helm
+Percussion/OZ Some Kind of Percussion.helm
+Percussion/OZ Some Kinda Dubby Cycle.helm
+Percussion/OZ Some Kinda Stab.helm
+Percussion/SF AD2 4 Toms.helm
+Percussion/SF Cowbell 1.helm
+Percussion/SF Cowbell 2.helm
+Percussion/SF HH High.helm
+Percussion/SF HH Low Eco 1.helm
+Percussion/SF HH Low Eco 2.helm
+Percussion/SF HH Low.helm
+Percussion/SF HH Silver.helm
+Percussion/SF Horse 1.helm
+Percussion/SF Horse 2.helm
+Percussion/SF Kick 1.helm
+Percussion/SF Kick 2.helm
+Percussion/SF Kick 3.helm
+Percussion/SF Nocky.helm
+Percussion/SF Snare 1.helm
+Percussion/SF Snare 2.helm
+Percussion/SF Snare 3.helm
+Percussion/SF Snare 4.helm
+Percussion/SF Snare Brush.helm
+Percussion/SF Tom 1.helm
+Percussion/SF Tom 2.helm
+Percussion/SF Tom 3.helm
+Percussion/SF Toms Nock 1.helm
+Percussion/SF Toms Nock 2.helm
+SFX/CM Downfall.helm
+SFX/CM Riser.helm
+SFX/COA Alien Creature Crying.helm
+SFX/COA Alien Radio Interferences.helm
+SFX/COA Another Angry Robot.helm
+SFX/COA Chiptune Automatic Gun 1.helm
+SFX/COA Chiptune Automatic Gun 2.helm
+SFX/COA Digital Cello Arp.helm
+SFX/COA Digital Waterdrops.helm
+SFX/COA Lasersword.helm
+SFX/COA Satan in Your Headphones 1.helm
+SFX/COA Satan in Your Headphones 2.helm
+SFX/COA Scifi Gunshot.helm
+SFX/COA Sinister Ambient 1.helm
+SFX/COA Sinister Ambient 2.helm
+SFX/MT Elven Door Stop.helm
+SFX/MT Game Show Clock.helm
+SFX/MT Glitch Power.helm
+SFX/MT Powering On 1.helm
+SFX/MT Powering On 2.helm
+SFX/MT Pulse Alarm.helm
+SFX/MT Rotary Slingshot.helm
+SFX/SF Stutter Teeth.helm
+SFX/SF Whistle 1.helm
+SFX/SF Whistle 2.helm
+SFX/SF Whistle 3.helm
+SFX/SF Wind.helm
+SFX/UG Krell Are Among Us.helm
+SFX/UG Self-Destruct in 5 Minutes.helm

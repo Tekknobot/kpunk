@@ -31,6 +31,25 @@
           <KMusic.UI.PianoRollGrid name="SeqPianoRoll" rows="6" cols="8" />
         </ui:VisualElement>
 
+        <!-- SYNTH PATCH (SEQ page) -->
+        <ui:VisualElement name="CardSynthPatch" class="km-card km-patch-card">
+
+          <ui:Label class="km-subtitle" text="SYNTH PATCH"/>
+
+          <ui:VisualElement class="km-patch-row">
+
+            <ui:Button name="PatchPrevButton" class="km-pillbtn km-patch-nav" text="PREV" />
+
+            <ui:Label name="PatchNameLabel" class="km-patch-name" text="Init Patch" />
+
+            <ui:Button name="PatchNextButton" class="km-pillbtn km-patch-nav" text="NEXT" />
+
+          </ui:VisualElement>
+
+          <ui:Label name="PatchIndexLabel" class="km-patch-index" text="1 / 100" />
+
+        </ui:VisualElement>
+
         <ui:VisualElement class="km-card km-tempo">
           <ui:Label class="km-label" text="TEMPO"/>
           <ui:VisualElement class="km-tempo-row">
