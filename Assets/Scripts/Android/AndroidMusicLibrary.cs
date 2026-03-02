@@ -231,6 +231,16 @@ namespace KMusic.Android
             AudioType type = GuessAudioTypeFromPath(path);
 
             using UnityWebRequest req = UnityWebRequestMultimedia.GetAudioClip(url, type);
+
+            // ✅ Critical for chopping/slicing:
+            // We need a fully-decompressed PCM clip so timeSamples seeking and slicing behaves.
+            // UnityWebRequest audio clips can default to streaming/compressed on some platforms.
+            if (req.downloadHandler is DownloadHandlerAudioClip dh)
+            {
+                dh.streamAudio = false;
+                dh.compressed = false;
+            }
+
             yield return req.SendWebRequest();
 
             if (req.result != UnityWebRequest.Result.Success)

@@ -1,16 +1,9 @@
 // Assets/Scripts/KMusicPlayerUI.cs
-// Player page:
-// - Default: load AudioClip(s) from Resources/<resourcesFolder>/, render waveform,
-//   show playhead + chop markers, and hook PLAYER-local transport/buttons only.
-// - Android option: scan the user's real device Music library via MediaStore and load
-//   a selected track by copying the content:// URI into app cache, then loading file://... into an AudioClip.
-
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
-using UnityEngine.Networking;
 using KMusic.UI;
 using KMusic;
 
@@ -23,46 +16,43 @@ public class KMusicPlayerUI : MonoBehaviour
     [SerializeField] private UIDocument doc;
 
     [Header("Dedicated player AudioSource (do NOT point at Helm)")]
-    [Tooltip("If null, a child GameObject named 'PlayerAudioSource' will be created with an AudioSource.")]
     [SerializeField] private AudioSource audioSource;
 
     [Header("Resources audio folder (fallback / editor)")]
-    [Tooltip("AudioClips placed under Assets/Resources/<folder>/ (ex: Assets/Resources/Tracks/*.mp3 or *.wav)")]
     [SerializeField] private string resourcesFolder = "Tracks";
 
     [Header("Android: Device Music Library (MediaStore)")]
-    [Tooltip("If true, on Android builds we will query MediaStore.Audio (device music library) instead of Resources.")]
     [SerializeField] private bool useDeviceMusicLibraryOnAndroid = true;
-
-    [Tooltip("Max number of MediaStore tracks to fetch (0 = no limit).")]
     [SerializeField] private int deviceTrackLimit = 250;
 
     private VisualElement _root;
 
-    // Player page UI (DEDICATED)
     private Button _btnPlay, _btnStop, _btnPrev, _btnNext, _btnLoad, _btnChop, _btnApply;
     private Label _timeLabel, _durLabel, _trackNameLabel;
     private WaveformView _wave;
-
     private Button _btnSend;
 
     private bool _chopArmed = false;
 
-    // CHOP extra UI
     private Button _btnAuto4, _btnAuto8, _btnAuto16;
     private Button _btnAddMode, _btnDelMode, _btnSnap, _btnReset;
 
-    // CHOP state
-    private bool _markerAddMode = true;  // true = ADD (place markers), false = DEL (delete nearest)
+    private bool _markerAddMode = true;
     private bool _snapEnabled = true;
-    private int _snapDiv = 16;           // snap grid division (4/8/16)
+    private int _snapDiv = 16;
 
-    // Resources clips
+    // Markers: normalized [0..1], 0 and 1 are implied boundaries when applying.
+    private readonly List<float> _chops01 = new();
+
     private AudioClip[] _clips = Array.Empty<AudioClip>();
     private int _clipIndex = -1;
 
-    // Current playing clip (either from Resources, or dynamically loaded from device)
     private AudioClip _clip;
+    private string _clipResourcesPath = null;
+
+    // ✅ Last known playhead position from scrubbing/UI.
+    // Used when dropping markers via buttons even if audio isn't playing.
+    private float _scrub01 = 0f;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
     private TrackInfo[] _deviceTracks = Array.Empty<TrackInfo>();
@@ -71,14 +61,9 @@ public class KMusicPlayerUI : MonoBehaviour
     private bool _deviceReady = false;
 #endif
 
-    // Store ONLY user chop markers (max 16). 0 and 1 are implied boundaries when applying.
-    private readonly List<float> _chops01 = new();
-
     private void Awake()
     {
         if (!doc) doc = GetComponent<UIDocument>();
-
-        // ✅ IMPORTANT: ensure the Player uses its own AudioSource (not Helm’s).
         EnsureDedicatedPlayerAudioSource();
     }
 
@@ -86,8 +71,6 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (audioSource != null) return;
 
-        // If the same GO has an AudioSource, it might be Helm’s. Don’t risk it.
-        // Create a dedicated child AudioSource for tracks.
         var child = transform.Find("PlayerAudioSource");
         if (child == null)
         {
@@ -99,13 +82,10 @@ public class KMusicPlayerUI : MonoBehaviour
         audioSource = child.GetComponent<AudioSource>();
         if (audioSource == null) audioSource = child.gameObject.AddComponent<AudioSource>();
 
-        // Safe defaults
         audioSource.playOnAwake = false;
         audioSource.loop = false;
-        audioSource.spatialBlend = 0f; // 2D
+        audioSource.spatialBlend = 0f;
         audioSource.volume = 1f;
-
-        Debug.Log("[PlayerUI] Using dedicated AudioSource: PlayerAudioSource");
     }
 
     private void OnEnable()
@@ -115,39 +95,33 @@ public class KMusicPlayerUI : MonoBehaviour
         _root = doc != null ? doc.rootVisualElement : null;
         if (_root == null) return;
 
-        // --- PLAYER PAGE ---
         var page = _root.Q<VisualElement>("PagePlayer");
         if (page == null) return;
 
-        // Dedicated track controls
         _btnPlay = page.Q<Button>("TrackPlay");
         _btnStop = page.Q<Button>("TrackStop");
         _btnPrev = page.Q<Button>("TrackPrev");
         _btnNext = page.Q<Button>("TrackNext");
         _btnLoad = page.Q<Button>("TrackLoad");
 
-        _btnChop  = page.Q<Button>("ChopToggle");
+        _btnChop = page.Q<Button>("ChopToggle");
         _btnApply = page.Q<Button>("ChopApply");
-        _btnSend  = page.Q<Button>("ChopSend"); 
+        _btnSend = page.Q<Button>("ChopSend");
 
-        // CHOP extra buttons
-        _btnAuto4  = page.Q<Button>("Auto4");
-        _btnAuto8  = page.Q<Button>("Auto8");
+        _btnAuto4 = page.Q<Button>("Auto4");
+        _btnAuto8 = page.Q<Button>("Auto8");
         _btnAuto16 = page.Q<Button>("Auto16");
 
         _btnAddMode = page.Q<Button>("MarkerAddMode");
         _btnDelMode = page.Q<Button>("MarkerDelMode");
-        _btnSnap    = page.Q<Button>("SnapToggle");
-        _btnReset   = page.Q<Button>("ResetMarkers");
+        _btnSnap = page.Q<Button>("SnapToggle");
+        _btnReset = page.Q<Button>("ResetMarkers");
 
         _timeLabel = page.Q<Label>("TimeLabel");
-        _durLabel  = page.Q<Label>("DurLabel");
+        _durLabel = page.Q<Label>("DurLabel");
         _trackNameLabel = page.Q<Label>("TrackName");
-        UpdateTrackTitle("PLAYERUI ONENABLE HIT");
+        UpdateTrackTitle("PLAYER");
 
-        Debug.Log($"[PlayerUI] page={(page!=null)} playBtn={(_btnPlay!=null)} stopBtn={(_btnStop!=null)} prevBtn={(_btnPrev!=null)} nextBtn={(_btnNext!=null)} loadBtn={(_btnLoad!=null)}");
-
-        // --- Waveform host ---
         var host = page.Q<VisualElement>("Waveform");
         if (host == null)
         {
@@ -166,49 +140,40 @@ public class KMusicPlayerUI : MonoBehaviour
             host.Add(_wave);
         }
 
-        // Wire dedicated buttons
+        // ✅ Touch/click interaction on waveform.
+        _wave.UserPointer01 -= OnWavePointer01;
+        _wave.UserPointer01 += OnWavePointer01;
+
+        // Wire buttons
         if (_btnPlay != null) _btnPlay.clicked += OnPlayClicked;
         if (_btnStop != null) _btnStop.clicked += OnStopClicked;
         if (_btnPrev != null) _btnPrev.clicked += CyclePrevTrack;
         if (_btnNext != null) _btnNext.clicked += CycleNextTrack;
-        if (_btnLoad != null) _btnLoad.clicked += CycleNextTrack; // LOAD cycles to next
+        if (_btnLoad != null) _btnLoad.clicked += CycleNextTrack;
 
-        // CHOP main
-        if (_btnChop != null)  _btnChop.clicked += ToggleChop;
+        if (_btnChop != null) _btnChop.clicked += ToggleChop;
         if (_btnApply != null) _btnApply.clicked += ApplyChops;
-        if (_btnSend != null)  _btnSend.clicked  += SendChops; 
+        if (_btnSend != null) _btnSend.clicked += SendChops;
 
-        // CHOP auto divisions
-        if (_btnAuto4 != null)  _btnAuto4.clicked += () => AutoChop(4);
-        if (_btnAuto8 != null)  _btnAuto8.clicked += () => AutoChop(8);
+        if (_btnAuto4 != null) _btnAuto4.clicked += () => AutoChop(4);
+        if (_btnAuto8 != null) _btnAuto8.clicked += () => AutoChop(8);
         if (_btnAuto16 != null) _btnAuto16.clicked += () => AutoChop(16);
 
-        // CHOP modes + snap/reset
-        if (_btnAddMode != null) _btnAddMode.clicked += () =>
-        {
-            SetMarkerMode(true);
-            DropChopMarkerAtPlayhead();   // ✅ immediate action on mobile
-        };
+        // ✅ Your request:
+        // Add button ALWAYS drops a marker at the current timestamp/playhead.
+        if (_btnAddMode != null) _btnAddMode.clicked += OnAddMarkerButton;
 
-        if (_btnDelMode != null) _btnDelMode.clicked += () =>
-        {
-            SetMarkerMode(false);
-            DeleteNearestMarkerToPlayhead(); // ✅ immediate action on mobile
-        };
-        if (_btnSnap != null)    _btnSnap.clicked += () => ToggleSnap();
-        if (_btnReset != null)   _btnReset.clicked += ResetAllMarkers;
+        // Del button: set delete mode (and also delete nearest at current timestamp, consistent with mobile)
+        if (_btnDelMode != null) _btnDelMode.clicked += OnDeleteMarkerButton;
 
-        // Init CHOP UI state
+        if (_btnSnap != null) _btnSnap.clicked += () => ToggleSnap();
+        if (_btnReset != null) _btnReset.clicked += ResetAllMarkers;
+
         SetMarkerMode(true);
         SetSnapState(_snapEnabled);
 
-        // Keyboard: Enter applies ADD/DEL while CHOP is armed (editor/desktop + hardware keyboards)
-        page.RegisterCallback<KeyDownEvent>(OnKeyDown);
-
-        // Update playhead ~30fps (schedule from root so it keeps ticking)
         _root.schedule.Execute(UpdatePlayheadUI).Every(33);
 
-        // Load clips + auto-load first
         BootAudioSources();
     }
 
@@ -224,62 +189,32 @@ public class KMusicPlayerUI : MonoBehaviour
             {
                 _deviceTracks = AndroidMusicLibrary.Tracks ?? Array.Empty<TrackInfo>();
                 _deviceTrackIndex = (_deviceTracks.Length > 0) ? 0 : -1;
-
-                // ok now means: permission granted + query attempted (even if 0 tracks)
                 _deviceReady = ok;
 
-                Debug.Log($"[PlayerUI] Device permission/query ok={ok} tracks={_deviceTracks.Length} status={AndroidMusicLibrary.DebugLastStatus}");
-
-                if (_deviceTracks.Length > 0)
-                {
-                    LoadDeviceTrackByIndex(0);
-                }
+                if (_deviceTracks.Length > 0) LoadDeviceTrackByIndex(0);
                 else
                 {
-                    // ✅ SHOW THE REAL REASON ON SCREEN (no logcat needed)
                     UpdateTrackTitle(
                         "ANDROID MUSIC: 0 tracks\n" +
                         AndroidMusicLibrary.DebugLastStatus + "\n" +
                         AndroidMusicLibrary.DebugLastJsonHead
                     );
-
-                    // keep fallback so app still works (but don't overwrite the debug title)
                     RefreshClipList();
-                    // user can press Next/Prev to pick Resources manually if needed.
+                    if (_clips.Length > 0) LoadClipByIndex(0);
                 }
             }, deviceTrackLimit);
 
             return;
         }
 #endif
-
-        // Default (Editor/Desktop/iOS/etc): Resources based
         RefreshClipList();
-        if (_clips.Length > 0 && _clip == null)
-            LoadClipByIndex(0);
-        else if (_clips.Length == 0)
-            Debug.LogWarning($"KMusicPlayerUI: No AudioClips found in Resources/{resourcesFolder}/");
+        if (_clips.Length > 0 && _clip == null) LoadClipByIndex(0);
+        else if (_clips.Length == 0) UpdateTrackTitle("NO TRACKS");
     }
 
     private void OnDisable()
     {
-        if (_btnPlay != null) _btnPlay.clicked -= OnPlayClicked;
-        if (_btnStop != null) _btnStop.clicked -= OnStopClicked;
-        if (_btnPrev != null) _btnPrev.clicked -= CyclePrevTrack;
-        if (_btnNext != null) _btnNext.clicked -= CycleNextTrack;
-        if (_btnLoad != null) _btnLoad.clicked -= CycleNextTrack;
-
-        if (_btnChop != null)  _btnChop.clicked -= ToggleChop;
-        if (_btnApply != null) _btnApply.clicked -= ApplyChops;
-
-        if (_btnAuto4 != null)  _btnAuto4.clicked -= () => AutoChop(4);
-        if (_btnAuto8 != null)  _btnAuto8.clicked -= () => AutoChop(8);
-        if (_btnAuto16 != null) _btnAuto16.clicked -= () => AutoChop(16);
-
-        if (_btnAddMode != null) _btnAddMode.clicked -= () => SetMarkerMode(true);
-        if (_btnDelMode != null) _btnDelMode.clicked -= () => SetMarkerMode(false);
-        if (_btnSnap != null)    _btnSnap.clicked -= () => ToggleSnap();
-        if (_btnReset != null)   _btnReset.clicked -= ResetAllMarkers;
+        if (_wave != null) _wave.UserPointer01 -= OnWavePointer01;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
         if (_loadDeviceCoroutine != null)
@@ -293,18 +228,8 @@ public class KMusicPlayerUI : MonoBehaviour
     private void RefreshClipList()
     {
         _clips = Resources.LoadAll<AudioClip>(resourcesFolder) ?? Array.Empty<AudioClip>();
-
         if (_clips.Length == 0) _clipIndex = -1;
         else _clipIndex = Mathf.Clamp(_clipIndex, 0, _clips.Length - 1);
-
-        Debug.Log($"[PlayerUI] RefreshClipList found {_clips.Length} clips in Resources/{resourcesFolder}");
-
-        if (_clips.Length > 0)
-        {
-            var names = new string[_clips.Length];
-            for (int i = 0; i < _clips.Length; i++) names[i] = _clips[i] != null ? _clips[i].name : "null";
-            Debug.Log($"KMusicPlayerUI: Found {_clips.Length} clip(s) in Resources/{resourcesFolder}: {string.Join(", ", names)}");
-        }
     }
 
     private void CyclePrevTrack()
@@ -318,10 +243,8 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
         }
 #endif
-
         RefreshClipList();
         if (_clips.Length == 0) return;
-
         int prevRes = (_clipIndex <= 0) ? (_clips.Length - 1) : (_clipIndex - 1);
         LoadClipByIndex(prevRes);
     }
@@ -337,10 +260,8 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
         }
 #endif
-
         RefreshClipList();
         if (_clips.Length == 0) return;
-
         int nextRes = (_clipIndex + 1) % _clips.Length;
         LoadClipByIndex(nextRes);
     }
@@ -355,24 +276,20 @@ public class KMusicPlayerUI : MonoBehaviour
 
         _clipIndex = index;
         _clip = _clips[_clipIndex];
+        _clipResourcesPath = _clip != null ? ($"{resourcesFolder}/" + _clip.name) : null;
 
-        if (_clip == null)
-        {
-            Debug.LogError("KMusicPlayerUI: Selected clip is null.");
-            return;
-        }
+        if (_clip == null) return;
 
-        // ✅ Force the dedicated player AudioSource to use THIS track clip.
         audioSource.Stop();
         audioSource.clip = _clip;
         audioSource.time = 0f;
+
+        _scrub01 = 0f;
 
         _wave.SetClip(_clip);
         _wave.SetPlayhead01(0f);
         UpdateTimeLabels(0f, _clip.length);
         UpdateTrackTitle(_clip.name);
-
-        Debug.Log($"KMusicPlayerUI: Loaded {_clip.name} len={_clip.length:0.00}s (audioSource.clip={audioSource.clip.name})");
     }
 
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -390,22 +307,17 @@ public class KMusicPlayerUI : MonoBehaviour
         if (!string.IsNullOrEmpty(t.artist)) title += $" — {t.artist}";
         UpdateTrackTitle(title);
 
-        // Stop previous load if still running
         if (_loadDeviceCoroutine != null)
         {
             StopCoroutine(_loadDeviceCoroutine);
             _loadDeviceCoroutine = null;
         }
 
-        // Stop playback while loading
-        if (audioSource != null) audioSource.Stop();
-        if (_wave != null)
-        {
-            _wave.SetClip(null);
-            _wave.SetPlayhead01(0f);
-            _wave.SetMarkers01(_chops01);
-        }
-        UpdateTimeLabels(0f, (t.durationMs > 0) ? (t.durationMs / 1000f) : 0f);
+        audioSource.Stop();
+        _wave.SetClip(null);
+        _wave.SetPlayhead01(0f);
+        _wave.SetMarkers01(_chops01);
+        _scrub01 = 0f;
 
         _loadDeviceCoroutine = StartCoroutine(CoLoadDeviceTrack(t));
     }
@@ -422,202 +334,245 @@ public class KMusicPlayerUI : MonoBehaviour
         });
 
         while (!done) yield return null;
-
-        if (loaded == null)
-        {
-            Debug.LogWarning("[PlayerUI] Failed to load device track: " + (t != null ? t.uri : "null"));
-            yield break;
-        }
+        if (loaded == null) yield break;
 
         _clip = loaded;
+        _clipResourcesPath = null;
 
-        // ✅ Force the dedicated player AudioSource to use THIS track clip.
         audioSource.Stop();
         audioSource.clip = _clip;
         audioSource.time = 0f;
 
+        _scrub01 = 0f;
+
         _wave.SetClip(_clip);
         _wave.SetPlayhead01(0f);
         UpdateTimeLabels(0f, _clip.length);
-
-        Debug.Log($"[PlayerUI] Loaded device clip len={_clip.length:0.00}s uri={t.uri}");
     }
 #endif
-
-    private void UpdateTrackTitle(string title)
-    {
-        if (_trackNameLabel == null) return;
-        _trackNameLabel.text = string.IsNullOrEmpty(title) ? "TRACK" : title;
-    }
-
-    private void EnsureClipLoaded()
-    {
-        if (_clip != null && audioSource != null && audioSource.clip == _clip) return;
-
-#if UNITY_ANDROID && !UNITY_EDITOR
-        if (useDeviceMusicLibraryOnAndroid && _deviceReady)
-        {
-            if (_deviceTracks != null && _deviceTracks.Length > 0)
-            {
-                int idx = (_deviceTrackIndex < 0) ? 0 : Mathf.Clamp(_deviceTrackIndex, 0, _deviceTracks.Length - 1);
-                LoadDeviceTrackByIndex(idx);
-            }
-            return;
-        }
-#endif
-
-        if (_clip == null || _clips == null || _clips.Length == 0)
-            RefreshClipList();
-
-        if (_clips.Length > 0)
-        {
-            int idx = (_clipIndex < 0) ? 0 : Mathf.Clamp(_clipIndex, 0, _clips.Length - 1);
-            LoadClipByIndex(idx);
-        }
-    }
 
     private void OnPlayClicked()
     {
-        EnsureClipLoaded();
-        if (audioSource == null || audioSource.clip == null) return;
-
-        Debug.Log($"[PlayerUI] PLAY clicked. trackClip={(_clip!=null?_clip.name:"null")} audioSource.clip={audioSource.clip.name} isPlaying={audioSource.isPlaying} time={audioSource.time:0.000}");
-
-        // If at end, restart
-        if (audioSource.time >= audioSource.clip.length - 0.01f)
-            audioSource.time = 0f;
-
+        if (_clip == null || audioSource == null) return;
+        audioSource.Stop();
+        audioSource.clip = _clip;
         audioSource.Play();
     }
 
     private void OnStopClicked()
     {
-        if (audioSource == null) return;
-        audioSource.Stop();
-        audioSource.time = 0f;
-        UpdatePlayheadUI();
-    }
-
-    private void OnKeyDown(KeyDownEvent evt)
-    {
-        if (!_chopArmed) return;
-
-        if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
-        {
-            if (_markerAddMode) DropChopMarkerAtPlayhead();
-            else DeleteNearestMarkerToPlayhead();
-
-            evt.StopPropagation();
-        }
+        if (audioSource != null) audioSource.Stop();
     }
 
     private void ToggleChop()
     {
         _chopArmed = !_chopArmed;
+
         if (_btnChop != null)
         {
-            if (_chopArmed) _btnChop.AddToClassList("km-pillbtn--active");
-            else _btnChop.RemoveFromClassList("km-pillbtn--active");
+            if (_chopArmed) _btnChop.AddToClassList("km-chop-toggle--active");
+            else _btnChop.RemoveFromClassList("km-chop-toggle--active");
         }
 
-        // When arming CHOP, default to ADD mode (sampler-friendly)
-        if (_chopArmed) SetMarkerMode(true);
-
-        // ✅ MOBILE: tapping CHOP should DO something right away
-        // Drop a marker at current playhead when turning ON
-        if (_chopArmed)
-            DropChopMarkerAtPlayhead();
+        UpdateTrackTitle(_chopArmed ? "CHOP MODE" : (_clip != null ? _clip.name : "TRACK"));
     }
 
-    private void DropChopMarkerAtPlayhead()
+    // ----------------------------
+    // Waveform interaction (touch + mouse)
+    // ----------------------------
+    private void OnWavePointer01(float t01, bool isDrag)
+    {
+        if (_clip == null || _clip.length <= 0f || audioSource == null) return;
+
+        if (_chopArmed)
+        {
+            // Drag scrubs regardless; tap adds/deletes depending on mode.
+            if (isDrag) { SeekTo01(t01); return; }
+
+            if (_markerAddMode) DropChopMarkerAt01(t01);
+            else DeleteNearestMarkerTo01(t01);
+            return;
+        }
+
+        SeekTo01(t01);
+    }
+
+    private void SeekTo01(float t01)
+    {
+        if (_clip == null || _clip.length <= 0f || audioSource == null) return;
+
+        t01 = Mathf.Clamp01(t01);
+        _scrub01 = t01;
+
+        float t = t01 * _clip.length;
+        audioSource.time = Mathf.Clamp(t, 0f, Mathf.Max(0f, _clip.length - 0.001f));
+
+        _wave?.SetPlayhead01(t01);
+        UpdateTimeLabels(audioSource.time, _clip.length);
+    }
+
+    // ----------------------------
+    // ✅ Add/Delete buttons behavior
+    // ----------------------------
+    private void OnAddMarkerButton()
+    {
+        SetMarkerMode(true);
+
+        if (_clip == null || _clip.length <= 0f || audioSource == null) return;
+
+        float t01;
+
+        // If playing, use real time.
+        if (audioSource.isPlaying)
+        {
+            t01 = Mathf.Clamp01(audioSource.time / _clip.length);
+            _scrub01 = t01;
+        }
+        else
+        {
+            // Not playing: use last scrubbed playhead.
+            t01 = Mathf.Clamp01(_scrub01);
+        }
+
+        DropChopMarkerAt01(t01);
+    }
+
+    private void OnDeleteMarkerButton()
+    {
+        SetMarkerMode(false);
+
+        if (_clip == null || _clip.length <= 0f || audioSource == null) return;
+
+        float t01;
+        if (audioSource.isPlaying)
+        {
+            t01 = Mathf.Clamp01(audioSource.time / _clip.length);
+            _scrub01 = t01;
+        }
+        else
+        {
+            t01 = Mathf.Clamp01(_scrub01);
+        }
+
+        DeleteNearestMarkerTo01(t01);
+    }
+
+    // ----------------------------
+    // Marker ops
+    // ----------------------------
+    private void DropChopMarkerAt01(float t01)
     {
         if (_clip == null || _clip.length <= 0f) return;
         if (_chops01.Count >= 16) return;
 
-        float t01 = Mathf.Clamp01(audioSource.time / _clip.length);
+        t01 = Mathf.Clamp01(t01);
         if (_snapEnabled) t01 = Snap01(t01, _snapDiv);
 
+        // avoid duplicates (within ~0.5% of timeline)
         for (int i = 0; i < _chops01.Count; i++)
             if (Mathf.Abs(_chops01[i] - t01) < 0.005f) return;
+
+        // keep away from boundaries since 0 and 1 are implied
+        if (t01 < 0.01f) t01 = 0.01f;
+        if (t01 > 0.99f) t01 = 0.99f;
 
         _chops01.Add(t01);
         _chops01.Sort();
         SyncMarkersToWave();
+        _wave?.SetPlayhead01(t01);
+        _scrub01 = t01;
 
         UpdateTrackTitle($"MARKER + {t01:0.000}");
     }
 
+    private void DeleteNearestMarkerTo01(float t01)
+    {
+        if (_chops01.Count == 0) return;
+
+        t01 = Mathf.Clamp01(t01);
+
+        int best = -1;
+        float bestDist = 999f;
+
+        for (int i = 0; i < _chops01.Count; i++)
+        {
+            float d = Mathf.Abs(_chops01[i] - t01);
+            if (d < bestDist) { bestDist = d; best = i; }
+        }
+
+        // must be somewhat close to delete
+        if (best >= 0 && bestDist <= 0.03f)
+        {
+            float removed = _chops01[best];
+            _chops01.RemoveAt(best);
+            SyncMarkersToWave();
+            UpdateTrackTitle($"MARKER - {removed:0.000}");
+        }
+    }
+
+    // ----------------------------
+    // Chop apply/send
+    // ----------------------------
     private void ApplyChops()
     {
-        if (_clip == null || _clip.length <= 0f || audioSource == null || audioSource.clip != _clip)
-            return;
+        if (_clip == null || _clip.length <= 0f) return;
 
-        // Boundaries: 0 + markers + 1
+        // Build boundaries [0, markers..., 1]
         var boundaries = new List<float>(_chops01.Count + 2) { 0f };
         boundaries.AddRange(_chops01);
         boundaries.Add(1f);
         boundaries.Sort();
 
-        float t01 = Mathf.Clamp01(audioSource.time / _clip.length);
+        // If your sampler reads chop state from KMusicChopState, you can store it here too.
+        // This keeps Apply and Send consistent.
+        if (!string.IsNullOrEmpty(_clipResourcesPath))
+            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01);
+        else
+            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01);
 
-        // Find slice containing playhead
-        int slice = 0;
-        for (int i = 0; i < boundaries.Count - 1; i++)
-        {
-            if (t01 >= boundaries[i] && t01 < boundaries[i + 1])
-            {
-                slice = i;
-                break;
-            }
-        }
-
-        float start01 = boundaries[slice];
-        float end01 = boundaries[Mathf.Min(slice + 1, boundaries.Count - 1)];
-        float startSec = start01 * _clip.length;
-
-        audioSource.time = startSec;
-        if (!audioSource.isPlaying) audioSource.Play();
-
-        UpdateTrackTitle($"SLICE {slice + 1}  {start01:0.000}->{end01:0.000}");
+        UpdateTrackTitle($"APPLIED {boundaries.Count - 1} SLICES");
     }
 
     private void SendChops()
     {
-        if (_clip == null || _clip.length <= 0f)
-            return;
+        if (_clip == null || _clip.length <= 0f) return;
 
-        // Push the currently configured chops to the Sampler system.
-        // Sampler expects a stable 1..16 mapping.
-        KMusicChopState.SaveApplied($"{resourcesFolder}/{_clip.name}", _chops01);
+        if (!string.IsNullOrEmpty(_clipResourcesPath))
+            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01);
+        else
+            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01);
 
         UpdateTrackTitle($"SENT {_chops01.Count + 1} CHOPS");
     }
 
     private void SyncMarkersToWave()
     {
-        _wave.SetMarkers01(_chops01);
+        _wave?.SetMarkers01(_chops01);
     }
 
     private void UpdatePlayheadUI()
     {
         if (_clip == null || _clip.length <= 0f || audioSource == null || audioSource.clip != _clip)
         {
-            _wave?.SetPlayhead01(0f);
-            UpdateTimeLabels(0f, _clip != null ? _clip.length : 0f);
+            _wave?.SetPlayhead01(_scrub01);
+            UpdateTimeLabels((_clip != null) ? (_scrub01 * _clip.length) : 0f, _clip != null ? _clip.length : 0f);
             return;
         }
 
         float t = audioSource.time;
         float t01 = Mathf.Clamp01(t / _clip.length);
 
-        _wave.SetPlayhead01(t01);
+        // ✅ keep scrub position in sync while playing
+        _scrub01 = t01;
+
+        _wave?.SetPlayhead01(t01);
         UpdateTimeLabels(t, _clip.length);
     }
 
     private void UpdateTimeLabels(float t, float dur)
     {
         if (_timeLabel != null) _timeLabel.text = FormatTime(t);
-        if (_durLabel != null)  _durLabel.text  = FormatTime(dur);
+        if (_durLabel != null) _durLabel.text = FormatTime(dur);
     }
 
     private static string FormatTime(float seconds)
@@ -625,122 +580,61 @@ public class KMusicPlayerUI : MonoBehaviour
         seconds = Mathf.Max(0f, seconds);
         int m = (int)(seconds / 60f);
         int s = (int)(seconds % 60f);
-        return $"{m}:{s:00}";
+        return $"{m:00}:{s:00}";
+    }
+
+    private void UpdateTrackTitle(string title)
+    {
+        if (_trackNameLabel == null) return;
+        _trackNameLabel.text = string.IsNullOrEmpty(title) ? "TRACK" : title;
     }
 
     // ----------------------------
-    // CHOP helpers
+    // UI state helpers
     // ----------------------------
-
-    private void AutoChop(int slices)
+    private void SetMarkerMode(bool add)
     {
-        if (_clip == null || _clip.length <= 0f) return;
-        slices = Mathf.Clamp(slices, 2, 64);
+        _markerAddMode = add;
+        if (_btnAddMode != null) _btnAddMode.EnableInClassList("km-chip--active", add);
+        if (_btnDelMode != null) _btnDelMode.EnableInClassList("km-chip--active", !add);
+    }
 
-        _snapDiv = slices;
-        _chops01.Clear();
+    private void ToggleSnap() => SetSnapState(!_snapEnabled);
 
-        // Add internal boundaries only (exclude 0 and 1)
-        int internalCount = Mathf.Min(16, slices - 1); // respect 16 marker max
-        for (int i = 1; i <= internalCount; i++)
-        {
-            // If slices is large, internalCount caps, so we space within slices anyway
-            float t01 = i / (float)slices;
-            if (_snapEnabled) t01 = Snap01(t01, _snapDiv);
-            _chops01.Add(t01);
-        }
-
-        _chops01.Sort();
-        SyncMarkersToWave();
-
-        // Arm chop when auto-chopping (feels right)
-        _chopArmed = true;
-        if (_btnChop != null) _btnChop.AddToClassList("km-pillbtn--active");
-        SetMarkerMode(true);
-
-        UpdateTrackTitle($"AUTO {slices}");
+    private void SetSnapState(bool on)
+    {
+        _snapEnabled = on;
+        if (_btnSnap != null) _btnSnap.EnableInClassList("km-chip--active", on);
     }
 
     private void ResetAllMarkers()
     {
         _chops01.Clear();
         SyncMarkersToWave();
-        UpdateTrackTitle("RESET");
+        UpdateTrackTitle("MARKERS RESET");
     }
 
-    private void SetMarkerMode(bool addMode)
-    {
-        _markerAddMode = addMode;
-
-        if (_btnAddMode != null)
-        {
-            if (_markerAddMode) _btnAddMode.AddToClassList("km-pillbtn--active");
-            else _btnAddMode.RemoveFromClassList("km-pillbtn--active");
-        }
-
-        if (_btnDelMode != null)
-        {
-            if (!_markerAddMode) _btnDelMode.AddToClassList("km-pillbtn--active");
-            else _btnDelMode.RemoveFromClassList("km-pillbtn--active");
-        }
-
-        UpdateTrackTitle(_markerAddMode ? "MODE: ADD" : "MODE: DEL");
-    }
-
-    private void ToggleSnap()
-    {
-        _snapEnabled = !_snapEnabled;
-        SetSnapState(_snapEnabled);
-        UpdateTrackTitle(_snapEnabled ? $"SNAP ON ({_snapDiv})" : "SNAP OFF");
-    }
-
-    private void SetSnapState(bool on)
-    {
-        if (_btnSnap != null)
-        {
-            if (on) _btnSnap.AddToClassList("km-pillbtn--active");
-            else _btnSnap.RemoveFromClassList("km-pillbtn--active");
-        }
-    }
-
-    private void DeleteNearestMarkerToPlayhead()
+    private void AutoChop(int divisions)
     {
         if (_clip == null || _clip.length <= 0f) return;
-        if (_chops01.Count == 0) return;
 
-        float t01 = Mathf.Clamp01(audioSource.time / _clip.length);
-
-        int best = -1;
-        float bestDist = float.MaxValue;
-        for (int i = 0; i < _chops01.Count; i++)
+        _chops01.Clear();
+        for (int i = 1; i < divisions; i++)
         {
-            float d = Mathf.Abs(_chops01[i] - t01);
-            if (d < bestDist)
-            {
-                bestDist = d;
-                best = i;
-            }
+            float t01 = i / (float)divisions;
+            if (t01 < 0.01f) t01 = 0.01f;
+            if (t01 > 0.99f) t01 = 0.99f;
+            _chops01.Add(t01);
         }
 
-        // Require playhead reasonably near a marker to delete (prevents accidental deletes)
-        if (best >= 0 && bestDist <= 0.06f)
-        {
-            float v = _chops01[best];
-            _chops01.RemoveAt(best);
-            SyncMarkersToWave();
-            UpdateTrackTitle($"MARKER - {v:0.000}");
-        }
-        else
-        {
-            UpdateTrackTitle("NO MARKER NEAR");
-        }
+        SyncMarkersToWave();
+        UpdateTrackTitle($"AUTO {divisions}");
     }
 
     private static float Snap01(float t01, int div)
     {
-        div = Mathf.Clamp(div, 2, 64);
+        if (div <= 1) return Mathf.Clamp01(t01);
         float step = 1f / div;
-        int k = Mathf.RoundToInt(t01 / step);
-        return Mathf.Clamp01(k * step);
+        return Mathf.Clamp01(Mathf.Round(t01 / step) * step);
     }
 }

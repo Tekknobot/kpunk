@@ -1063,11 +1063,24 @@ public class KMusicDrumSequencer : MonoBehaviour
         }
 
         _appliedResourcesPath = resPath;
-        _appliedClip = Resources.Load<AudioClip>(resPath);
+        _appliedClip = null;
+
+        // If this is a Resources path, try Resources.Load
+        if (!string.IsNullOrEmpty(resPath) && !resPath.StartsWith("cached:"))
+        {
+            _appliedClip = Resources.Load<AudioClip>(resPath);
+        }
+
+        // If Resources failed (Android device track), fall back to runtime cached clip
+        if (_appliedClip == null)
+        {
+            if (KMusicChopState.TryGetCachedClip(out var cached))
+                _appliedClip = cached;
+        }
 
         if (_appliedClip == null)
         {
-            Debug.LogWarning($"[Sampler] Applied chops refer to missing AudioClip at Resources.Load('{resPath}').");
+            Debug.LogWarning($"[Sampler] Applied chops refer to missing AudioClip (resPath='{resPath}').");
         }
 
         // Copy arrays (defensive)

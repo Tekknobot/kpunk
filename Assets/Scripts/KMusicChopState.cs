@@ -13,6 +13,32 @@ namespace KMusic
     /// </summary>
     public static class KMusicChopState
     {
+        // ----------------------------
+        // Runtime cache (device-loaded clips)
+        // ----------------------------
+        private static AudioClip _cachedClip;
+
+        public static bool TryGetCachedClip(out AudioClip clip)
+        {
+            clip = _cachedClip;
+            return clip != null;
+        }
+
+        public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNull, IList<float> markerPositions01)
+        {
+            string id = !string.IsNullOrEmpty(resourcesPathOrNull)
+                ? resourcesPathOrNull
+                : (clip != null ? $"cached:{clip.name}" : "cached:null");
+
+            // convert to List<float> to match SaveApplied signature
+            var list = markerPositions01 != null
+                ? new List<float>(markerPositions01)
+                : new List<float>();
+
+            SaveApplied(id, list);
+
+            _cachedClip = clip;
+        }     
         // Keep keys stable.
         private const string PrefKey_Json = "kmusic.chops.applied.v1";
 

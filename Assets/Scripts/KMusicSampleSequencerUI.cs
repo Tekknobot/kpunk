@@ -125,7 +125,12 @@ public class KMusicSampleSequencerUI : MonoBehaviour
                 continue;
 
             btn.AddToClassList(wiredClass);
-            btn.clicked += () => SelectChop(chopId);
+            btn.clicked += () =>
+            {
+                if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
+                _sequencer?.AuditionChop(chopId);   // ✅ audition immediately
+                SelectChop(chopId);
+            };
         }
     }
 

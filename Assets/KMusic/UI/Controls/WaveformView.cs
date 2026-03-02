@@ -6,23 +6,29 @@ using UnityEngine.UIElements;
 
 namespace KMusic.UI
 {
-    // UXML: <km:WaveformView name="Waveform" />
     public class WaveformView : VisualElement
     {
         public new class UxmlFactory : UxmlFactory<WaveformView, UxmlTraits> { }
         public new class UxmlTraits : VisualElement.UxmlTraits { }
 
-        // Peaks packed as [-1..1] amplitudes, interleaved min/max per x pixel sample:
-        // peaks[i*2] = min, peaks[i*2+1] = max
         private float[] _peaks;
         private int _peakCount;
 
-        private readonly List<float> _markers01 = new(); // normalized 0..1
+        private readonly List<float> _markers01 = new();
         private float _playhead01 = 0f;
 
         public Color WaveColor = new(0.90f, 0.92f, 0.95f, 1f);
         public Color MarkerColor = new(0.42f, 0.89f, 1f, 1f);
         public Color PlayheadColor = new(1f, 0.36f, 0.39f, 1f);
+
+        /// <summary>
+        /// Fired when the user touches/clicks on the waveform.
+        /// t01 is normalized [0..1] across the visible content rect.
+        /// isDrag is true for pointer-move scrubbing while pressed.
+        /// </summary>
+        public event Action<float, bool> UserPointer01;
+
+        private bool _pointerDown;
 
         public WaveformView()
         {
@@ -31,7 +37,16 @@ namespace KMusic.UI
             style.marginTop = 8;
             style.marginBottom = 8;
 
+            // ✅ Ensure this element receives pointer events.
+            pickingMode = PickingMode.Position;
+            focusable = true;
+
             generateVisualContent += OnGenerate;
+
+            RegisterCallback<PointerDownEvent>(OnPointerDown);
+            RegisterCallback<PointerMoveEvent>(OnPointerMove);
+            RegisterCallback<PointerUpEvent>(OnPointerUp);
+            RegisterCallback<PointerCancelEvent>(OnPointerCancel);
         }
 
         public void SetPlayhead01(float t01)
@@ -52,7 +67,6 @@ namespace KMusic.UI
             MarkDirtyRepaint();
         }
 
-        // Build peaks from AudioClip (call from coroutine on main thread).
         public void SetClip(AudioClip clip, int targetSamples = 2048)
         {
             _peaks = null;
@@ -60,7 +74,6 @@ namespace KMusic.UI
 
             if (clip == null || clip.samples <= 0) { MarkDirtyRepaint(); return; }
 
-            // Read full clip (OK for now; optimize later if needed)
             var channels = clip.channels;
             var data = new float[clip.samples * channels];
             clip.GetData(data, 0);
@@ -72,98 +85,125 @@ namespace KMusic.UI
 
             for (int i = 0; i < _peakCount; i++)
             {
-                int start = i * samplesPerBucket;
-                int end = Mathf.Min(clip.samples, start + samplesPerBucket);
+                int start = i * samplesPerBucket * channels;
+                int end = Mathf.Min(data.Length, start + samplesPerBucket * channels);
 
-                float mn = 1f;
-                float mx = -1f;
-
-                for (int s = start; s < end; s++)
+                float min = 0f, max = 0f;
+                for (int s = start; s < end; s += channels)
                 {
-                    // Mixdown channels by max abs
-                    float v = 0f;
-                    int baseIdx = s * channels;
-                    for (int c = 0; c < channels; c++)
-                        v = Mathf.Max(v, Mathf.Abs(data[baseIdx + c]));
-
-                    // Re-expand to signed-ish display (symmetric)
-                    mn = Mathf.Min(mn, -v);
-                    mx = Mathf.Max(mx, v);
+                    float v = data[s];
+                    if (v < min) min = v;
+                    if (v > max) max = v;
                 }
 
-                _peaks[i * 2] = mn;
-                _peaks[i * 2 + 1] = mx;
+                _peaks[i * 2] = min;
+                _peaks[i * 2 + 1] = max;
             }
 
             MarkDirtyRepaint();
         }
 
-        private void OnGenerate(MeshGenerationContext mgc)
+        private void OnGenerate(MeshGenerationContext ctx)
         {
             var r = contentRect;
             if (r.width <= 2 || r.height <= 2) return;
 
-            var painter = mgc.painter2D;
-            painter.lineWidth = 1.5f;
-
-            // Background faint border
-            painter.strokeColor = new Color(1f, 1f, 1f, 0.08f);
-            painter.BeginPath();
-            painter.MoveTo(new Vector2(r.xMin, r.yMin));
-            painter.LineTo(new Vector2(r.xMax, r.yMin));
-            painter.LineTo(new Vector2(r.xMax, r.yMax));
-            painter.LineTo(new Vector2(r.xMin, r.yMax));
-            painter.ClosePath();
-            painter.Stroke();
+            var painter = ctx.painter2D;
 
             // Waveform
             if (_peaks != null && _peakCount > 0)
             {
+                painter.lineWidth = 1.5f;
                 painter.strokeColor = WaveColor;
 
-                float midY = r.center.y;
-                float halfH = (r.height * 0.45f);
+                float midY = r.y + r.height * 0.5f;
+                float halfH = r.height * 0.45f;
 
-                // Draw as vertical min/max lines
-                int n = _peakCount;
-                for (int i = 0; i < n; i++)
+                for (int x = 0; x < _peakCount; x++)
                 {
-                    float x = Mathf.Lerp(r.xMin, r.xMax, (i / (float)(n - 1)));
-                    float mn = _peaks[i * 2];
-                    float mx = _peaks[i * 2 + 1];
+                    float t = (x / (float)(_peakCount - 1));
+                    float px = r.x + t * r.width;
 
-                    float y1 = midY + mn * halfH;
-                    float y2 = midY + mx * halfH;
+                    float min = _peaks[x * 2];
+                    float max = _peaks[x * 2 + 1];
+
+                    float y1 = midY + min * halfH;
+                    float y2 = midY + max * halfH;
 
                     painter.BeginPath();
-                    painter.MoveTo(new Vector2(x, y1));
-                    painter.LineTo(new Vector2(x, y2));
+                    painter.MoveTo(new Vector2(px, y1));
+                    painter.LineTo(new Vector2(px, y2));
                     painter.Stroke();
                 }
             }
 
             // Markers
-            painter.strokeColor = MarkerColor;
-            painter.lineWidth = 2f;
-            for (int i = 0; i < _markers01.Count; i++)
+            if (_markers01.Count > 0)
             {
-                float x = Mathf.Lerp(r.xMin, r.xMax, _markers01[i]);
-                painter.BeginPath();
-                painter.MoveTo(new Vector2(x, r.yMin));
-                painter.LineTo(new Vector2(x, r.yMax));
-                painter.Stroke();
+                painter.lineWidth = 2f;
+                painter.strokeColor = MarkerColor;
+
+                foreach (var m in _markers01)
+                {
+                    float px = r.x + Mathf.Clamp01(m) * r.width;
+                    painter.BeginPath();
+                    painter.MoveTo(new Vector2(px, r.y));
+                    painter.LineTo(new Vector2(px, r.y + r.height));
+                    painter.Stroke();
+                }
             }
 
             // Playhead
-            painter.strokeColor = PlayheadColor;
             painter.lineWidth = 2.5f;
-            {
-                float x = Mathf.Lerp(r.xMin, r.xMax, _playhead01);
-                painter.BeginPath();
-                painter.MoveTo(new Vector2(x, r.yMin));
-                painter.LineTo(new Vector2(x, r.yMax));
-                painter.Stroke();
-            }
+            painter.strokeColor = PlayheadColor;
+
+            float phx = r.x + Mathf.Clamp01(_playhead01) * r.width;
+            painter.BeginPath();
+            painter.MoveTo(new Vector2(phx, r.y));
+            painter.LineTo(new Vector2(phx, r.y + r.height));
+            painter.Stroke();
+        }
+
+        private void OnPointerDown(PointerDownEvent evt)
+        {
+            if (evt == null) return;
+
+            _pointerDown = true;
+            Focus();
+
+            float t01 = PositionTo01(evt.localPosition);
+            UserPointer01?.Invoke(t01, false);
+
+            evt.StopPropagation();
+        }
+
+        private void OnPointerMove(PointerMoveEvent evt)
+        {
+            if (!_pointerDown || evt == null) return;
+
+            float t01 = PositionTo01(evt.localPosition);
+            UserPointer01?.Invoke(t01, true);
+
+            evt.StopPropagation();
+        }
+
+        private void OnPointerUp(PointerUpEvent evt)
+        {
+            _pointerDown = false;
+        }
+
+        private void OnPointerCancel(PointerCancelEvent evt)
+        {
+            _pointerDown = false;
+        }
+
+        private float PositionTo01(Vector2 localPos)
+        {
+            var r = contentRect;
+            if (r.width <= 1f) return 0f;
+
+            float x = Mathf.Clamp(localPos.x - r.x, 0f, r.width);
+            return Mathf.Clamp01(x / r.width);
         }
     }
 }
