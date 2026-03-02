@@ -1,7 +1,6 @@
-// Scripts/KMusicPlayerUI.cs
-// Player page: load a test AudioClip from Resources, render waveform, show playhead + chop markers.
-// NOTE: Loading arbitrary mp3/wav from device storage (Android Music folder) requires
-// runtime permission + MediaStore / file picker + an audio decoder. We'll wire that later.
+// Assets/Scripts/KMusicPlayerUI.cs
+// Player page: load AudioClip(s) from Resources/<resourcesFolder>/, render waveform,
+// show playhead + chop markers, and hook global PLAY/STOP buttons.
 
 using System;
 using System.Collections.Generic;
@@ -14,21 +13,26 @@ public class KMusicPlayerUI : MonoBehaviour
     [SerializeField] private UIDocument doc;
     [SerializeField] private AudioSource audioSource;
 
-    [Header("Resources test clip")]
-    [Tooltip("AudioClip placed under Assets/Resources/<folder>/<name>.wav (or mp3 as an imported asset).")]
+    [Header("Resources audio folder")]
+    [Tooltip("AudioClips placed under Assets/Resources/<folder>/ (ex: Assets/Resources/Tracks/*.mp3 or *.wav)")]
     [SerializeField] private string resourcesFolder = "Tracks";
 
-    [Tooltip("Name of the clip asset (no extension). Example: 'test' loads Resources/Tracks/test")]
-    [SerializeField] private string defaultTestClipName = "test";
-
     private VisualElement _root;
-    private Button _btnLoad, _btnChop, _btnApply;
-    private Label _timeLabel, _durLabel;
 
-    private WaveformView _wave;           // custom element (preferred)
-    private VisualElement _waveHost;      // fallback host if UXML uses a plain VisualElement
+    // Global topbar transport
+    private Button _globalPlay;
+    private Button _globalStop;
+
+    // Player page UI
+    private Button _btnLoad, _btnChop, _btnApply;
+    private Label _timeLabel, _durLabel, _trackNameLabel;
+    private WaveformView _wave;
 
     private bool _chopArmed = false;
+
+    // Available clips in Resources/<resourcesFolder>
+    private AudioClip[] _clips = Array.Empty<AudioClip>();
+    private int _clipIndex = -1;
     private AudioClip _clip;
 
     // Store ONLY user chop markers (max 16). 0 and 1 are implied boundaries when applying.
@@ -46,62 +50,156 @@ public class KMusicPlayerUI : MonoBehaviour
         _root = doc != null ? doc.rootVisualElement : null;
         if (_root == null) return;
 
-        var page = _root.Q<VisualElement>("PagePlayer");
-        if (page == null) return; // player page not present
+        // --- GLOBAL PLAY/STOP (topbar) ---
+        _globalPlay = _root.Q<Button>("PlayButton");
+        _globalStop = _root.Q<Button>("StopButton");
 
-        _btnLoad = page.Q<Button>("TrackLoad");
-        _btnChop = page.Q<Button>("ChopToggle");
+        if (_globalPlay != null) _globalPlay.clicked += OnGlobalPlayClicked;
+        if (_globalStop != null) _globalStop.clicked += OnGlobalStopClicked;
+
+        // --- PLAYER PAGE ---
+        var page = _root.Q<VisualElement>("PagePlayer");
+        if (page == null) return;
+
+        _btnLoad  = page.Q<Button>("TrackLoad");
+        _btnChop  = page.Q<Button>("ChopToggle");
         _btnApply = page.Q<Button>("ChopApply");
 
         _timeLabel = page.Q<Label>("TimeLabel");
-        _durLabel = page.Q<Label>("DurLabel");
+        _durLabel  = page.Q<Label>("DurLabel");
+        _trackNameLabel = page.Q<Label>("TrackName");
 
-        // 1) Prefer direct WaveformView in UXML
-        _wave = page.Q<WaveformView>("Waveform");
-
-        // 2) Fallback: if UXML has a placeholder element, swap in WaveformView at runtime
-        if (_wave == null)
+        // --- Waveform host (UXML is a plain VisualElement) ---
+        var host = page.Q<VisualElement>("Waveform");
+        if (host == null)
         {
-            _waveHost = page.Q<VisualElement>("WaveformHost") ?? page.Q<VisualElement>("Waveform");
-            if (_waveHost == null)
-            {
-                Debug.LogError("KMusicPlayerUI: Could not find WaveformHost (or Waveform) in UXML.");
-                return;
-            }
-
-            _wave = new WaveformView { name = "Waveform" };
-            // Keep styling consistent
-            _wave.AddToClassList("km-waveform");
-
-            // Replace placeholder
-            var parent = _waveHost.parent;
-            int idx = parent.IndexOf(_waveHost);
-            parent.Remove(_waveHost);
-            parent.Insert(idx, _wave);
+            Debug.LogError("KMusicPlayerUI: Could not find Waveform host VisualElement (name='Waveform') in UXML.");
+            return;
         }
 
-        if (_btnLoad != null) _btnLoad.clicked += OnLoadClicked;
-        if (_btnChop != null) _btnChop.clicked += ToggleChop;
+        _wave = host.Q<WaveformView>("WaveformView");
+        if (_wave == null)
+        {
+            _wave = new WaveformView { name = "WaveformView" };
+            _wave.AddToClassList("km-waveform"); // keep your styling
+            _wave.style.width = Length.Percent(100);
+            _wave.style.height = Length.Percent(100);
+            host.Clear();
+            host.Add(_wave);
+        }
+        if (_btnLoad != null)  _btnLoad.clicked += CycleNextTrack;
+        if (_btnChop != null)  _btnChop.clicked += ToggleChop;
         if (_btnApply != null) _btnApply.clicked += ApplyChops;
 
-        // Keyboard: Enter drops chop marker while armed
+        // Keyboard: Enter drops chop marker while armed (mainly editor/desktop)
         page.RegisterCallback<KeyDownEvent>(OnKeyDown);
 
         // Update playhead ~30fps
         page.schedule.Execute(UpdatePlayheadUI).Every(33);
 
-#if UNITY_EDITOR || UNITY_STANDALONE
-        // auto-load in editor/desktop so you can see waveform immediately
-        if (_clip == null && !string.IsNullOrEmpty(defaultTestClipName))
-            LoadFromResources(defaultTestClipName);
-#endif
+        // Load all clips in folder and auto-load first
+        RefreshClipList();
+        if (_clips.Length > 0 && _clip == null)
+            LoadClipByIndex(0);
+        else if (_clips.Length == 0)
+            Debug.LogWarning($"KMusicPlayerUI: No AudioClips found in Resources/{resourcesFolder}/");
     }
 
     private void OnDisable()
     {
-        if (_btnLoad != null) _btnLoad.clicked -= OnLoadClicked;
-        if (_btnChop != null) _btnChop.clicked -= ToggleChop;
+        if (_globalPlay != null) _globalPlay.clicked -= OnGlobalPlayClicked;
+        if (_globalStop != null) _globalStop.clicked -= OnGlobalStopClicked;
+
+        if (_btnLoad != null)  _btnLoad.clicked -= CycleNextTrack;
+        if (_btnChop != null)  _btnChop.clicked -= ToggleChop;
         if (_btnApply != null) _btnApply.clicked -= ApplyChops;
+    }
+
+    private void RefreshClipList()
+    {
+        // Loads everything under Resources/<resourcesFolder> as AudioClip
+        _clips = Resources.LoadAll<AudioClip>(resourcesFolder) ?? Array.Empty<AudioClip>();
+
+        // Keep index valid
+        if (_clips.Length == 0) _clipIndex = -1;
+        else _clipIndex = Mathf.Clamp(_clipIndex, 0, _clips.Length - 1);
+
+        // Optional: log what we found
+        if (_clips.Length > 0)
+        {
+            var names = new string[_clips.Length];
+            for (int i = 0; i < _clips.Length; i++) names[i] = _clips[i] != null ? _clips[i].name : "null";
+            Debug.Log($"KMusicPlayerUI: Found {_clips.Length} clip(s) in Resources/{resourcesFolder}: {string.Join(", ", names)}");
+        }
+    }
+
+    private void CycleNextTrack()
+    {
+        RefreshClipList();
+        if (_clips.Length == 0) return;
+
+        int next = (_clipIndex + 1) % _clips.Length;
+        LoadClipByIndex(next);
+    }
+
+    private void LoadClipByIndex(int index)
+    {
+        if (_clips == null || _clips.Length == 0) return;
+        index = Mathf.Clamp(index, 0, _clips.Length - 1);
+
+        _chops01.Clear();
+        SyncMarkersToWave();
+
+        _clipIndex = index;
+        _clip = _clips[_clipIndex];
+
+        if (_clip == null)
+        {
+            Debug.LogError("KMusicPlayerUI: Selected clip is null.");
+            return;
+        }
+
+        audioSource.clip = _clip;
+        audioSource.time = 0f;
+
+        _wave.SetClip(_clip);
+        _wave.SetPlayhead01(0f);
+        UpdateTimeLabels(0f, _clip.length);
+        UpdateTrackTitle(_clip.name);
+
+        Debug.Log($"KMusicPlayerUI: Loaded {_clip.name} len={_clip.length:0.00}s");
+    }
+
+    private void UpdateTrackTitle(string title)
+    {
+        if (_trackNameLabel == null) return;
+        // You can format however you like. Keeping it simple:
+        _trackNameLabel.text = string.IsNullOrEmpty(title) ? "TRACK" : title;
+    }
+
+    private void OnGlobalPlayClicked()
+    {
+        if (_clip == null)
+        {
+            RefreshClipList();
+            if (_clips.Length > 0) LoadClipByIndex(0);
+        }
+
+        if (audioSource.clip == null) return;
+
+        // If at end, restart
+        if (audioSource.time >= audioSource.clip.length - 0.01f)
+            audioSource.time = 0f;
+
+        audioSource.Play();
+    }
+
+    private void OnGlobalStopClicked()
+    {
+        if (audioSource == null) return;
+        audioSource.Stop();
+        audioSource.time = 0f;
+        UpdatePlayheadUI(); // snap UI back to 0
     }
 
     private void OnKeyDown(KeyDownEvent evt)
@@ -113,42 +211,6 @@ public class KMusicPlayerUI : MonoBehaviour
             DropChopMarkerAtPlayhead();
             evt.StopPropagation();
         }
-    }
-
-    private void OnLoadClicked()
-    {
-        if (string.IsNullOrEmpty(defaultTestClipName))
-        {
-            Debug.LogWarning("KMusicPlayerUI: defaultTestClipName is empty.");
-            return;
-        }
-
-        LoadFromResources(defaultTestClipName);
-    }
-
-    private void LoadFromResources(string clipNameNoExt)
-    {
-        _chops01.Clear();
-        SyncMarkersToWave();
-
-        string path = string.IsNullOrEmpty(resourcesFolder) ? clipNameNoExt : $"{resourcesFolder}/{clipNameNoExt}";
-        _clip = Resources.Load<AudioClip>(path);
-
-        if (_clip == null)
-        {
-            Debug.LogError($"KMusicPlayerUI: Could not load AudioClip at Resources/{path}. " +
-                           "Put a .wav/.mp3 there (imported as an AudioClip), e.g. Assets/Resources/Tracks/test.wav");
-            return;
-        }
-
-        audioSource.clip = _clip;
-        audioSource.time = 0f;
-
-        _wave.SetClip(_clip);
-        UpdateTimeLabels(0f, _clip.length);
-        _wave.SetPlayhead01(0f);
-
-        Debug.Log($"KMusicPlayerUI: Loaded {_clip.name} len={_clip.length:0.00}s");
     }
 
     private void ToggleChop()
@@ -189,8 +251,6 @@ public class KMusicPlayerUI : MonoBehaviour
         boundaries.AddRange(_chops01);
         boundaries.Add(1f);
 
-        // Here is where you’ll map slices into Chop01..Chop16 in your sampler system.
-        // For now, we just log ranges.
         for (int i = 0; i < 16; i++)
         {
             if (i + 1 >= boundaries.Count) break;
@@ -210,6 +270,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null || _clip.length <= 0f)
         {
             _wave?.SetPlayhead01(0f);
+            UpdateTimeLabels(0f, 0f);
             return;
         }
 
@@ -223,7 +284,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private void UpdateTimeLabels(float t, float dur)
     {
         if (_timeLabel != null) _timeLabel.text = FormatTime(t);
-        if (_durLabel != null) _durLabel.text = FormatTime(dur);
+        if (_durLabel != null)  _durLabel.text  = FormatTime(dur);
     }
 
     private static string FormatTime(float seconds)

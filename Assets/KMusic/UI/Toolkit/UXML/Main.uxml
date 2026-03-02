@@ -213,7 +213,7 @@
             <ui:Button name="TrackLoad" class="km-pillbtn" text="LOAD"/>
           </ui:VisualElement>
 
-          <ui:VisualElement name="Waveform" class="km-waveform" />
+          <km:WaveformView name="Waveform" class="km-waveform" />
           <ui:VisualElement class="km-row" style="align-items:center;">
             <ui:Label name="TimeLabel" class="km-label" text="0:00"/>
             <ui:VisualElement style="flex-grow:1;"/>

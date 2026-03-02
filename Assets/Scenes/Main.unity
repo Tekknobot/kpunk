@@ -144,6 +144,7 @@ GameObject:
   - component: {fileID: 161364359}
   - component: {fileID: 161364358}
   - component: {fileID: 161364361}
+  - component: {fileID: 161364364}
   m_Layer: 0
   m_Name: KMusicApp
   m_TagString: Untagged
@@ -343,7 +344,7 @@ AudioSource:
   m_Enabled: 1
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 24300002, guid: 09156e7a2a9be2540871dda397a09286, type: 2}
-  m_audioClip: {fileID: 326225577}
+  m_audioClip: {fileID: 233484412}
   m_PlayOnAwake: 1
   m_Volume: 1
   m_Pitch: 1
@@ -624,7 +625,22 @@ MonoBehaviour:
   patchNextBtnName: PatchNextButton
   patchNameLabelName: PatchNameLabel
   patchIndexLabelName: PatchIndexLabel
---- !u!83 &326225577
+--- !u!114 &161364364
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 161364349}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b123715d1dd92c6489d5c9fb6292065f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  doc: {fileID: 161364351}
+  audioSource: {fileID: 161364360}
+  resourcesFolder: Tracks
+--- !u!83 &233484412
 AudioClip:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
