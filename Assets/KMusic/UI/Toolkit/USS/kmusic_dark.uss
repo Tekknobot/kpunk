@@ -670,7 +670,7 @@
   border-radius: 16px;
 
   color: var(--text);
-  font-size: 22px;          /* 48 was way too big */
+  font-size: 24px;          /* 48 was way too big */
   -unity-font-style: bold;
   unity-text-align: middle-center;
 
@@ -683,6 +683,6 @@
 .km-patch-index {
   margin-top: 8px;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 24px;
   unity-text-align: middle-center;
 }
