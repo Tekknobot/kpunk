@@ -1138,8 +1138,8 @@ public class KMusicDrumSequencer : MonoBehaviour
         // Compute slice timing
         double sliceDur = (e01 - s01) * _appliedClip.length;
 
-        // ✅ PO-style: clamp to step so it doesn't smear across steps
-        double dur = Math.Max(0.01, Math.Min(sliceDur, stepDurSeconds));
+        // ✅ play full chop length (to next marker)
+        double dur = Math.Max(0.01, Math.Min(sliceDur, 4.0)); // cap at 4s (tweak)
 
         // Compute start sample
         int startSample = Mathf.Clamp(
