@@ -44,6 +44,8 @@ public class KMusicPlayerUI : MonoBehaviour
     private Label _timeLabel, _durLabel, _trackNameLabel;
     private WaveformView _wave;
 
+    private Button _btnSend;
+
     private bool _chopArmed = false;
 
     // CHOP extra UI
@@ -126,6 +128,7 @@ public class KMusicPlayerUI : MonoBehaviour
 
         _btnChop  = page.Q<Button>("ChopToggle");
         _btnApply = page.Q<Button>("ChopApply");
+        _btnSend  = page.Q<Button>("ChopSend"); 
 
         // CHOP extra buttons
         _btnAuto4  = page.Q<Button>("Auto4");
@@ -173,6 +176,7 @@ public class KMusicPlayerUI : MonoBehaviour
         // CHOP main
         if (_btnChop != null)  _btnChop.clicked += ToggleChop;
         if (_btnApply != null) _btnApply.clicked += ApplyChops;
+        if (_btnSend != null)  _btnSend.clicked  += SendChops; 
 
         // CHOP auto divisions
         if (_btnAuto4 != null)  _btnAuto4.clicked += () => AutoChop(4);
@@ -554,11 +558,6 @@ public class KMusicPlayerUI : MonoBehaviour
         boundaries.Add(1f);
         boundaries.Sort();
 
-        // Push the currently configured chops to the Sampler system.
-        // Sampler expects a stable 1..16 mapping.
-        KMusicChopState.SaveApplied($"{resourcesFolder}/{_clip.name}", _chops01);
-
-
         float t01 = Mathf.Clamp01(audioSource.time / _clip.length);
 
         // Find slice containing playhead
@@ -580,6 +579,18 @@ public class KMusicPlayerUI : MonoBehaviour
         if (!audioSource.isPlaying) audioSource.Play();
 
         UpdateTrackTitle($"SLICE {slice + 1}  {start01:0.000}->{end01:0.000}");
+    }
+
+    private void SendChops()
+    {
+        if (_clip == null || _clip.length <= 0f)
+            return;
+
+        // Push the currently configured chops to the Sampler system.
+        // Sampler expects a stable 1..16 mapping.
+        KMusicChopState.SaveApplied($"{resourcesFolder}/{_clip.name}", _chops01);
+
+        UpdateTrackTitle($"SENT {_chops01.Count + 1} CHOPS");
     }
 
     private void SyncMarkersToWave()

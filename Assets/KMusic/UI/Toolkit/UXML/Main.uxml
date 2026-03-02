@@ -236,6 +236,7 @@
                 <ui:Button name="Auto16" class="chop-btn chop-btn-div" text="16"/>
 
                 <ui:Button name="ChopApply" class="chop-btn chop-btn-apply" text="APPLY"/>
+                <ui:Button name="SendButton" text="SEND" class="km-btn"/>
             </ui:VisualElement>
 
             <!-- MARKER MODES -->

@@ -1119,7 +1119,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         EnsureSampleVoices();
 
         int n = _sampleVoicePool.Count;
-        if (n <= 1) return; // need at least 2 voices if voice 0 is reserved for audition
+        if (n <= 1) return;
         int idx = 1 + (_sampleVoiceCursor++ % (n - 1));
         var src = _sampleVoicePool[idx];
         if (src == null) return;
@@ -1264,6 +1264,8 @@ public class KMusicDrumSequencer : MonoBehaviour
         }
     }
 
+    private int _auditionToken = 0;
+
     public void AuditionChop(int chopId)
     {
         if (chopId <= 0 || chopId > 16) return;
@@ -1277,13 +1279,12 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         EnsureSampleVoices();
 
-        // ✅ Use a dedicated voice so sequencer scheduling can’t “fight” the audition
-        // Reserve voice 0 for audition, voices 1..N-1 for sequencer playback
+        // reserve voice 0 for audition
         var src = _sampleVoicePool.Count > 0 ? _sampleVoicePool[0] : null;
         if (src == null) return;
 
         double sliceDur = (e01 - s01) * _appliedClip.length;
-        double dur = Math.Max(0.02, sliceDur);
+        float dur = (float)Math.Max(0.02, sliceDur);
 
         int startSample = Mathf.Clamp(
             (int)(s01 * _appliedClip.samples),
@@ -1291,24 +1292,35 @@ public class KMusicDrumSequencer : MonoBehaviour
             Mathf.Max(0, _appliedClip.samples - 1)
         );
 
-        // ✅ Cancel any prior scheduling on this voice
+        // hard-cancel anything on this voice
+        _auditionToken++;
+        int token = _auditionToken;
+
         src.Stop();
-        src.clip = null;
-
-        // small lead so scheduling is stable
-        double start = AudioSettings.dspTime + 0.01;
-        double end = start + dur;
-
         src.clip = _appliedClip;
         src.loop = false;
         src.timeSamples = startSample;
 
-        src.PlayScheduled(start);
-        src.SetScheduledEndTime(end);
+        // ✅ immediate start
+        src.Play();
+
+        // ✅ stop after slice duration (realtime, not affected by timescale)
+        StartCoroutine(StopAuditionAfter(src, dur, token));
 
         if (verbose)
-            Debug.Log($"[Sampler] AUDITION chop={chopId} dur={dur:0.000} slice={s01:0.000}->{e01:0.000}");
+            Debug.Log($"[Sampler] AUDITION_IMMEDIATE chop={chopId} dur={dur:0.000} slice={s01:0.000}->{e01:0.000}");
     }
+
+    private System.Collections.IEnumerator StopAuditionAfter(AudioSource src, float dur, int token)
+    {
+        yield return new WaitForSecondsRealtime(dur);
+
+        // only stop if nothing newer started since
+        if (token != _auditionToken) yield break;
+
+        if (src != null) src.Stop();
+    }
+
     private void UpdateBpmLabel()
     {
         if (_bpmLabel == null) return;
