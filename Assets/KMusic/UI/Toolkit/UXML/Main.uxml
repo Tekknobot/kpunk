@@ -210,35 +210,41 @@
           <ui:VisualElement class="km-row" style="align-items:center;">
             <ui:Label name="TrackName" class="km-subtitle" text="TRACK"/>
             <ui:VisualElement style="flex-grow:1;"/>
-
-            <!-- Dedicated PLAYER transport + track navigation -->
-            <ui:Button name="TrackPlay" class="km-pillbtn km-pillbtn--transport" text="PLAY"/>
-            <ui:Button name="TrackStop" class="km-pillbtn km-pillbtn--transport" text="STOP"/>
-            <ui:Button name="TrackPrev" class="km-pillbtn" text="PREV"/>
-            <ui:Button name="TrackNext" class="km-pillbtn" text="NEXT"/>
-            <ui:Button name="TrackLoad" class="km-pillbtn" text="LOAD"/>
           </ui:VisualElement>
 
           <km:WaveformView name="Waveform" class="km-waveform" />
+
+          <ui:VisualElement class="player-transport-row">
+              <ui:Button name="TrackPlay" class="player-btn player-btn-transport" text="PLAY"/>
+              <ui:Button name="TrackStop" class="player-btn player-btn-transport" text="STOP"/>
+
+              <ui:Button name="TrackPrev" class="player-btn player-btn-nav" text="PREV"/>
+              <ui:Button name="TrackNext" class="player-btn player-btn-nav" text="NEXT"/>
+              <ui:Button name="TrackLoad" class="player-btn player-btn-load" text="LOAD"/>
+          </ui:VisualElement> 
         </ui:VisualElement>
 
-        <!-- CHOP -->
-        <ui:VisualElement class="km-card">
-          <ui:Label class="km-subtitle" text="CHOP"/>
-          <ui:VisualElement class="km-row" style="align-items:center;">
-            <ui:Button name="ChopToggle" class="km-pillbtn" text="CHOP"/>
-            <ui:Button name="Auto4" class="km-pillbtn" text="4"/>
-            <ui:Button name="Auto8" class="km-pillbtn" text="8"/>
-            <ui:Button name="Auto16" class="km-pillbtn" text="16"/>
-            <ui:Button name="ChopApply" class="km-pillbtn" text="APPLY"/>
-          </ui:VisualElement>
+        <ui:VisualElement class="km-card chop-panel">
+            <ui:Label class="km-subtitle" text="CHOP"/>
 
-          <ui:VisualElement class="km-row" style="align-items:center;">
-            <ui:Button name="MarkerAddMode" class="km-pillbtn" text="ADD"/>
-            <ui:Button name="MarkerDelMode" class="km-pillbtn" text="DEL"/>
-            <ui:Button name="SnapToggle" class="km-pillbtn" text="SNAP"/>
-            <ui:Button name="ResetMarkers" class="km-pillbtn" text="RESET"/>
-          </ui:VisualElement>
+            <!-- MAIN CHOP CONTROLS -->
+            <ui:VisualElement class="chop-row-main">
+                <ui:Button name="ChopToggle" class="chop-btn chop-btn-primary" text="CHOP"/>
+
+                <ui:Button name="Auto4" class="chop-btn chop-btn-div" text="4"/>
+                <ui:Button name="Auto8" class="chop-btn chop-btn-div" text="8"/>
+                <ui:Button name="Auto16" class="chop-btn chop-btn-div" text="16"/>
+
+                <ui:Button name="ChopApply" class="chop-btn chop-btn-apply" text="APPLY"/>
+            </ui:VisualElement>
+
+            <!-- MARKER MODES -->
+            <ui:VisualElement class="chop-row-secondary">
+                <ui:Button name="MarkerAddMode" class="chop-btn chop-btn-mode" text="ADD"/>
+                <ui:Button name="MarkerDelMode" class="chop-btn chop-btn-mode" text="DEL"/>
+                <ui:Button name="SnapToggle" class="chop-btn chop-btn-mode" text="SNAP"/>
+                <ui:Button name="ResetMarkers" class="chop-btn chop-btn-reset" text="RESET"/>
+            </ui:VisualElement>
         </ui:VisualElement>
 
       </ui:VisualElement>

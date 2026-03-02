@@ -391,7 +391,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private void UpdateTrackTitle(string title)
     {
         if (_trackNameLabel == null) return;
-        _trackNameLabel.text = string.IsNullOrEmpty(title) ? "TRACK" : title;
+        _trackNameLabel.text = "[TITLE] " + (string.IsNullOrEmpty(title) ? "TRACK" : title);
     }
 
     private void EnsureClipLoaded()
