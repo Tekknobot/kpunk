@@ -1131,10 +1131,8 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         EnsureSampleVoices();
 
-        int n = _sampleVoicePool.Count;
-        if (n <= 1) return;
-        int idx = 1 + (_sampleVoiceCursor++ % (n - 1));
-        var src = _sampleVoicePool[idx];
+        // ✅ monophonic sequencer voice: always use voice 1
+        var src = (_sampleVoicePool.Count > 1) ? _sampleVoicePool[1] : null;
         if (src == null) return;
 
         // Compute slice timing
@@ -1291,6 +1289,13 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (e01 <= s01) return;
 
         EnsureSampleVoices();
+
+        // ✅ PO-style monophonic: audition kills ALL sample voices (seq + audition)
+        for (int i = 0; i < _sampleVoicePool.Count; i++)
+        {
+            var v = _sampleVoicePool[i];
+            if (v != null) v.Stop();
+        }
 
         // reserve voice 0 for audition
         var src = _sampleVoicePool.Count > 0 ? _sampleVoicePool[0] : null;
