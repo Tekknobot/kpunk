@@ -18,6 +18,9 @@ public class KMusicTabsUI : MonoBehaviour
 
     private bool _isSetup = false;
 
+    // Add these fields near the top of the class:
+    private bool _boundSeq, _boundSynth, _boundSampler, _boundArp, _boundFx;
+
     private void Awake()
     {
         if (!doc) doc = GetComponent<UIDocument>();
@@ -39,8 +42,10 @@ public class KMusicTabsUI : MonoBehaviour
 
         _isSetup = false;
         _bus = null;
-    }
 
+        _boundSeq = _boundSynth = _boundSampler = _boundArp = _boundFx = false;
+    }
+    
     private void Setup()
     {
         Debug.Log("KMusicTabsUI Setup() running");
@@ -161,15 +166,14 @@ public class KMusicTabsUI : MonoBehaviour
         SetActive(tabArp, which == "arp");
         SetActive(tabFx, which == "fx");
 
-        // Bind controls for the page you just showed
-        if (_bus != null)
-        {
-            if (which == "seq") BindAll(pageSeq, _bus);
-            else if (which == "synth") BindAll(pageSynth, _bus);
-            else if (which == "sampler") BindAll(pageSampler, _bus);
-            else if (which == "arp") BindAll(pageArp, _bus);
-            else if (which == "fx") BindAll(pageFx, _bus);
-        }
+        // Bind only once per page
+        if (_bus == null) return;
+
+        if (which == "seq" && !_boundSeq) { BindAll(pageSeq, _bus); _boundSeq = true; }
+        else if (which == "synth" && !_boundSynth) { BindAll(pageSynth, _bus); _boundSynth = true; }
+        else if (which == "sampler" && !_boundSampler) { BindAll(pageSampler, _bus); _boundSampler = true; }
+        else if (which == "arp" && !_boundArp) { BindAll(pageArp, _bus); _boundArp = true; }
+        else if (which == "fx" && !_boundFx) { BindAll(pageFx, _bus); _boundFx = true; }
     }
 
     private static void BindAll(VisualElement root, ParameterBus bus)

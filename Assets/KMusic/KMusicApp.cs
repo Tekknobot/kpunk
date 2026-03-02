@@ -205,11 +205,9 @@ namespace KMusic
             _bus = new ParameterBus();
 
             // -----------------
-            // SYNTH (MISSING!)
+            // SYNTH / MASTER
             // -----------------
-
-            // MASTER
-            _bus.Add(new Parameter("master.vol",   0f, 1f, 0.80f));        // 0..1 feels right for volume
+            _bus.Add(new Parameter("master.vol",   0f, 1f, 0.80f));
             _bus.Add(new Parameter("master.porta", 0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("master.poly",  0f, 100f, 0f, unit: "%"));
 
@@ -237,21 +235,18 @@ namespace KMusic
             _bus.Add(new Parameter("filter.keytrk", 0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("synth.vel",     0f, 100f, 0f, unit: "%"));
 
-            // FX: DELAY
+            // FX
             _bus.Add(new Parameter("fx.delay.mix",  0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("fx.delay.fb",   0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("fx.delay.time", 0f, 100f, 0f, unit: "%"));
 
-            // FX: REVERB
             _bus.Add(new Parameter("fx.rev.mix",  0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("fx.rev.fb",   0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("fx.rev.damp", 0f, 100f, 0f, unit: "%"));
 
             // -----------------
-            // EXISTING STUFF
+            // FILTER
             // -----------------
-
-            // Filter
             _bus.Add(new Parameter("filter.cutoff", 20, 20000, 3200, log: true, unit: "hz"));
             _bus.Add(new Parameter("filter.res", 0, 100, 30, unit: "%"));
             _bus.Add(new Parameter("filter.drive", 0, 100, 20, unit: "%"));
@@ -260,7 +255,9 @@ namespace KMusic
             _bus.Add(new Parameter("filter.sus", 0, 100, 60, unit: "%"));
             _bus.Add(new Parameter("filter.rel", 0, 500, 240, unit: "ms"));
 
-            // Amp
+            // -----------------
+            // AMP
+            // -----------------
             _bus.Add(new Parameter("amp.atk", 0, 500, 120, unit: "ms"));
             _bus.Add(new Parameter("amp.dec", 0, 500, 220, unit: "ms"));
             _bus.Add(new Parameter("amp.sus", 0, 100, 60, unit: "%"));
@@ -269,7 +266,9 @@ namespace KMusic
             _bus.Add(new Parameter("amp.sus2", 0, 100, 55, unit: "%"));
             _bus.Add(new Parameter("amp.rel2", 0, 500, 180, unit: "ms"));
 
-            // Mod
+            // -----------------
+            // MOD
+            // -----------------
             _bus.Add(new Parameter("mod.rate", 0, 20, 4, unit: "hz"));
             _bus.Add(new Parameter("mod.depth", 0, 100, 40, unit: "%"));
             _bus.Add(new Parameter("mod.mix", 0, 100, 30, unit: "%"));

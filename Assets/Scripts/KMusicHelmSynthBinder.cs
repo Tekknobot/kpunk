@@ -30,6 +30,8 @@ namespace KMusic
 
         private readonly Dictionary<string, float> _lastSent = new Dictionary<string, float>();
 
+        private bool _pulledOnce = false;
+
         // Central mapping (Bus id -> Helm Param)
         private static readonly Dictionary<string, Param> Map = new Dictionary<string, Param>
         {
@@ -166,9 +168,12 @@ namespace KMusic
             _bus.OnChanged += OnBusChanged;
 
             // IMPORTANT: mirror Helm -> UI/bus immediately so the UI starts at the synth's real state.
-            PullHelmToBus();
+            if (!_pulledOnce)
+            {
+                PullHelmToBus();      // only initial sync so UI matches synth on boot
+                _pulledOnce = true;
+            }
 
-            // After mirroring, clear last-sent so the first user touch always applies cleanly.
             _lastSent.Clear();
 
             Debug.Log($"[KMusicHelmSynthBinder] Bound OK. helm={helm.name} bus={(_bus != null)}");
