@@ -202,6 +202,46 @@
 
       </ui:VisualElement>
 
+      <!-- PLAYER -->
+      <ui:VisualElement name="PagePlayer" style="display:none; flex-direction:column;">
+
+        <!-- TRACK -->
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items:center;">
+            <ui:Label name="TrackName" class="km-subtitle" text="TRACK"/>
+            <ui:VisualElement style="flex-grow:1;"/>
+            <ui:Button name="TrackLoad" class="km-pillbtn" text="LOAD"/>
+          </ui:VisualElement>
+
+          <ui:VisualElement name="Waveform" class="km-waveform" />
+          <ui:VisualElement class="km-row" style="align-items:center;">
+            <ui:Label name="TimeLabel" class="km-label" text="0:00"/>
+            <ui:VisualElement style="flex-grow:1;"/>
+            <ui:Label name="DurLabel" class="km-label" text="0:00"/>
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- CHOP -->
+        <ui:VisualElement class="km-card">
+          <ui:Label class="km-subtitle" text="CHOP"/>
+          <ui:VisualElement class="km-row" style="align-items:center;">
+            <ui:Button name="ChopToggle" class="km-pillbtn" text="CHOP"/>
+            <ui:Button name="Auto4" class="km-pillbtn" text="4"/>
+            <ui:Button name="Auto8" class="km-pillbtn" text="8"/>
+            <ui:Button name="Auto16" class="km-pillbtn" text="16"/>
+            <ui:Button name="ChopApply" class="km-pillbtn" text="APPLY"/>
+          </ui:VisualElement>
+
+          <ui:VisualElement class="km-row" style="align-items:center;">
+            <ui:Button name="MarkerAddMode" class="km-pillbtn" text="ADD"/>
+            <ui:Button name="MarkerDelMode" class="km-pillbtn" text="DEL"/>
+            <ui:Button name="SnapToggle" class="km-pillbtn" text="SNAP"/>
+            <ui:Button name="ResetMarkers" class="km-pillbtn" text="RESET"/>
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+      </ui:VisualElement>
+
       <!-- SAMPLER -->
       <ui:VisualElement name="PageSampler" style="display:none; flex-direction:column;">
 
@@ -354,11 +394,11 @@
 
     <!-- Tabs -->
     <ui:VisualElement class="km-tabs">
-      <ui:VisualElement name="TabSeq" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="SEQ"/></ui:VisualElement>
+      <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="DRUMS | CHOPS"/></ui:VisualElement>
+      <ui:VisualElement name="TabSeq" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="KEYS"/></ui:VisualElement>
       <ui:VisualElement name="TabSynth" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH"/></ui:VisualElement>
-      <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="SAMPLER"/></ui:VisualElement>
-      <ui:VisualElement name="TabArp" class="km-tab"><ui:Label class="km-tab-label" text="ARP"/></ui:VisualElement>
-      <ui:VisualElement name="TabFx" class="km-tab"><ui:Label class="km-tab-label" text="FX"/></ui:VisualElement>
+      <ui:VisualElement name="TabPlayer" class="km-tab"><ui:Label class="km-tab-label" text="PLAYER"/></ui:VisualElement>      
+      <ui:VisualElement name="TabFx" class="km-tab"><ui:Label class="km-tab-label" text="CHAIN"/></ui:VisualElement>
     </ui:VisualElement>
 
     <km:PresetBrowser name="PresetBrowser" style="display: none;" />

@@ -2,7 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
-using KMusic;       // <-- IMPORTANT: gives access to KMusicApp
+using KMusic;       // KMusicApp
 using KMusic.Core;
 using KMusic.UI;
 
@@ -13,13 +13,21 @@ public class KMusicTabsUI : MonoBehaviour
     private ParameterBus _bus;
     private Coroutine _co;
 
-    private VisualElement tabSeq, tabSynth, tabSampler, tabArp, tabFx;
-    private VisualElement pageSeq, pageSynth, pageSampler, pageArp, pageFx;
+    // Tabs in UXML:
+    // TabSampler, TabSeq, TabPlayer, TabSynth, TabFx
+    private VisualElement tabSeq, tabSynth, tabSampler, tabPlayer, tabFx;
+
+    // Pages in UXML:
+    // PageSeq, PageSynth, PageSampler, PagePlayer, PageFx
+    private VisualElement pageSeq, pageSynth, pageSampler, pagePlayer, pageFx;
 
     private bool _isSetup = false;
 
-    // Add these fields near the top of the class:
-    private bool _boundSeq, _boundSynth, _boundSampler, _boundArp, _boundFx;
+    // Bind once per page
+    private bool _boundSeq, _boundSynth, _boundSampler, _boundPlayer, _boundFx;
+
+    // Which tab opens on launch
+    [SerializeField] private string defaultTab = "sampler"; // "sampler","seq","synth","player","fx"
 
     private void Awake()
     {
@@ -29,10 +37,8 @@ public class KMusicTabsUI : MonoBehaviour
 
     private void OnEnable()
     {
-        Setup();
-
         if (_co != null) StopCoroutine(_co);
-        _co = StartCoroutine(BindBusWhenReady());
+        _co = StartCoroutine(SetupThenBind());
     }
 
     private void OnDisable()
@@ -43,56 +49,81 @@ public class KMusicTabsUI : MonoBehaviour
         _isSetup = false;
         _bus = null;
 
-        _boundSeq = _boundSynth = _boundSampler = _boundArp = _boundFx = false;
+        _boundSeq = _boundSynth = _boundSampler = _boundPlayer = _boundFx = false;
     }
-    
+
+    private IEnumerator SetupThenBind()
+    {
+        if (!doc) doc = GetComponent<UIDocument>();
+        if (!doc)
+        {
+            Debug.LogError("KMusicTabsUI: No UIDocument found on this GameObject.");
+            yield break;
+        }
+
+        // Wait until UI Toolkit has built the visual tree (common on first enable)
+        while (doc.rootVisualElement == null)
+            yield return null;
+
+        Setup();
+
+        // Bind bus after setup so pages/tabs exist
+        yield return BindBusWhenReady();
+    }
+
     private void Setup()
     {
-        Debug.Log("KMusicTabsUI Setup() running");
-
         if (_isSetup) return;
         if (!doc) return;
 
         var root = doc.rootVisualElement;
-        if (root == null)
-        {
-            Debug.LogWarning("KMusicTabsUI: rootVisualElement is null (UIDocument not ready).");
-            return;
-        }
+        if (root == null) return;
 
         // Tabs
         tabSeq     = root.Q<VisualElement>("TabSeq");
         tabSynth   = root.Q<VisualElement>("TabSynth");
         tabSampler = root.Q<VisualElement>("TabSampler");
-        tabArp     = root.Q<VisualElement>("TabArp");
+        tabPlayer  = root.Q<VisualElement>("TabPlayer");
         tabFx      = root.Q<VisualElement>("TabFx");
 
         // Pages
         pageSeq     = root.Q<VisualElement>("PageSeq");
         pageSynth   = root.Q<VisualElement>("PageSynth");
         pageSampler = root.Q<VisualElement>("PageSampler");
-        pageArp     = root.Q<VisualElement>("PageArp");
+        pagePlayer  = root.Q<VisualElement>("PagePlayer");
         pageFx      = root.Q<VisualElement>("PageFx");
 
         LogMissing("TabSeq", tabSeq);
         LogMissing("TabSynth", tabSynth);
         LogMissing("TabSampler", tabSampler);
-        LogMissing("TabArp", tabArp);
+        LogMissing("TabPlayer", tabPlayer);
         LogMissing("TabFx", tabFx);
 
         LogMissing("PageSeq", pageSeq);
         LogMissing("PageSynth", pageSynth);
         LogMissing("PageSampler", pageSampler);
-        LogMissing("PageArp", pageArp);
+        LogMissing("PagePlayer", pagePlayer);
         LogMissing("PageFx", pageFx);
+
+        // If Player page isn't in UXML yet, hide the tab so you don't get dead clicks.
+        if (tabPlayer != null && pagePlayer == null)
+            tabPlayer.style.display = DisplayStyle.None;
 
         RegisterTab(tabSeq,     () => Show("seq"));
         RegisterTab(tabSynth,   () => Show("synth"));
         RegisterTab(tabSampler, () => Show("sampler"));
-        RegisterTab(tabArp,     () => Show("arp"));
+
+        // Only register Player if the page exists
+        if (tabPlayer != null && pagePlayer != null)
+            RegisterTab(tabPlayer, () => Show("player"));
+
         RegisterTab(tabFx,      () => Show("fx"));
 
-        Show("seq");
+        // default
+        var def = (defaultTab ?? "sampler").ToLowerInvariant();
+        if (def == "player" && pagePlayer == null) def = "sampler";
+        Show(def);
+
         _isSetup = true;
     }
 
@@ -119,7 +150,6 @@ public class KMusicTabsUI : MonoBehaviour
             yield return null;
 
         _bus = app.Bus;
-        Debug.Log("KMusicTabsUI: Bus bound OK.");
 
         // Bind whatever page is visible right now
         BindVisiblePages();
@@ -132,7 +162,7 @@ public class KMusicTabsUI : MonoBehaviour
         if (pageSeq != null && pageSeq.resolvedStyle.display != DisplayStyle.None) BindAll(pageSeq, _bus);
         if (pageSynth != null && pageSynth.resolvedStyle.display != DisplayStyle.None) BindAll(pageSynth, _bus);
         if (pageSampler != null && pageSampler.resolvedStyle.display != DisplayStyle.None) BindAll(pageSampler, _bus);
-        if (pageArp != null && pageArp.resolvedStyle.display != DisplayStyle.None) BindAll(pageArp, _bus);
+        if (pagePlayer != null && pagePlayer.resolvedStyle.display != DisplayStyle.None) BindAll(pagePlayer, _bus);
         if (pageFx != null && pageFx.resolvedStyle.display != DisplayStyle.None) BindAll(pageFx, _bus);
     }
 
@@ -146,7 +176,6 @@ public class KMusicTabsUI : MonoBehaviour
 
         tab.RegisterCallback<PointerDownEvent>(evt =>
         {
-            Debug.Log($"TAB DOWN: {tab.name}");
             onActivate?.Invoke();
             evt.StopPropagation();
         }, TrickleDown.TrickleDown);
@@ -154,25 +183,28 @@ public class KMusicTabsUI : MonoBehaviour
 
     private void Show(string which)
     {
+        which = (which ?? "sampler").ToLowerInvariant();
+        if (which == "player" && pagePlayer == null) which = "sampler";
+
         SetVisible(pageSeq, which == "seq");
         SetVisible(pageSynth, which == "synth");
         SetVisible(pageSampler, which == "sampler");
-        SetVisible(pageArp, which == "arp");
+        SetVisible(pagePlayer, which == "player");
         SetVisible(pageFx, which == "fx");
 
         SetActive(tabSeq, which == "seq");
         SetActive(tabSynth, which == "synth");
         SetActive(tabSampler, which == "sampler");
-        SetActive(tabArp, which == "arp");
+        SetActive(tabPlayer, which == "player");
         SetActive(tabFx, which == "fx");
 
-        // Bind only once per page
+        // Bind only once per page (after bus exists)
         if (_bus == null) return;
 
         if (which == "seq" && !_boundSeq) { BindAll(pageSeq, _bus); _boundSeq = true; }
         else if (which == "synth" && !_boundSynth) { BindAll(pageSynth, _bus); _boundSynth = true; }
         else if (which == "sampler" && !_boundSampler) { BindAll(pageSampler, _bus); _boundSampler = true; }
-        else if (which == "arp" && !_boundArp) { BindAll(pageArp, _bus); _boundArp = true; }
+        else if (which == "player" && !_boundPlayer) { BindAll(pagePlayer, _bus); _boundPlayer = true; }
         else if (which == "fx" && !_boundFx) { BindAll(pageFx, _bus); _boundFx = true; }
     }
 
