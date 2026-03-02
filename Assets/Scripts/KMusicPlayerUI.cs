@@ -1,12 +1,21 @@
 // Assets/Scripts/KMusicPlayerUI.cs
-// Player page: load AudioClip(s) from Resources/<resourcesFolder>/, render waveform,
-// show playhead + chop markers, and hook PLAYER-local transport/buttons only.
+// Player page:
+// - Default: load AudioClip(s) from Resources/<resourcesFolder>/, render waveform,
+//   show playhead + chop markers, and hook PLAYER-local transport/buttons only.
+// - Android option: scan the user's real device Music library via MediaStore and load
+//   a selected track by copying the content:// URI into app cache, then loading file://... into an AudioClip.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
+using UnityEngine.Networking;
 using KMusic.UI;
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+using KMusic.Android;
+#endif
 
 public class KMusicPlayerUI : MonoBehaviour
 {
@@ -16,9 +25,16 @@ public class KMusicPlayerUI : MonoBehaviour
     [Tooltip("If null, a child GameObject named 'PlayerAudioSource' will be created with an AudioSource.")]
     [SerializeField] private AudioSource audioSource;
 
-    [Header("Resources audio folder")]
+    [Header("Resources audio folder (fallback / editor)")]
     [Tooltip("AudioClips placed under Assets/Resources/<folder>/ (ex: Assets/Resources/Tracks/*.mp3 or *.wav)")]
     [SerializeField] private string resourcesFolder = "Tracks";
+
+    [Header("Android: Device Music Library (MediaStore)")]
+    [Tooltip("If true, on Android builds we will query MediaStore.Audio (device music library) instead of Resources.")]
+    [SerializeField] private bool useDeviceMusicLibraryOnAndroid = true;
+
+    [Tooltip("Max number of MediaStore tracks to fetch (0 = no limit).")]
+    [SerializeField] private int deviceTrackLimit = 250;
 
     private VisualElement _root;
 
@@ -29,10 +45,19 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private bool _chopArmed = false;
 
-    // Available clips in Resources/<resourcesFolder>
+    // Resources clips
     private AudioClip[] _clips = Array.Empty<AudioClip>();
     private int _clipIndex = -1;
+
+    // Current playing clip (either from Resources, or dynamically loaded from device)
     private AudioClip _clip;
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+    private TrackInfo[] _deviceTracks = Array.Empty<TrackInfo>();
+    private int _deviceTrackIndex = -1;
+    private Coroutine _loadDeviceCoroutine;
+    private bool _deviceReady = false;
+#endif
 
     // Store ONLY user chop markers (max 16). 0 and 1 are implied boundaries when applying.
     private readonly List<float> _chops01 = new();
@@ -95,6 +120,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _timeLabel = page.Q<Label>("TimeLabel");
         _durLabel  = page.Q<Label>("DurLabel");
         _trackNameLabel = page.Q<Label>("TrackName");
+        UpdateTrackTitle("PLAYERUI ONENABLE HIT");
 
         Debug.Log($"[PlayerUI] page={(page!=null)} playBtn={(_btnPlay!=null)} stopBtn={(_btnStop!=null)} prevBtn={(_btnPrev!=null)} nextBtn={(_btnNext!=null)} loadBtn={(_btnLoad!=null)}");
 
@@ -134,6 +160,53 @@ public class KMusicPlayerUI : MonoBehaviour
         _root.schedule.Execute(UpdatePlayheadUI).Every(33);
 
         // Load clips + auto-load first
+        BootAudioSources();
+    }
+
+    private void BootAudioSources()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (useDeviceMusicLibraryOnAndroid)
+        {
+            _deviceReady = false;
+            UpdateTrackTitle("REQUESTING MUSIC PERMISSION…");
+
+            AndroidMusicLibrary.EnsurePermissionThenRefresh(this, ok =>
+            {
+                _deviceTracks = AndroidMusicLibrary.Tracks ?? Array.Empty<TrackInfo>();
+                _deviceTrackIndex = (_deviceTracks.Length > 0) ? 0 : -1;
+
+                // ok now means: permission granted + query attempted (even if 0 tracks)
+                _deviceReady = ok;
+
+                Debug.Log($"[PlayerUI] Device permission/query ok={ok} tracks={_deviceTracks.Length} status={AndroidMusicLibrary.DebugLastStatus}");
+
+                if (_deviceTracks.Length > 0)
+                {
+                    LoadDeviceTrackByIndex(0);
+                }
+                else
+                {
+                    // ✅ SHOW THE REAL REASON ON SCREEN (no logcat needed)
+                    UpdateTrackTitle(
+                        "ANDROID MUSIC: 0 tracks\n" +
+                        AndroidMusicLibrary.DebugLastStatus + "\n" +
+                        AndroidMusicLibrary.DebugLastJsonHead
+                    );
+
+                    // keep fallback so app still works
+                    RefreshClipList();
+                    // don't auto-load; leave debug message visible.
+                    // user can press Next/Prev to pick Resources manually if needed.
+                    //if (_clips.Length > 0 && _clip == null) LoadClipByIndex(0);
+                }
+            }, deviceTrackLimit);
+
+            return;
+        }
+#endif
+
+        // Default (Editor/Desktop/iOS/etc): Resources based
         RefreshClipList();
         if (_clips.Length > 0 && _clip == null)
             LoadClipByIndex(0);
@@ -151,6 +224,14 @@ public class KMusicPlayerUI : MonoBehaviour
 
         if (_btnChop != null)  _btnChop.clicked -= ToggleChop;
         if (_btnApply != null) _btnApply.clicked -= ApplyChops;
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (_loadDeviceCoroutine != null)
+        {
+            StopCoroutine(_loadDeviceCoroutine);
+            _loadDeviceCoroutine = null;
+        }
+#endif
     }
 
     private void RefreshClipList()
@@ -172,20 +253,40 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private void CyclePrevTrack()
     {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (useDeviceMusicLibraryOnAndroid && _deviceReady)
+        {
+            if (_deviceTracks == null || _deviceTracks.Length == 0) return;
+            int prev = (_deviceTrackIndex <= 0) ? (_deviceTracks.Length - 1) : (_deviceTrackIndex - 1);
+            LoadDeviceTrackByIndex(prev);
+            return;
+        }
+#endif
+
         RefreshClipList();
         if (_clips.Length == 0) return;
 
-        int prev = (_clipIndex <= 0) ? (_clips.Length - 1) : (_clipIndex - 1);
-        LoadClipByIndex(prev);
+        int prevRes = (_clipIndex <= 0) ? (_clips.Length - 1) : (_clipIndex - 1);
+        LoadClipByIndex(prevRes);
     }
 
     private void CycleNextTrack()
     {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (useDeviceMusicLibraryOnAndroid && _deviceReady)
+        {
+            if (_deviceTracks == null || _deviceTracks.Length == 0) return;
+            int next = (_deviceTrackIndex + 1) % _deviceTracks.Length;
+            LoadDeviceTrackByIndex(next);
+            return;
+        }
+#endif
+
         RefreshClipList();
         if (_clips.Length == 0) return;
 
-        int next = (_clipIndex + 1) % _clips.Length;
-        LoadClipByIndex(next);
+        int nextRes = (_clipIndex + 1) % _clips.Length;
+        LoadClipByIndex(nextRes);
     }
 
     private void LoadClipByIndex(int index)
@@ -218,6 +319,75 @@ public class KMusicPlayerUI : MonoBehaviour
         Debug.Log($"KMusicPlayerUI: Loaded {_clip.name} len={_clip.length:0.00}s (audioSource.clip={audioSource.clip.name})");
     }
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+    private void LoadDeviceTrackByIndex(int index)
+    {
+        if (_deviceTracks == null || _deviceTracks.Length == 0) return;
+        index = Mathf.Clamp(index, 0, _deviceTracks.Length - 1);
+        _deviceTrackIndex = index;
+
+        _chops01.Clear();
+        SyncMarkersToWave();
+
+        var t = _deviceTracks[_deviceTrackIndex];
+        string title = string.IsNullOrEmpty(t.title) ? "TRACK" : t.title;
+        if (!string.IsNullOrEmpty(t.artist)) title += $" — {t.artist}";
+        UpdateTrackTitle(title);
+
+        // Stop previous load if still running
+        if (_loadDeviceCoroutine != null)
+        {
+            StopCoroutine(_loadDeviceCoroutine);
+            _loadDeviceCoroutine = null;
+        }
+
+        // Stop playback while loading
+        if (audioSource != null) audioSource.Stop();
+        if (_wave != null)
+        {
+            _wave.SetClip(null);
+            _wave.SetPlayhead01(0f);
+            _wave.SetMarkers01(_chops01);
+        }
+        UpdateTimeLabels(0f, (t.durationMs > 0) ? (t.durationMs / 1000f) : 0f);
+
+        _loadDeviceCoroutine = StartCoroutine(CoLoadDeviceTrack(t));
+    }
+
+    private IEnumerator CoLoadDeviceTrack(TrackInfo t)
+    {
+        bool done = false;
+        AudioClip loaded = null;
+
+        yield return AndroidMusicLibrary.LoadTrackToClip(t, clip =>
+        {
+            loaded = clip;
+            done = true;
+        });
+
+        while (!done) yield return null;
+
+        if (loaded == null)
+        {
+            Debug.LogWarning("[PlayerUI] Failed to load device track: " + (t != null ? t.uri : "null"));
+            yield break;
+        }
+
+        _clip = loaded;
+
+        // ✅ Force the dedicated player AudioSource to use THIS track clip.
+        audioSource.Stop();
+        audioSource.clip = _clip;
+        audioSource.time = 0f;
+
+        _wave.SetClip(_clip);
+        _wave.SetPlayhead01(0f);
+        UpdateTimeLabels(0f, _clip.length);
+
+        Debug.Log($"[PlayerUI] Loaded device clip len={_clip.length:0.00}s uri={t.uri}");
+    }
+#endif
+
     private void UpdateTrackTitle(string title)
     {
         if (_trackNameLabel == null) return;
@@ -227,6 +397,18 @@ public class KMusicPlayerUI : MonoBehaviour
     private void EnsureClipLoaded()
     {
         if (_clip != null && audioSource != null && audioSource.clip == _clip) return;
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (useDeviceMusicLibraryOnAndroid && _deviceReady)
+        {
+            if (_deviceTracks != null && _deviceTracks.Length > 0)
+            {
+                int idx = (_deviceTrackIndex < 0) ? 0 : Mathf.Clamp(_deviceTrackIndex, 0, _deviceTracks.Length - 1);
+                LoadDeviceTrackByIndex(idx);
+            }
+            return;
+        }
+#endif
 
         if (_clip == null || _clips == null || _clips.Length == 0)
             RefreshClipList();
