@@ -1,5 +1,6 @@
 // Assets/Scripts/KMusicHelmPresetPickerUI.cs
 using System;
+using UnityEngine.Networking;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -244,23 +245,31 @@ namespace KMusic
             }
         }
 
-        // ---- StreamingAssets reader (no UnityWebRequest) ----
+        // ---- StreamingAssets reader (UnityWebRequest on Android, direct file IO elsewhere) ----
         private static IEnumerator ReadStreamingText(string relativePath, Action<string> onDone)
         {
-#if UNITY_ANDROID && !UNITY_EDITOR
+        #if UNITY_ANDROID && !UNITY_EDITOR
+            // On Android, StreamingAssets are inside the APK; use UnityWebRequest to read them.
             string url = StreamingAssetPath(relativePath);
-            using (var www = new WWW(url))
+
+            using (UnityWebRequest req = UnityWebRequest.Get(url))
             {
-                yield return www;
-                if (!string.IsNullOrEmpty(www.error))
+                yield return req.SendWebRequest();
+
+                if (req.result != UnityWebRequest.Result.Success)
                 {
-                    Debug.LogError("[KMusicHelmPresetPickerUI] WWW error: " + www.error + "\n" + url);
+                    Debug.LogError("[KMusicHelmPresetPickerUI] UWR error: " + req.error + "\n" + url);
                     onDone(null);
                 }
-                else onDone(www.text);
+                else
+                {
+                    onDone(req.downloadHandler.text);
+                }
             }
-#else
+        #else
+            // On desktop/editor, StreamingAssets are normal files on disk.
             string path = StreamingAssetPath(relativePath);
+
             if (!File.Exists(path))
             {
                 Debug.LogError("[KMusicHelmPresetPickerUI] Missing file: " + path);
@@ -270,9 +279,8 @@ namespace KMusic
 
             onDone(File.ReadAllText(path));
             yield break;
-#endif
+        #endif
         }
-
         private static string NiceNameFromPath(string relPath)
         {
             relPath = relPath.Replace("\\", "/");
