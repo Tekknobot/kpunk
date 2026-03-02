@@ -46,7 +46,7 @@ namespace KMusic.UI
         public KnobElement()
         {
             style.width = 98;
-            style.height = 132;
+            style.height = 200;
             style.marginRight = 12;
 
             // ✅ ensures knob contents align cleanly
@@ -252,9 +252,24 @@ namespace KMusic.UI
         private VisualElement _thumb;
         private Label _name;
         private Label _val;
+
         private bool _drag;
         private float _startT;
         private Vector2 _startPos;
+
+        // --- runtime metrics (vertical) ---
+        private float _padTop = 16f;
+        private float _holderW = 40f;
+        private float _trackW = 10f;
+        private float _thumbSize = 36f;
+
+        private float _holderH = 400f; // computed
+        private float _trackH = 360f;  // computed
+        private float _labelBlockH = 62f; // space for name + value
+
+        private VisualElement _trackHolder; // vertical holder
+        private VisualElement _wrap;        // vertical wrap
+        private VisualElement _hHolder;     // horizontal holder
 
         public FaderElement()
         {
@@ -265,27 +280,20 @@ namespace KMusic.UI
         {
             Clear();
 
-            // ---- Tunables (uniform layout) ----
-            const float TRACK_W = 10f;
-            const float TRACK_H = 360f;
-            const float HOLDER_W = 40f;
-            const float HOLDER_H = 400f;
-            const float PAD_TOP  = 20f;          // top padding inside holder (keeps it off the rounded ends)
-            const float THUMB = 36f;
-            const float HTRACK_H = 18f;          // horizontal track height
-            const float HHOLDER_H = 42f;
-
+            // Allow USS to drive sizing.
+            // (If USS doesn't set height, we provide a reasonable default.)
             if (!Horizontal)
             {
                 style.width = 58;
-                style.height = 460;
+                if (style.height.keyword == StyleKeyword.Auto || style.height.keyword == StyleKeyword.Null)
+                    style.height = 300; // default only (USS can override)
                 style.flexDirection = FlexDirection.Column;
                 style.alignItems = Align.Center;
             }
             else
             {
                 style.width = 620;
-                style.height = 64;
+                style.height = 64; // horizontal "master" style is fine fixed
                 style.flexDirection = FlexDirection.Row;
                 style.alignItems = Align.Center;
             }
@@ -319,39 +327,35 @@ namespace KMusic.UI
             _thumb.style.borderTopColor = new Color(1, 1, 1, 0.2f);
             _thumb.style.borderLeftColor = new Color(1, 1, 1, 0.2f);
             _thumb.style.borderRightColor = new Color(1, 1, 1, 0.2f);
-            _thumb.style.width = THUMB;
-            _thumb.style.height = THUMB;
+            _thumb.style.width = _thumbSize;
+            _thumb.style.height = _thumbSize;
             _thumb.style.position = Position.Absolute;
 
             if (!Horizontal)
             {
-                // ---- Holder (absolute layout so everything shares the same origin) ----
-                var trackHolder = new VisualElement();
-                trackHolder.style.width = HOLDER_W;
-                trackHolder.style.height = HOLDER_H;
-                trackHolder.style.position = Position.Relative; // important: anchors absolute children
-                trackHolder.style.alignItems = Align.Center;
+                _trackHolder = new VisualElement();
+                _trackHolder.style.width = _holderW;
+                _trackHolder.style.position = Position.Relative;
+                _trackHolder.style.alignItems = Align.Center;
+                _trackHolder.style.flexGrow = 1;
+                _trackHolder.style.minHeight = 0;
 
-                // Track centered
-                float trackX = (HOLDER_W - TRACK_W) * 0.5f;
+                float trackX = (_holderW - _trackW) * 0.5f;
+
                 _track.style.position = Position.Absolute;
                 _track.style.left = trackX;
-                _track.style.top = PAD_TOP;
-                _track.style.width = TRACK_W;
-                _track.style.height = TRACK_H;
+                _track.style.top = _padTop;
+                _track.style.width = _trackW;
 
-                // Fill exactly on top of track (same X/width)
                 _fill.style.left = trackX;
-                _fill.style.width = TRACK_W;
+                _fill.style.width = _trackW;
 
-                // Thumb centered in holder (same centerline as track)
-                _thumb.style.left = (HOLDER_W - THUMB) * 0.5f;
+                _thumb.style.left = (_holderW - _thumbSize) * 0.5f;
 
-                trackHolder.Add(_track);
-                trackHolder.Add(_fill);
-                trackHolder.Add(_thumb);
+                _trackHolder.Add(_track);
+                _trackHolder.Add(_fill);
+                _trackHolder.Add(_thumb);
 
-                // Labels
                 _name = new Label(Label);
                 _name.style.color = new Color(0.60f, 0.64f, 0.70f, 1f);
                 _name.style.fontSize = 20;
@@ -363,52 +367,92 @@ namespace KMusic.UI
                 _val.style.fontSize = 20;
                 _val.style.unityTextAlign = TextAnchor.MiddleCenter;
 
-                var wrap = new VisualElement();
-                wrap.style.flexDirection = FlexDirection.Column;
-                wrap.style.alignItems = Align.Center;
+                _wrap = new VisualElement();
+                _wrap.style.flexDirection = FlexDirection.Column;
+                _wrap.style.alignItems = Align.Center;
+                _wrap.style.flexGrow = 1;
+                _wrap.style.minHeight = 0;
 
-                wrap.Add(trackHolder);
-                if (!string.IsNullOrEmpty(Label)) wrap.Add(_name);
-                wrap.Add(_val);
+                _wrap.Add(_trackHolder);
+                if (!string.IsNullOrEmpty(Label)) _wrap.Add(_name);
+                _wrap.Add(_val);
 
-                Add(wrap);
+                Add(_wrap);
+
+                // Recompute sizes whenever USS/viewport changes our height.
+                UnregisterCallback<GeometryChangedEvent>(OnGeom);
+                RegisterCallback<GeometryChangedEvent>(OnGeom);
             }
             else
             {
                 // ---- Horizontal ----
-                var holder = new VisualElement();
-                holder.style.flexGrow = 1;
-                holder.style.height = HHOLDER_H;
-                holder.style.position = Position.Relative;
-                holder.style.justifyContent = Justify.Center;
-                holder.style.alignItems = Align.Center;
+                const float HTRACK_H = 18f;
+                const float HHOLDER_H = 42f;
 
-                // Track
+                _hHolder = new VisualElement();
+                _hHolder.style.flexGrow = 1;
+                _hHolder.style.height = HHOLDER_H;
+                _hHolder.style.position = Position.Relative;
+                _hHolder.style.justifyContent = Justify.Center;
+                _hHolder.style.alignItems = Align.Center;
+
                 _track.style.height = HTRACK_H;
                 _track.style.position = Position.Absolute;
                 _track.style.left = 0;
                 _track.style.right = 0;
                 _track.style.top = (HHOLDER_H - HTRACK_H) * 0.5f;
 
-                // Fill (MAKE IT ABSOLUTE + START WIDTH 0)
                 _fill.style.position = Position.Absolute;
                 _fill.style.height = HTRACK_H;
                 _fill.style.top = (HHOLDER_H - HTRACK_H) * 0.5f;
                 _fill.style.left = 0;
                 _fill.style.width = 0;
 
-                // Thumb
-                _thumb.style.top = (HHOLDER_H - THUMB) * 0.5f;
+                _thumb.style.top = (HHOLDER_H - _thumbSize) * 0.5f;
 
-                holder.Add(_track);
-                holder.Add(_fill);
-                holder.Add(_thumb);
-                Add(holder);
+                _hHolder.Add(_track);
+                _hHolder.Add(_fill);
+                _hHolder.Add(_thumb);
+                Add(_hHolder);
             }
 
             RegisterCallback<PointerDownEvent>(OnDown);
             RegisterCallback<PointerMoveEvent>(OnMove);
             RegisterCallback<PointerUpEvent>(OnUp);
+        }
+
+        private void OnGeom(GeometryChangedEvent e)
+        {
+            if (Horizontal) return;
+
+            // Total element height (from USS or default)
+            float totalH = resolvedStyle.height;
+            if (totalH <= 0f) return;
+
+            // If label is empty, we only show value line -> smaller label block.
+            float labelBlock = string.IsNullOrEmpty(Label) ? 38f : _labelBlockH;
+
+            // Holder is the remaining height for the track area.
+            float holderH = Mathf.Max(80f, totalH - labelBlock);
+            _holderH = holderH;
+
+            // Track height inside holder
+            float trackH = Mathf.Max(40f, holderH - _padTop - (_thumbSize * 0.5f));
+            _trackH = trackH;
+
+            _trackHolder.style.height = holderH;
+            _track.style.height = trackH;
+
+            // Refresh layout using current param value
+            if (_bus != null && !string.IsNullOrEmpty(ParamId))
+            {
+                float t = _bus.GetNormalized(ParamId);
+                LayoutFromT(t);
+            }
+            else
+            {
+                LayoutFromT(0f);
+            }
         }
 
         public void Bind(ParameterBus bus)
@@ -437,35 +481,35 @@ namespace KMusic.UI
         private void LayoutFromT(float t)
         {
             t = Mathf.Clamp01(t);
+
             if (!Horizontal)
             {
-                float top = 20f + (360f * (1f - t));
-                _thumb.style.top = top;
-                _thumb.style.left = 2;
-                _fill.style.left = 15;
-                _fill.style.top = top + 18;
-                _fill.style.height = (400f - (top + 18));
+                float trackTop = _padTop;
+                float travel = Mathf.Max(0f, _trackH - _thumbSize);
+                float thumbTop = trackTop + (travel * (1f - t));
+
+                _thumb.style.top = thumbTop;
+
+                // Fill starts at center of thumb to bottom of track
+                float fillTop = thumbTop + (_thumbSize * 0.5f);
+                float fillH = Mathf.Max(0f, (trackTop + _trackH) - fillTop);
+
+                _fill.style.top = fillTop;
+                _fill.style.height = fillH;
             }
             else
             {
-                const float HPAD_X = 20f;   // left/right padding
-                const float THUMB = 36f;    // thumb width
-
+                const float HPAD_X = 20f;
                 float w = resolvedStyle.width;
-
-                // distance thumb can travel
-                float travel = Mathf.Max(0f, w - (HPAD_X * 2f) - THUMB);
-
-                // compute thumb position
+                float travel = Mathf.Max(0f, w - (HPAD_X * 2f) - _thumbSize);
                 float x = HPAD_X + travel * t;
 
                 _thumb.style.left = x;
                 _thumb.style.top = 3;
 
-                // fill stays centered with thumb
                 _fill.style.left = 0;
                 _fill.style.top = 12;
-                _fill.style.width = x + (THUMB * 0.5f);
+                _fill.style.width = x + (_thumbSize * 0.5f);
             }
         }
 
@@ -503,7 +547,6 @@ namespace KMusic.UI
             e.StopPropagation();
         }
     }
-
     // --- Step Grid ---
     public class StepGrid : VisualElement
     {

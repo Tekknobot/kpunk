@@ -153,5 +153,45 @@ namespace KMusic
                 return null;
             }
         }
+
+        public static void SaveBus(ParameterBus bus, string key, Func<string, bool> allowId)
+        {
+            if (bus == null) return;
+            var s = new ParamSave();
+            foreach (var p in bus.All)
+            {
+                if (allowId != null && !allowId(p.Id)) continue;
+                s.items.Add(new ParamPair { id = p.Id, v = p.Value });
+            }
+
+            PlayerPrefs.SetString(key, JsonUtility.ToJson(s));
+            PlayerPrefs.Save();
+        }
+
+        public static void LoadBus(ParameterBus bus, string key, Func<string, bool> allowId)
+        {
+            if (bus == null) return;
+            if (!PlayerPrefs.HasKey(key)) return;
+
+            try
+            {
+                var json = PlayerPrefs.GetString(key, "");
+                if (string.IsNullOrEmpty(json)) return;
+                var s = JsonUtility.FromJson<ParamSave>(json);
+                if (s?.items == null) return;
+
+                foreach (var it in s.items)
+                {
+                    if (string.IsNullOrEmpty(it.id)) continue;
+                    if (allowId != null && !allowId(it.id)) continue;
+
+                    bus.SetValue(it.id, it.v);
+                }
+            }
+            catch
+            {
+                // ignore corrupt prefs
+            }
+        }        
     }
 }

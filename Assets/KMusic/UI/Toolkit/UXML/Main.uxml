@@ -13,7 +13,8 @@
     </ui:VisualElement>
 
     <!-- Pages: tabs show/hide these panels -->
-    <ui:VisualElement name="Pages" style="flex-grow:1; flex-direction:column;">
+    <ui:VisualElement name="Pages"
+                      style="flex-grow:1; flex-direction:column; overflow:scroll;">
 
       <!-- SEQ (default visible) -->
       <ui:VisualElement name="PageSeq" style="display:flex; flex-direction:column;">
@@ -41,54 +42,145 @@
 
       <!-- SYNTH -->
       <ui:VisualElement name="PageSynth" style="display:none; flex-direction:column;">
-        <ui:VisualElement class="km-card km-modules-card">
+
+        <!-- MASTER -->
+        <ui:VisualElement name="CardMaster" class="km-card">
+          <ui:Label class="km-subtitle" text="MASTER"/>
+          <ui:VisualElement class="km-row" style="align-items:center;">
+            <km:FaderElement label="Vol" paramId="master.vol" horizontal="true" />
+            <km:KnobElement label="Glide" paramId="master.porta" />
+            <km:KnobElement label="Poly" paramId="master.poly" />
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- OSCILLATORS -->
+        <ui:VisualElement name="CardOsc" class="km-card km-modules-card">
           <ui:VisualElement class="km-row km-col3">
+
             <ui:VisualElement class="km-subcard">
-              <ui:Label class="km-subtitle" text="FILTER"/>
+              <ui:Label class="km-subtitle" text="OSC 1"/>
               <ui:VisualElement class="km-macro-row">
-                <km:KnobElement name="FilterCut" label="Cut" paramId="filter.cutoff" />
-                <km:KnobElement name="FilterRes" label="Res" paramId="filter.res" />
-                <km:KnobElement name="FilterDrive" label="Drive" paramId="filter.drive" />
+                <km:KnobElement label="Vol" paramId="osc1.vol" />
+                <km:KnobElement label="Tune" paramId="osc1.tune" />
+                <km:KnobElement label="Trans" paramId="osc1.trans" />
               </ui:VisualElement>
-              <ui:VisualElement class="km-fader-row">
-                <km:FaderElement label="Atk" paramId="filter.atk" />
-                <km:FaderElement label="Dec" paramId="filter.dec" />
-                <km:FaderElement label="Sus" paramId="filter.sus" />
-                <km:FaderElement label="Rel" paramId="filter.rel" />
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="Uni" paramId="osc1.uni" />
+                <km:KnobElement label="Det" paramId="osc1.detune" />
+                <km:KnobElement label="Harm" paramId="osc1.harm" />
               </ui:VisualElement>
             </ui:VisualElement>
 
             <ui:VisualElement class="km-subcard">
-              <ui:Label class="km-subtitle" text="AMP/ENV"/>
+              <ui:Label class="km-subtitle" text="OSC 2"/>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="Vol" paramId="osc2.vol" />
+                <km:KnobElement label="Tune" paramId="osc2.tune" />
+                <km:KnobElement label="Trans" paramId="osc2.trans" />
+              </ui:VisualElement>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="Uni" paramId="osc2.uni" />
+                <km:KnobElement label="Det" paramId="osc2.detune" />
+                <km:KnobElement label="Harm" paramId="osc2.harm" />
+              </ui:VisualElement>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-subcard">
+              <ui:Label class="km-subtitle" text="SUB/NOISE"/>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="SubVol" paramId="sub.vol" />
+                <km:KnobElement label="SubOct" paramId="sub.oct" />
+                <km:KnobElement label="Noise" paramId="noise.vol" />
+              </ui:VisualElement>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="XMod" paramId="synth.xmod" />
+                <km:KnobElement label="KeyTrk" paramId="filter.keytrk" />
+                <km:KnobElement label="Vel" paramId="synth.vel" />
+              </ui:VisualElement>
+            </ui:VisualElement>
+
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- FILTER + AMP -->
+        <ui:VisualElement name="CardFilter" class="km-card km-modules-card">
+          <ui:VisualElement class="km-row km-col2">
+
+            <ui:VisualElement class="km-subcard">
+              <ui:Label class="km-subtitle" text="FILTER"/>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="Cut" paramId="filter.cutoff" />
+                <km:KnobElement label="Res" paramId="filter.res" />
+                <km:KnobElement label="Drive" paramId="filter.drive" />
+              </ui:VisualElement>
+
+              <!-- SHORT SYNTH FADERS -->
+              <ui:VisualElement class="km-fader-row">
+                <km:FaderElement class="km-synth-fader" label="Atk" paramId="filter.atk" />
+                <km:FaderElement class="km-synth-fader" label="Dec" paramId="filter.dec" />
+                <km:FaderElement class="km-synth-fader" label="Sus" paramId="filter.sus" />
+                <km:FaderElement class="km-synth-fader" label="Rel" paramId="filter.rel" />
+              </ui:VisualElement>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-subcard">
+              <ui:Label class="km-subtitle" text="AMP"/>
               <ui:VisualElement class="km-macro-row">
                 <km:KnobElement label="Atk" paramId="amp.atk" />
                 <km:KnobElement label="Dec" paramId="amp.dec" />
                 <km:KnobElement label="Sus" paramId="amp.sus" />
               </ui:VisualElement>
+
+              <!-- SHORT SYNTH FADERS -->
               <ui:VisualElement class="km-fader-row">
-                <km:FaderElement label="Atk" paramId="amp.atk2" />
-                <km:FaderElement label="Dec" paramId="amp.dec2" />
-                <km:FaderElement label="Sus" paramId="amp.sus2" />
-                <km:FaderElement label="Rel" paramId="amp.rel2" />
+                <km:FaderElement class="km-synth-fader" label="Atk" paramId="amp.atk2" />
+                <km:FaderElement class="km-synth-fader" label="Dec" paramId="amp.dec2" />
+                <km:FaderElement class="km-synth-fader" label="Sus" paramId="amp.sus2" />
+                <km:FaderElement class="km-synth-fader" label="Rel" paramId="amp.rel2" />
               </ui:VisualElement>
             </ui:VisualElement>
 
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- MOD + FX -->
+        <ui:VisualElement name="CardMod" class="km-card km-modules-card">
+          <ui:VisualElement class="km-row km-col2">
+
             <ui:VisualElement class="km-subcard">
-              <ui:Label class="km-subtitle" text="MOD"/>
+              <ui:Label class="km-subtitle" text="MOD (LFO/ENV)"/>
               <ui:VisualElement class="km-macro-row">
                 <km:KnobElement label="Rate" paramId="mod.rate" />
                 <km:KnobElement label="Depth" paramId="mod.depth" />
                 <km:KnobElement label="Mix" paramId="mod.mix" />
               </ui:VisualElement>
+
+              <!-- SHORT SYNTH FADERS -->
               <ui:VisualElement class="km-fader-row">
-                <km:FaderElement label="Atk" paramId="mod.atk" />
-                <km:FaderElement label="Dec" paramId="mod.dec" />
-                <km:FaderElement label="Sus" paramId="mod.sus" />
-                <km:FaderElement label="Rel" paramId="mod.rel" />
+                <km:FaderElement class="km-synth-fader" label="Atk" paramId="mod.atk" />
+                <km:FaderElement class="km-synth-fader" label="Dec" paramId="mod.dec" />
+                <km:FaderElement class="km-synth-fader" label="Sus" paramId="mod.sus" />
+                <km:FaderElement class="km-synth-fader" label="Rel" paramId="mod.rel" />
               </ui:VisualElement>
             </ui:VisualElement>
+
+            <ui:VisualElement class="km-subcard">
+              <ui:Label class="km-subtitle" text="FX"/>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="DlyMix" paramId="fx.delay.mix" />
+                <km:KnobElement label="DlyFb"  paramId="fx.delay.fb" />
+                <km:KnobElement label="DlyTm"  paramId="fx.delay.time" />
+              </ui:VisualElement>
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="RevMix" paramId="fx.rev.mix" />
+                <km:KnobElement label="RevFb"  paramId="fx.rev.fb" />
+                <km:KnobElement label="RevDmp" paramId="fx.rev.damp" />
+              </ui:VisualElement>
+            </ui:VisualElement>
+
           </ui:VisualElement>
         </ui:VisualElement>
+
       </ui:VisualElement>
 
       <!-- SAMPLER -->

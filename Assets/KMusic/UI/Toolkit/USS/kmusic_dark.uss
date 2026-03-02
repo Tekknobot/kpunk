@@ -142,6 +142,38 @@
   border-color: var(--border);
   padding: 14px;
   overflow: hidden;
+  height: auto
+}
+
+
+/* --- SYNTH: per-card sizing --- */
+/* Use names from UXML: CardMaster, CardOsc, CardFilter, CardMod */
+
+/* MASTER is already compact; tweak if needed */
+#CardMaster {
+  height: 200px;
+}
+
+/* OSC block */
+#CardOsc {
+  height: 520px;         /* adjust */
+}
+
+/* FILTER + AMP block */
+#CardFilter {
+  height: 740px;         /* adjust */
+}
+
+/* MOD + FX block */
+#CardMod {
+  height: 740px;         /* adjust */
+}
+
+/* If you see clipping, either increase heights OR remove hidden for these */
+#CardOsc,
+#CardFilter,
+#CardMod {
+  overflow: hidden;      /* keep rounded corners clean */
 }
 
 .km-row {
@@ -258,11 +290,41 @@
 
 /* Layout tuning */
 .km-modules-card {
-  height: 780px;
+  height: auto;
 }
 
 .km-subcard {
-  height: 740px;
+  height: auto;
+}
+
+/* Shorter faders for SYNTH envelopes */
+.km-synth-fader {
+  height: 140px;
+  width: 28px;
+}
+
+/* IMPORTANT: force the actual Slider inside to obey the container height */
+.km-synth-fader .unity-slider {
+  height: 100%;
+  flex-grow: 1;
+}
+
+.km-synth-fader .unity-slider__track {
+  height: 100%;
+}
+
+.km-synth-fader > * {
+  height: 100%;
+}
+
+/* ensure content clears the bottom tabs */
+#Pages {
+  padding-bottom: 80px;   /* space for tab bar */
+}
+
+#PageSynth {
+  flex-grow: 1;
+  min-height: 0;
 }
 
 /* Force major containers to stretch full width */
@@ -518,7 +580,7 @@
 }
 
 .km-kit-nav {
-  width: 48px;
+  width: 128px;
   height: 40px;
   border-radius: 10px;
   background-color: #667090;

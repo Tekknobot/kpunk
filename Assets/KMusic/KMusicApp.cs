@@ -1,12 +1,19 @@
+// KMusicApp.cs
+
+using System;
 using UnityEngine;
 using UnityEngine.UIElements;
 using KMusic.Core;
 
 namespace KMusic
 {
+    // ✅ Make sure Bus exists before binders/other UI scripts run.
+    [DefaultExecutionOrder(-1000)]
     public sealed class KMusicApp : MonoBehaviour
     {
-        private const string PrefKey_Bus = "kmusic.bus";
+        private const int PrefVer = 2;
+        private static readonly string PrefKey_Bus = "kmusic.bus.v" + PrefVer;
+        private static readonly string PrefKey_BusVer = "kmusic.bus.ver";
 
         [Header("UI Toolkit")]
         public VisualTreeAsset mainUxml;
@@ -16,7 +23,11 @@ namespace KMusic
         private ParameterBus _bus;
 
         public ParameterBus Bus => _bus;
+
         private ThemeStyleSheet _runtimeTheme;
+
+        // prevent stacking event handlers on enable/disable
+        private Action<string, float> _onBusChanged;
 
         private void Awake()
         {
@@ -31,44 +42,42 @@ namespace KMusic
             if (darkTheme == null)
                 darkTheme = Resources.Load<StyleSheet>("KMusic/UI/kmusic_dark");
 
+            // ✅ Make sure PanelSettings exists and is assigned properly.
             if (_doc.panelSettings == null)
             {
-                // Create panel settings at runtime (no editor asset needed).
                 var ps = ScriptableObject.CreateInstance<PanelSettings>();
                 ps.scaleMode = PanelScaleMode.ConstantPixelSize;
                 ps.referenceResolution = new Vector2Int(1024, 2048);
 
-                // IMPORTANT: UI Toolkit expects a ThemeStyleSheet on PanelSettings.
-                // We create a minimal runtime ThemeStyleSheet to satisfy this requirement.
+                // UI Toolkit expects a ThemeStyleSheet on PanelSettings.
                 if (_runtimeTheme == null)
                     _runtimeTheme = ScriptableObject.CreateInstance<ThemeStyleSheet>();
+
                 ps.themeStyleSheet = _runtimeTheme;
-_doc.panelSettings = ps;
+                _doc.panelSettings = ps;
             }
 
             if (mainUxml != null)
                 _doc.visualTreeAsset = mainUxml;
 
+            // If version changed, wipe old prefs so new defaults apply
+            int savedVer = PlayerPrefs.GetInt(PrefKey_BusVer, -1);
+            if (savedVer != PrefVer)
+            {
+                PlayerPrefs.DeleteKey("kmusic.bus");        // delete old unversioned key
+                PlayerPrefs.DeleteKey(PrefKey_Bus);         // delete current version key (just in case)
+                PlayerPrefs.SetInt(PrefKey_BusVer, PrefVer);
+                PlayerPrefs.Save();
+            }
             BuildParameters();
 
-            // Load saved mixer/fader values (if present) after defaults are created.
-            KMusicSaveState.LoadBus(_bus, PrefKey_Bus);
-        }
-
-        private void OnApplicationPause(bool pause)
-        {
-            if (pause)
-                KMusicSaveState.SaveBus(_bus, PrefKey_Bus);
-        }
-
-        private void OnApplicationQuit()
-        {
-            KMusicSaveState.SaveBus(_bus, PrefKey_Bus);
-        }
-
-        private void OnDisable()
-        {
-            KMusicSaveState.SaveBus(_bus, PrefKey_Bus);
+            // Load saved mixer/fader values after defaults exist.
+            KMusicSaveState.LoadBus(_bus, PrefKey_Bus, id =>
+                id.StartsWith("mix.") ||
+                id.StartsWith("drum.") ||
+                id.StartsWith("sampler.") ||
+                id.StartsWith("mutes.")
+            );
         }
 
         private void OnEnable()
@@ -76,14 +85,14 @@ _doc.panelSettings = ps;
             var root = _doc.rootVisualElement;
             if (root == null) return;
 
-            // --- Ensure background behind UI matches theme (prevents white notch/letterbox areas) ---
+            // Background behind UI (prevents white letterbox/notch areas)
             if (Camera.main != null)
             {
                 Camera.main.clearFlags = CameraClearFlags.SolidColor;
                 Camera.main.backgroundColor = new Color(0.06f, 0.07f, 0.09f, 1f); // ~#0F1115
             }
 
-            // Fullscreen UI background element (covers even if safe-area padding moves content)
+            // Fullscreen UI background element
             var bg = root.Q<VisualElement>("KmBg");
             if (bg == null)
             {
@@ -93,96 +102,139 @@ _doc.panelSettings = ps;
                 bg.style.top = 0;
                 bg.style.right = 0;
                 bg.style.bottom = 0;
-                bg.style.backgroundColor = new Color(0.06f, 0.07f, 0.09f, 1f); // ~#0F1115
+                bg.style.backgroundColor = new Color(0.06f, 0.07f, 0.09f, 1f);
                 root.Insert(0, bg);
             }
 
-            // --- Safe-area padding (camera / notch) ---
-            // Convert Screen.safeArea top inset (pixels) into UI reference pixels.
+            // Safe-area padding
             var sa = Screen.safeArea;
             float topInsetPx = Screen.height - (sa.y + sa.height);
             float topInsetUI = 0f;
 
             if (_doc.panelSettings != null)
             {
-                // Convert screen pixels -> reference pixels (works with ScaleWithScreenSize)
                 var refRes = _doc.panelSettings.referenceResolution;
                 topInsetUI = topInsetPx * (refRes.y / Mathf.Max(1f, Screen.height));
             }
 
-            // Base padding + safe area inset
             float baseTop = 64f;
             root.style.paddingTop = baseTop + topInsetUI;
 
             if (darkTheme != null && !root.styleSheets.Contains(darkTheme))
                 root.styleSheets.Add(darkTheme);
 
-            // Bind all custom controls
-            foreach (var b in root.Query<VisualElement>().ToList())
+            // Bind all custom controls (KnobElement / FaderElement / etc.)
+            foreach (var ve in root.Query<VisualElement>().ToList())
             {
-                if (b is KMusic.UI.IParamBindable bindable)
+                if (ve is KMusic.UI.IParamBindable bindable)
                     bindable.Bind(_bus);
             }
 
-            // Update BPM label from tempo param
+            // BPM label
             var bpmLabel = root.Q<Label>("BpmLabel");
             if (bpmLabel != null && _bus.TryGet("tempo", out var tempo))
                 bpmLabel.text = tempo.Format();
 
-            _bus.OnChanged += (id, v) =>
+            // ✅ avoid stacking listeners across enables
+            if (_onBusChanged != null)
+                _bus.OnChanged -= _onBusChanged;
+
+            _onBusChanged = (id, v) =>
             {
                 if (id == "tempo" && bpmLabel != null && _bus.TryGet("tempo", out var t))
                     bpmLabel.text = t.Format();
             };
+            _bus.OnChanged += _onBusChanged;
 
-            // Toggle preset browser on preset bar click
+            // Toggle preset browser on preset label click
             var presetLabel = root.Q<Label>("PresetLabel");
             var presetBrowser = root.Q<VisualElement>("PresetBrowser");
             if (presetLabel != null && presetBrowser != null)
             {
                 presetLabel.RegisterCallback<PointerDownEvent>(_ =>
                 {
-                    presetBrowser.style.display = presetBrowser.resolvedStyle.display == DisplayStyle.None
-                        ? DisplayStyle.Flex
-                        : DisplayStyle.None;
+                    presetBrowser.style.display =
+                        presetBrowser.resolvedStyle.display == DisplayStyle.None
+                            ? DisplayStyle.Flex
+                            : DisplayStyle.None;
                 });
             }
         }
+
+    private void OnDisable()
+    {
+        // Save bus values (mixer/drum/sampler/mutes only)
+        KMusicSaveState.SaveBus(_bus, PrefKey_Bus, id =>
+            id.StartsWith("mix.") ||
+            id.StartsWith("drum.") ||
+            id.StartsWith("sampler.") ||
+            id.StartsWith("mutes.")
+        );
+
+        // Unhook event handler (prevents duplicate notifications later)
+        if (_bus != null && _onBusChanged != null)
+            _bus.OnChanged -= _onBusChanged;
+
+        _onBusChanged = null;
+    }
+
+    private void OnApplicationPause(bool pause)
+    {
+        if (!pause) return;
+
+        KMusicSaveState.SaveBus(_bus, PrefKey_Bus, id =>
+            id.StartsWith("mix.") ||
+            id.StartsWith("drum.") ||
+            id.StartsWith("sampler.") ||
+            id.StartsWith("mutes.")
+        );
+    }
+
+    private void OnApplicationQuit()
+    {
+        KMusicSaveState.SaveBus(_bus, PrefKey_Bus, id =>
+            id.StartsWith("mix.") ||
+            id.StartsWith("drum.") ||
+            id.StartsWith("sampler.") ||
+            id.StartsWith("mutes.")
+        );
+    }
 
         private void BuildParameters()
         {
             _bus = new ParameterBus();
 
             // Filter
-            _bus.Add(new Parameter("filter.cutoff", 20, 20000, 3200, log:true, unit:"hz"));
-            _bus.Add(new Parameter("filter.res", 0, 100, 30, unit:"%"));
-            _bus.Add(new Parameter("filter.drive", 0, 100, 20, unit:"%"));
-            _bus.Add(new Parameter("filter.atk", 0, 500, 120, unit:"ms"));
-            _bus.Add(new Parameter("filter.dec", 0, 500, 220, unit:"ms"));
-            _bus.Add(new Parameter("filter.sus", 0, 100, 60, unit:"%"));
-            _bus.Add(new Parameter("filter.rel", 0, 500, 240, unit:"ms"));
+            _bus.Add(new Parameter("filter.cutoff", 20, 20000, 3200, log: true, unit: "hz"));
+            _bus.Add(new Parameter("filter.res", 0, 100, 30, unit: "%"));
+            _bus.Add(new Parameter("filter.drive", 0, 100, 20, unit: "%"));
+            _bus.Add(new Parameter("filter.atk", 0, 500, 120, unit: "ms"));
+            _bus.Add(new Parameter("filter.dec", 0, 500, 220, unit: "ms"));
+            _bus.Add(new Parameter("filter.sus", 0, 100, 60, unit: "%"));
+            _bus.Add(new Parameter("filter.rel", 0, 500, 240, unit: "ms"));
 
             // Amp
-            _bus.Add(new Parameter("amp.atk", 0, 500, 120, unit:"ms"));
-            _bus.Add(new Parameter("amp.dec", 0, 500, 220, unit:"ms"));
-            _bus.Add(new Parameter("amp.sus", 0, 100, 60, unit:"%"));
-            _bus.Add(new Parameter("amp.atk2", 0, 500, 320, unit:"ms"));
-            _bus.Add(new Parameter("amp.dec2", 0, 500, 240, unit:"ms"));
-            _bus.Add(new Parameter("amp.sus2", 0, 100, 55, unit:"%"));
-            _bus.Add(new Parameter("amp.rel2", 0, 500, 180, unit:"ms"));
+            _bus.Add(new Parameter("amp.atk", 0, 500, 120, unit: "ms"));
+            _bus.Add(new Parameter("amp.dec", 0, 500, 220, unit: "ms"));
+            _bus.Add(new Parameter("amp.sus", 0, 100, 60, unit: "%"));
+            _bus.Add(new Parameter("amp.atk2", 0, 500, 320, unit: "ms"));
+            _bus.Add(new Parameter("amp.dec2", 0, 500, 240, unit: "ms"));
+            _bus.Add(new Parameter("amp.sus2", 0, 100, 55, unit: "%"));
+            _bus.Add(new Parameter("amp.rel2", 0, 500, 180, unit: "ms"));
 
             // Mod
-            _bus.Add(new Parameter("mod.rate", 0, 20, 4, unit:"hz"));
-            _bus.Add(new Parameter("mod.depth", 0, 100, 40, unit:"%"));
-            _bus.Add(new Parameter("mod.mix", 0, 100, 30, unit:"%"));
-            _bus.Add(new Parameter("mod.atk", 0, 500, 120, unit:"ms"));
-            _bus.Add(new Parameter("mod.dec", 0, 500, 220, unit:"ms"));
-            _bus.Add(new Parameter("mod.sus", 0, 100, 60, unit:"%"));
-            _bus.Add(new Parameter("mod.rel", 0, 500, 240, unit:"ms"));
+            _bus.Add(new Parameter("mod.rate", 0, 20, 4, unit: "hz"));
+            _bus.Add(new Parameter("mod.depth", 0, 100, 40, unit: "%"));
+            _bus.Add(new Parameter("mod.mix", 0, 100, 30, unit: "%"));
+            _bus.Add(new Parameter("mod.atk", 0, 500, 120, unit: "ms"));
+            _bus.Add(new Parameter("mod.dec", 0, 500, 220, unit: "ms"));
+            _bus.Add(new Parameter("mod.sus", 0, 100, 60, unit: "%"));
+            _bus.Add(new Parameter("mod.rel", 0, 500, 240, unit: "ms"));
 
             // Tempo
-            _bus.Add(new Parameter("tempo", 40, 200, 107, unit:"bpm"));
-                    
+            _bus.Add(new Parameter("tempo", 40, 200, 107, unit: "bpm"));
+
+            // Drum mixer
             _bus.Add(new Parameter("drum.vol01", 0f, 1f, 0.8f));
             _bus.Add(new Parameter("drum.vol02", 0f, 1f, 0.8f));
             _bus.Add(new Parameter("drum.vol03", 0f, 1f, 0.8f));
@@ -190,7 +242,7 @@ _doc.panelSettings = ps;
             _bus.Add(new Parameter("drum.vol05", 0f, 1f, 0.8f));
             _bus.Add(new Parameter("drum.vol06", 0f, 1f, 0.8f));
             _bus.Add(new Parameter("drum.vol07", 0f, 1f, 0.8f));
-            _bus.Add(new Parameter("drum.vol08", 0f, 1f, 0.8f));     
+            _bus.Add(new Parameter("drum.vol08", 0f, 1f, 0.8f));
         }
     }
 }

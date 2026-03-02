@@ -1,15 +1,20 @@
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
+using KMusic;       // <-- IMPORTANT: gives access to KMusicApp
+using KMusic.Core;
+using KMusic.UI;
 
 public class KMusicTabsUI : MonoBehaviour
 {
     [SerializeField] private UIDocument doc;
 
+    private ParameterBus _bus;
+    private Coroutine _co;
+
     private VisualElement tabSeq, tabSynth, tabSampler, tabArp, tabFx;
     private VisualElement pageSeq, pageSynth, pageSampler, pageArp, pageFx;
-
-    private VisualElement _pressedTab;
-    private int _pressedPointerId = -1;
 
     private bool _isSetup = false;
 
@@ -21,22 +26,25 @@ public class KMusicTabsUI : MonoBehaviour
 
     private void OnEnable()
     {
-        // UIDocument builds/clones the visual tree here — safe time to query.
         Setup();
+
+        if (_co != null) StopCoroutine(_co);
+        _co = StartCoroutine(BindBusWhenReady());
     }
 
     private void OnDisable()
     {
+        if (_co != null) StopCoroutine(_co);
+        _co = null;
+
         _isSetup = false;
-        _pressedTab = null;
-        _pressedPointerId = -1;
-        // (Optional: if you store delegates, you can UnregisterCallback here)
+        _bus = null;
     }
 
     private void Setup()
     {
         Debug.Log("KMusicTabsUI Setup() running");
-        
+
         if (_isSetup) return;
         if (!doc) return;
 
@@ -83,38 +91,60 @@ public class KMusicTabsUI : MonoBehaviour
         _isSetup = true;
     }
 
+    private IEnumerator BindBusWhenReady()
+    {
+        // Find KMusicApp INCLUDING inactive
+        KMusicApp app = null;
+
+#if UNITY_2023_1_OR_NEWER
+        var apps = FindObjectsByType<KMusicApp>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+        var apps = Resources.FindObjectsOfTypeAll<KMusicApp>();
+#endif
+        if (apps != null && apps.Length > 0)
+            app = apps[0];
+
+        if (app == null)
+        {
+            Debug.LogWarning("KMusicTabsUI: No KMusicApp found in scene (even inactive).");
+            yield break;
+        }
+
+        while (app.Bus == null)
+            yield return null;
+
+        _bus = app.Bus;
+        Debug.Log("KMusicTabsUI: Bus bound OK.");
+
+        // Bind whatever page is visible right now
+        BindVisiblePages();
+    }
+
+    private void BindVisiblePages()
+    {
+        if (_bus == null) return;
+
+        if (pageSeq != null && pageSeq.resolvedStyle.display != DisplayStyle.None) BindAll(pageSeq, _bus);
+        if (pageSynth != null && pageSynth.resolvedStyle.display != DisplayStyle.None) BindAll(pageSynth, _bus);
+        if (pageSampler != null && pageSampler.resolvedStyle.display != DisplayStyle.None) BindAll(pageSampler, _bus);
+        if (pageArp != null && pageArp.resolvedStyle.display != DisplayStyle.None) BindAll(pageArp, _bus);
+        if (pageFx != null && pageFx.resolvedStyle.display != DisplayStyle.None) BindAll(pageFx, _bus);
+    }
+
     private void RegisterTab(VisualElement tab, System.Action onActivate)
     {
         if (tab == null) return;
 
-        // Make sure the tab can receive hits
         tab.style.flexGrow = 1;
         tab.style.minHeight = 40;
         tab.pickingMode = PickingMode.Position;
 
-        // Catch pointer down directly (more reliable than Clickable)
         tab.RegisterCallback<PointerDownEvent>(evt =>
         {
             Debug.Log($"TAB DOWN: {tab.name}");
             onActivate?.Invoke();
             evt.StopPropagation();
         }, TrickleDown.TrickleDown);
-
-        // Optional: show that the element is being hovered
-        tab.RegisterCallback<PointerEnterEvent>(_ =>
-        {
-            // Uncomment if you want noise:
-            // Debug.Log($"TAB ENTER: {tab.name}");
-        }, TrickleDown.TrickleDown);
-    }
-
-    private void IgnorePickingRecursive(VisualElement root)
-    {
-        foreach (var child in root.Children())
-        {
-            child.pickingMode = PickingMode.Ignore;
-            IgnorePickingRecursive(child);
-        }
     }
 
     private void Show(string which)
@@ -130,6 +160,35 @@ public class KMusicTabsUI : MonoBehaviour
         SetActive(tabSampler, which == "sampler");
         SetActive(tabArp, which == "arp");
         SetActive(tabFx, which == "fx");
+
+        // Bind controls for the page you just showed
+        if (_bus != null)
+        {
+            if (which == "seq") BindAll(pageSeq, _bus);
+            else if (which == "synth") BindAll(pageSynth, _bus);
+            else if (which == "sampler") BindAll(pageSampler, _bus);
+            else if (which == "arp") BindAll(pageArp, _bus);
+            else if (which == "fx") BindAll(pageFx, _bus);
+        }
+    }
+
+    private static void BindAll(VisualElement root, ParameterBus bus)
+    {
+        if (root == null || bus == null) return;
+
+        var stack = new Stack<VisualElement>();
+        stack.Push(root);
+
+        while (stack.Count > 0)
+        {
+            var ve = stack.Pop();
+
+            if (ve is IParamBindable bindable)
+                bindable.Bind(bus);
+
+            foreach (var child in ve.Children())
+                stack.Push(child);
+        }
     }
 
     private static void SetVisible(VisualElement ve, bool on)
