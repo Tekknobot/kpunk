@@ -289,6 +289,8 @@ namespace KMusic
             _bus.Add(new Parameter("drum.vol06", 0f, 1f, 0.8f));
             _bus.Add(new Parameter("drum.vol07", 0f, 1f, 0.8f));
             _bus.Add(new Parameter("drum.vol08", 0f, 1f, 0.8f));
+            // Sample / Chop mixer
+            _bus.Add(new Parameter("sample.master", 0f, 1f, 1f));
         }
     }
 }

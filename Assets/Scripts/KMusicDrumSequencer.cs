@@ -56,6 +56,12 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private bool _didLoadState = false;
 
+    [Header("Sampler Volume")]
+    [Range(0f, 1f)] public float sampleMasterVolume = 1f;
+
+    // Optional UI control name (Slider or KnobElement root name)
+    public string sampleMasterSliderName = "SampleMasterVol";
+
     private void EnsureStateLoaded()
     {
         if (_didLoadState) return;
@@ -525,6 +531,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         // Cache bus for drum volume faders.
         if (_app == null) _app = FindObjectOfType<KMusicApp>();
         _bus = _app != null ? _app.Bus : null;
+        ApplySampleMasterVolume();
 
         // --- Kit UI ---
         _kitNameLabel = _root.Q<Label>("KitName");
@@ -577,6 +584,28 @@ public class KMusicDrumSequencer : MonoBehaviour
         _allowSaving = true;
 
         return true;
+    }
+
+    private void ApplySampleMasterVolume()
+    {
+        // ✅ KnobElement drives ParameterBus, so read from bus
+        float v = 1f;
+
+        if (_bus != null)
+            v = Mathf.Clamp01(_bus.GetValue("sample.master"));
+        else
+            v = Mathf.Clamp01(sampleMasterVolume); // fallback if bus not ready yet
+
+        float lin = Mathf.Pow(v, 2.2f);
+
+        for (int i = 0; i < _sampleVoicePool.Count; i++)
+        {
+            var s = _sampleVoicePool[i];
+            if (s != null) s.volume = lin;
+        }
+
+        if (verbose)
+            Debug.Log($"[SampleVol] bus={( _bus != null)} sample.master={v:0.00} voices={_sampleVoicePool.Count}");
     }
 
     private void WireMuteButtons(VisualElement root)
@@ -1116,6 +1145,8 @@ public class KMusicDrumSequencer : MonoBehaviour
 
             _sampleVoicePool.Add(src);
         }
+
+        ApplySampleMasterVolume();
     }
 
     private void ScheduleSampleChop(int chopId, double dspTime, double stepDurSeconds)
@@ -1225,7 +1256,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         float bpm = GetBpm();
         if (_clock != null) _clock.bpm = bpm;
 
-        double stepDur = 60.0 / Math.Max(1.0, bpm) / 4.0; // 16th
+        double stepDur = _stepDur; // ✅ lock to play-start step duration for alignment
         double now = AudioSettings.dspTime;
         double windowEnd = now + lookaheadSeconds;
 
@@ -1273,6 +1304,8 @@ public class KMusicDrumSequencer : MonoBehaviour
             _stepIndex = (_stepIndex + 1) % steps;
             _nextStepDspTime += stepDur;
         }
+
+        ApplySampleMasterVolume();
     }
 
     private int _auditionToken = 0;

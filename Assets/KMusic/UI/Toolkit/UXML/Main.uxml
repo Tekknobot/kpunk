@@ -236,7 +236,7 @@
                 <ui:Button name="Auto16" class="chop-btn chop-btn-div" text="16"/>
 
                 <ui:Button name="ChopApply" class="chop-btn chop-btn-apply" text="APPLY"/>
-                <ui:Button name="SendButton" text="SEND" class="km-btn"/>
+                <!-- <ui:Button name="SendButton" text="SEND" class="km-btn"/> -->              
             </ui:VisualElement>
 
             <!-- MARKER MODES -->
@@ -246,6 +246,15 @@
                 <ui:Button name="SnapToggle" class="chop-btn chop-btn-mode" text="SNAP"/>
                 <ui:Button name="ResetMarkers" class="chop-btn chop-btn-reset" text="RESET"/>
             </ui:VisualElement>
+            <ui:VisualElement class="chop-row-third">
+                <ui:VisualElement class="km-chip-group">
+                    <km:KnobElement
+                        name="SampleMasterVol"
+                        label="CHOP VOL"
+                        paramId="sample.master"
+                        style="width:90px; height:90px;" />
+                </ui:VisualElement> 
+            </ui:VisualElement>             
         </ui:VisualElement>
 
       </ui:VisualElement>
