@@ -13,6 +13,7 @@ public class KMusicSampleSequencerUI : MonoBehaviour
     private StepGrid sampleGrid;
     private StepGrid _lastBoundGrid;
 
+    private KMusicDrumSequencer _sequencer;
     private readonly Button[] chopBtns = new Button[16];
 
     private int activeChop = 1;                 // 1..16
@@ -51,6 +52,9 @@ public class KMusicSampleSequencerUI : MonoBehaviour
             _lastBoundGrid = g;
 
             sampleGrid = g;
+
+            CacheChopButtons(root);
+            if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
 
             // do your normal bind/wire
             WireChops();
@@ -93,6 +97,16 @@ public class KMusicSampleSequencerUI : MonoBehaviour
         KMusic.KMusicSaveState.SaveIntArray(PrefKey_SampleStepGrid, sampleGrid.ExportValuesFlat());
     }
 
+    private void CacheChopButtons(VisualElement root)
+    {
+        if (root == null) return;
+        for (int i = 0; i < 16; i++)
+        {
+            var b = root.Q<Button>($"Chop{(i + 1):00}");
+            if (b != null) chopBtns[i] = b;
+        }
+    }
+
     private void WireChops()
     {
         for (int i = 0; i < 16; i++)
@@ -118,6 +132,9 @@ public class KMusicSampleSequencerUI : MonoBehaviour
     private void SelectChop(int chopId)
     {
         activeChop = Mathf.Clamp(chopId, 1, 16);
+
+        if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
+        _sequencer?.AuditionChop(activeChop);
 
         if (sampleGrid != null)
         {
@@ -149,9 +166,15 @@ public class KMusicSampleSequencerUI : MonoBehaviour
         {
             samplePattern[r, c] = v;
 
-            // Debug: you should see values 1..16 when painting
-            Debug.Log($"[KMusicSampleSequencerUI] cell[{r},{c}]={v}");
+            int step = (r * 8) + c;
+            if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
+            if (_sequencer != null)
+                _sequencer.SetSampleStep(step, v);
 
+            // Persist immediately so playback survives tab rebuilds.
+            SavePattern();
+
+            Debug.Log($"[KMusicSampleSequencerUI] cell[{r},{c}]={v}");
             ForceGridRefresh(sampleGrid);
         };
 

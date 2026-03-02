@@ -37,6 +37,8 @@ public class KMusicDrumSequencer : MonoBehaviour
     private const string PrefKey_DrumMutes = "kmusic.drum.mutes";
     private const string PrefKey_DrumActive = "kmusic.drum.active";
     private const string PrefKey_DrumKitIndex = "kmusic.drum.kitIndex";
+    private const string PrefKey_SampleStepGrid = "kmusic.sample.stepgrid";
+
 
     // NEW: PlayerPrefs fallback key for stepmask (base64) so lane patterns survive even if KMusicSaveState isn’t available in builds.
     private const string PrefKey_DrumStepMask_B64 = "kmusic.drum.stepmask.b64";
@@ -157,6 +159,24 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private const int LANES = 8;                        // 8 drums max in this UI
     private byte[] _stepMask = new byte[16];
+
+    // --- Sampler (chop sequencer) ---
+    private int[] _sampleChopByStep = new int[16]; // 0 = none, 1..16 = chop id
+
+    [Header("Sampler Playback")]
+    [Tooltip("How many overlapping sample voices we allow for chops.")]
+    public int sampleVoices = 8;
+
+    private readonly List<AudioSource> _sampleVoicePool = new();
+    private int _sampleVoiceCursor = 0;
+
+    private bool _didLoadSamplePattern = false;
+    private bool _didLoadAppliedChops = false;
+    private string _appliedResourcesPath = null;
+    private AudioClip _appliedClip = null;
+    private float[] _sliceStart01 = new float[16];
+    private float[] _sliceEnd01 = new float[16];
+
 
     private UIDocument _doc;
     private VisualElement _root;
@@ -558,6 +578,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         return true;
     }
+
     private void WireMuteButtons(VisualElement root)
     {
         if (root == null) return;
@@ -998,6 +1019,142 @@ public class KMusicDrumSequencer : MonoBehaviour
         }
     }
 
+
+    // ----------------------------
+    // Sampler chop scheduling
+    // ----------------------------
+
+    public void SetSampleStep(int stepIndex, int chopId)
+    {
+        if (stepIndex < 0 || stepIndex >= steps) return;
+        _sampleChopByStep[stepIndex] = Mathf.Clamp(chopId, 0, 16);
+    }
+
+    private void EnsureSamplePatternLoaded()
+    {
+        if (_didLoadSamplePattern) return;
+
+        // KMusicSaveState stores a flat int array for the 2x8 grid.
+        var flat = KMusicSaveState.LoadIntArray(PrefKey_SampleStepGrid, 16);
+        if (flat != null && flat.Length >= 16)
+        {
+            for (int i = 0; i < 16; i++)
+                _sampleChopByStep[i] = Mathf.Clamp(flat[i], 0, 16);
+        }
+        else
+        {
+            for (int i = 0; i < 16; i++)
+                _sampleChopByStep[i] = 0;
+        }
+
+        _didLoadSamplePattern = true;
+    }
+
+    private void EnsureAppliedChopsLoaded()
+    {
+        if (_didLoadAppliedChops) return;
+
+        if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
+        {
+            _appliedResourcesPath = null;
+            _appliedClip = null;
+            _didLoadAppliedChops = true;
+            return;
+        }
+
+        _appliedResourcesPath = resPath;
+        _appliedClip = Resources.Load<AudioClip>(resPath);
+
+        if (_appliedClip == null)
+        {
+            Debug.LogWarning($"[Sampler] Applied chops refer to missing AudioClip at Resources.Load('{resPath}').");
+        }
+
+        // Copy arrays (defensive)
+        for (int i = 0; i < 16; i++)
+        {
+            _sliceStart01[i] = Mathf.Clamp01(s01[i]);
+            _sliceEnd01[i] = Mathf.Clamp01(e01[i]);
+            if (_sliceEnd01[i] < _sliceStart01[i]) _sliceEnd01[i] = _sliceStart01[i];
+        }
+
+        EnsureSampleVoices();
+
+        Debug.Log($"[Sampler] Loaded applied chops for '{resPath}' (clip={( _appliedClip != null ? _appliedClip.name : "null")}).");
+
+        _didLoadAppliedChops = true;
+    }
+
+    private void EnsureSampleVoices()
+    {
+        int target = Mathf.Clamp(sampleVoices, 1, 32);
+
+        // If pool already exists, top up if needed.
+        while (_sampleVoicePool.Count < target)
+        {
+            var go = new GameObject($"SampleVoice_{_sampleVoicePool.Count + 1}");
+            go.transform.SetParent(this.transform, false);
+
+            var src = go.AddComponent<AudioSource>();
+            src.playOnAwake = false;
+            src.loop = false;
+            src.spatialBlend = 0f;
+            src.volume = 1f;
+
+            _sampleVoicePool.Add(src);
+        }
+    }
+
+    private void ScheduleSampleChop(int chopId, double dspTime, double stepDurSeconds)
+    {
+        if (chopId <= 0 || chopId > 16) return;
+
+        EnsureAppliedChopsLoaded();
+        if (_appliedClip == null) return;
+
+        float s01 = _sliceStart01[chopId - 1];
+        float e01 = _sliceEnd01[chopId - 1];
+        if (e01 <= s01) return;
+
+        EnsureSampleVoices();
+
+        int n = _sampleVoicePool.Count;
+        if (n <= 1) return; // need at least 2 voices if voice 0 is reserved for audition
+        int idx = 1 + (_sampleVoiceCursor++ % (n - 1));
+        var src = _sampleVoicePool[idx];
+        if (src == null) return;
+
+        // Compute slice timing
+        double sliceDur = (e01 - s01) * _appliedClip.length;
+
+        // ✅ PO-style: clamp to step so it doesn't smear across steps
+        double dur = Math.Max(0.01, Math.Min(sliceDur, stepDurSeconds));
+
+        // Compute start sample
+        int startSample = Mathf.Clamp(
+            (int)(s01 * _appliedClip.samples),
+            0,
+            Mathf.Max(0, _appliedClip.samples - 1)
+        );
+
+        // ✅ IMPORTANT ORDER:
+        // Stop first, then set seek, then schedule start/end.
+        src.Stop();
+        src.clip = _appliedClip;
+        src.loop = false;
+        src.timeSamples = startSample;
+
+        // schedule
+        double start = dspTime;
+        double end = start + dur;
+
+        src.PlayScheduled(start);
+        src.SetScheduledEndTime(end);
+
+        if (verbose)
+            Debug.Log($"[Sampler] SCHED chop={chopId} t={start:0.000} dur={dur:0.000} slice={s01:0.000}->{e01:0.000} sliceDur={sliceDur:0.000}");
+    }
+
     private void OnPlayClicked()
     {
         if (_playing) return;
@@ -1008,6 +1165,12 @@ public class KMusicDrumSequencer : MonoBehaviour
         _lastVisualStep = -999;
 
         _playing = true;
+
+        // Sampler: load latest sample grid + applied chops.
+        _didLoadSamplePattern = false;
+        EnsureSamplePatternLoaded();
+        _didLoadAppliedChops = false;
+        EnsureAppliedChopsLoaded();
 
         _playStartDspTime = AudioSettings.dspTime + startDelaySeconds;
         _nextStepDspTime = _playStartDspTime;
@@ -1091,11 +1254,61 @@ public class KMusicDrumSequencer : MonoBehaviour
                 }
             }
 
+            // Sampler chop at this step (if any)
+            int chopId = _sampleChopByStep[step];
+            if (chopId != 0)
+                ScheduleSampleChop(chopId, _nextStepDspTime, stepDur);
+
             _stepIndex = (_stepIndex + 1) % steps;
             _nextStepDspTime += stepDur;
         }
     }
 
+    public void AuditionChop(int chopId)
+    {
+        if (chopId <= 0 || chopId > 16) return;
+
+        EnsureAppliedChopsLoaded();
+        if (_appliedClip == null) return;
+
+        float s01 = _sliceStart01[chopId - 1];
+        float e01 = _sliceEnd01[chopId - 1];
+        if (e01 <= s01) return;
+
+        EnsureSampleVoices();
+
+        // ✅ Use a dedicated voice so sequencer scheduling can’t “fight” the audition
+        // Reserve voice 0 for audition, voices 1..N-1 for sequencer playback
+        var src = _sampleVoicePool.Count > 0 ? _sampleVoicePool[0] : null;
+        if (src == null) return;
+
+        double sliceDur = (e01 - s01) * _appliedClip.length;
+        double dur = Math.Max(0.02, sliceDur);
+
+        int startSample = Mathf.Clamp(
+            (int)(s01 * _appliedClip.samples),
+            0,
+            Mathf.Max(0, _appliedClip.samples - 1)
+        );
+
+        // ✅ Cancel any prior scheduling on this voice
+        src.Stop();
+        src.clip = null;
+
+        // small lead so scheduling is stable
+        double start = AudioSettings.dspTime + 0.01;
+        double end = start + dur;
+
+        src.clip = _appliedClip;
+        src.loop = false;
+        src.timeSamples = startSample;
+
+        src.PlayScheduled(start);
+        src.SetScheduledEndTime(end);
+
+        if (verbose)
+            Debug.Log($"[Sampler] AUDITION chop={chopId} dur={dur:0.000} slice={s01:0.000}->{e01:0.000}");
+    }
     private void UpdateBpmLabel()
     {
         if (_bpmLabel == null) return;

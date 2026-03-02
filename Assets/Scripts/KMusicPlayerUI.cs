@@ -12,6 +12,7 @@ using UnityEngine;
 using UnityEngine.UIElements;
 using UnityEngine.Networking;
 using KMusic.UI;
+using KMusic;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
 using KMusic.Android;
@@ -552,6 +553,11 @@ public class KMusicPlayerUI : MonoBehaviour
         boundaries.AddRange(_chops01);
         boundaries.Add(1f);
         boundaries.Sort();
+
+        // Push the currently configured chops to the Sampler system.
+        // Sampler expects a stable 1..16 mapping.
+        KMusicChopState.SaveApplied($"{resourcesFolder}/{_clip.name}", _chops01);
+
 
         float t01 = Mathf.Clamp01(audioSource.time / _clip.length);
 
