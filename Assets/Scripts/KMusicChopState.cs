@@ -17,14 +17,51 @@ namespace KMusic
         // Runtime cache (device-loaded clips)
         // ----------------------------
         private static AudioClip _cachedClip;
+        private static string _cachedId;
 
-        public static bool TryGetCachedClip(out AudioClip clip)
+        // Bumped any time applied chops are saved/cleared so samplers can refresh.
+        private static int _appliedRevision;
+        public static int AppliedRevision => _appliedRevision;
+
+public static bool TryGetCachedClip(out AudioClip clip)
         {
             clip = _cachedClip;
             return clip != null;
         }
 
-        public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNull, IList<float> markerPositions01)
+        
+
+        public static void SetCachedClip(string id, AudioClip clip)
+        {
+            _cachedId = id;
+            _cachedClip = clip;
+        }
+
+        public static bool TryGetCachedClip(string id, out AudioClip clip)
+        {
+            if (!string.IsNullOrEmpty(id) && id == _cachedId && _cachedClip != null)
+            {
+                clip = _cachedClip;
+                return true;
+            }
+            clip = null;
+            return false;
+        }
+
+        public static void ClearApplied()
+        {
+            if (PlayerPrefs.HasKey(PrefKey_Json))
+            {
+                PlayerPrefs.DeleteKey(PrefKey_Json);
+                PlayerPrefs.Save();
+            }
+
+            _appliedRevision++;
+            // Keep cached clip/id; caller may be mid-session with a device-loaded clip.
+            Debug.Log("[Chops] Cleared applied chops.");
+        }
+
+public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNull, IList<float> markerPositions01)
         {
             string id = !string.IsNullOrEmpty(resourcesPathOrNull)
                 ? resourcesPathOrNull
@@ -37,6 +74,7 @@ namespace KMusic
 
             SaveApplied(id, list);
 
+            _cachedId = id;
             _cachedClip = clip;
         }     
         // Keep keys stable.
@@ -54,13 +92,25 @@ namespace KMusic
         {
             if (string.IsNullOrEmpty(resourcesPath)) return;
 
-            // Boundaries: 0 + markers + 1
-            var boundaries = new List<float>((userMarkers01?.Count ?? 0) + 2) { 0f };
+            // Only use real user markers
+            var boundaries = new List<float>();
+
             if (userMarkers01 != null)
             {
                 for (int i = 0; i < userMarkers01.Count; i++)
-                    boundaries.Add(Mathf.Clamp01(userMarkers01[i]));
+                {
+                    float t = Mathf.Clamp01(userMarkers01[i]);
+
+                    // ignore edges (implicit boundaries)
+                    if (t <= 0.0001f || t >= 0.9999f)
+                        continue;
+
+                    boundaries.Add(t);
+                }
             }
+
+            boundaries.Sort();
+
             boundaries.Add(1f);
             boundaries.Sort();
 
@@ -68,13 +118,18 @@ namespace KMusic
             var starts = new float[16];
             var ends = new float[16];
 
-            int sliceCount = Mathf.Max(1, boundaries.Count - 1);
+            int sliceCount = Mathf.Max(0, boundaries.Count - 1);
             for (int i = 0; i < 16; i++)
             {
-                int a = Mathf.Clamp(i, 0, sliceCount - 1);
-                int b = Mathf.Clamp(i + 1, 1, sliceCount);
-                float s = boundaries[a];
-                float e = boundaries[b];
+                if (i >= sliceCount)
+                {
+                    starts[i] = 0f;
+                    ends[i] = 0f;
+                    continue;
+                }
+
+                float s = boundaries[i];
+                float e = boundaries[i + 1];
 
                 // If we ran out of real slices, just make the remainder silent (0..0).
                 if (i >= sliceCount)
@@ -96,6 +151,8 @@ namespace KMusic
 
             PlayerPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));
             PlayerPrefs.Save();
+
+            _appliedRevision++;
 
             Debug.Log($"[Chops] Saved applied chops for '{resourcesPath}'.");
         }

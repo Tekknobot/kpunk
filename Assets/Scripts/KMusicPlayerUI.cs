@@ -61,7 +61,24 @@ public class KMusicPlayerUI : MonoBehaviour
     private bool _deviceReady = false;
 #endif
 
-    private void Awake()
+    
+    private const string PrefKey_LastTrack = "kmusic.player.lastTrack.v1";
+
+    private static void SaveLastTrackId(string id)
+    {
+        if (string.IsNullOrEmpty(id))
+            return;
+
+        PlayerPrefs.SetString(PrefKey_LastTrack, id);
+        PlayerPrefs.Save();
+    }
+
+    private static string LoadLastTrackId()
+    {
+        return PlayerPrefs.GetString(PrefKey_LastTrack, "");
+    }
+
+private void Awake()
     {
         if (!doc) doc = GetComponent<UIDocument>();
         EnsureDedicatedPlayerAudioSource();
@@ -191,7 +208,20 @@ public class KMusicPlayerUI : MonoBehaviour
                 _deviceTrackIndex = (_deviceTracks.Length > 0) ? 0 : -1;
                 _deviceReady = ok;
 
-                if (_deviceTracks.Length > 0) LoadDeviceTrackByIndex(0);
+                if (_deviceTracks.Length > 0)
+                {
+                    int idx = 0;
+                    var last = LoadLastTrackId();
+                    if (!string.IsNullOrEmpty(last) && last.StartsWith("uri:"))
+                    {
+                        string want = last.Substring(4);
+                        for (int i = 0; i < _deviceTracks.Length; i++)
+                        {
+                            if (_deviceTracks[i] != null && _deviceTracks[i].uri == want) { idx = i; break; }
+                        }
+                    }
+                    LoadDeviceTrackByIndex(idx);
+                }
                 else
                 {
                     UpdateTrackTitle(
@@ -208,7 +238,22 @@ public class KMusicPlayerUI : MonoBehaviour
         }
 #endif
         RefreshClipList();
-        if (_clips.Length > 0 && _clip == null) LoadClipByIndex(0);
+        if (_clips.Length > 0 && _clip == null)
+        {
+            int idx = 0;
+            var last = LoadLastTrackId();
+            if (!string.IsNullOrEmpty(last) && last.StartsWith("res:"))
+            {
+                string wantPath = last.Substring(4);
+                // wantPath is like "Tracks/MySong"
+                string wantName = wantPath.Contains("/") ? wantPath.Substring(wantPath.LastIndexOf('/') + 1) : wantPath;
+                for (int i = 0; i < _clips.Length; i++)
+                {
+                    if (_clips[i] != null && _clips[i].name == wantName) { idx = i; break; }
+                }
+            }
+            LoadClipByIndex(idx);
+        }
         else if (_clips.Length == 0) UpdateTrackTitle("NO TRACKS");
     }
 
@@ -278,6 +323,12 @@ public class KMusicPlayerUI : MonoBehaviour
         _clip = _clips[_clipIndex];
         _clipResourcesPath = _clip != null ? ($"{resourcesFolder}/" + _clip.name) : null;
 
+        // Save last track + cache clip for chop application.
+        if (!string.IsNullOrEmpty(_clipResourcesPath))
+        {
+            SaveLastTrackId("res:" + _clipResourcesPath);
+            KMusicChopState.SetCachedClip(_clipResourcesPath, _clip);
+        }
         if (_clip == null) return;
 
         audioSource.Stop();
@@ -337,8 +388,13 @@ public class KMusicPlayerUI : MonoBehaviour
         if (loaded == null) yield break;
 
         _clip = loaded;
-        _clipResourcesPath = null;
+        _clipResourcesPath = !string.IsNullOrEmpty(t.uri) ? ("uri:" + t.uri) : null;
 
+        if (!string.IsNullOrEmpty(_clipResourcesPath))
+        {
+            SaveLastTrackId(_clipResourcesPath);
+            KMusicChopState.SetCachedClip(_clipResourcesPath, _clip);
+        }
         audioSource.Stop();
         audioSource.clip = _clip;
         audioSource.time = 0f;
@@ -611,6 +667,10 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         _chops01.Clear();
         SyncMarkersToWave();
+
+        // Also clear any applied chop set used by the sampler.
+        KMusicChopState.ClearApplied();
+
         UpdateTrackTitle("MARKERS RESET");
     }
 

@@ -15,7 +15,8 @@ namespace KMusic.UI
         private int _peakCount;
 
         private readonly List<float> _markers01 = new();
-        private float _playhead01 = 0f;
+        // -1 means "hidden". (So we don't draw a confusing default line at t=0.)
+        private float _playhead01 = -1f;
 
         public Color WaveColor = new(0.90f, 0.92f, 0.95f, 1f);
         public Color MarkerColor = new(0.42f, 0.89f, 1f, 1f);
@@ -71,9 +72,13 @@ namespace KMusic.UI
             RegisterCallback<WheelEvent>(OnWheel);
         }
 
+        /// <summary>
+        /// Set playhead position in absolute normalized timeline [0..1].
+        /// Pass a negative value (e.g. -1) to hide the playhead.
+        /// </summary>
         public void SetPlayhead01(float t01)
         {
-            _playhead01 = Mathf.Clamp01(t01);
+            _playhead01 = (t01 < 0f) ? -1f : Mathf.Clamp01(t01);
             MarkDirtyRepaint();
         }
 
@@ -83,7 +88,13 @@ namespace KMusic.UI
             if (markers01 != null)
             {
                 foreach (var m in markers01)
-                    _markers01.Add(Mathf.Clamp01(m));
+                {
+                    // 0 and 1 are implied boundaries for chops; don't draw them as "user markers".
+                    float t = Mathf.Clamp01(m);
+                    if (t <= 0.0005f) continue;
+                    if (t >= 0.9995f) continue;
+                    _markers01.Add(t);
+                }
             }
             _markers01.Sort();
             MarkDirtyRepaint();
@@ -199,7 +210,8 @@ namespace KMusic.UI
                 }
             }
 
-            // Playhead (only draw if inside window; otherwise clamp to edge for “where am I”)
+            // Playhead (hidden when _playhead01 < 0)
+            if (_playhead01 >= 0f)
             {
                 painter.lineWidth = 2.5f;
                 painter.strokeColor = PlayheadColor;

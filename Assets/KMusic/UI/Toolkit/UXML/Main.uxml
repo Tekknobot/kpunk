@@ -229,7 +229,7 @@
 
             <!-- MAIN CHOP CONTROLS -->
             <ui:VisualElement class="chop-row-main">
-                <ui:Button name="ChopToggle" class="chop-btn chop-btn-primary" text="CHOP"/>
+                <ui:Button name="ChopToggle" class="chop-btn chop-btn-primary" text="CHOP MODE"/>
 
                 <ui:Button name="Auto4" class="chop-btn chop-btn-div" text="4"/>
                 <ui:Button name="Auto8" class="chop-btn chop-btn-div" text="8"/>

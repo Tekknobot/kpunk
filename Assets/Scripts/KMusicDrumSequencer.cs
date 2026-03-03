@@ -178,7 +178,10 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private bool _didLoadSamplePattern = false;
     private bool _didLoadAppliedChops = false;
-    private string _appliedResourcesPath = null;
+    
+    // Tracks whether applied chops changed since last load
+    private int _appliedRevisionSeen = -1;
+private string _appliedResourcesPath = null;
     private AudioClip _appliedClip = null;
     private float[] _sliceStart01 = new float[16];
     private float[] _sliceEnd01 = new float[16];
@@ -1081,13 +1084,14 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private void EnsureAppliedChopsLoaded()
     {
-        if (_didLoadAppliedChops) return;
-
-        if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
+        int rev = KMusicChopState.AppliedRevision;
+        if (_didLoadAppliedChops && _appliedRevisionSeen == rev) return;
+if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         {
             _appliedResourcesPath = null;
             _appliedClip = null;
             _didLoadAppliedChops = true;
+            _appliedRevisionSeen = rev;
             return;
         }
 
@@ -1103,8 +1107,10 @@ public class KMusicDrumSequencer : MonoBehaviour
         // If Resources failed (Android device track), fall back to runtime cached clip
         if (_appliedClip == null)
         {
-            if (KMusicChopState.TryGetCachedClip(out var cached))
-                _appliedClip = cached;
+            if (KMusicChopState.TryGetCachedClip(resPath, out var cachedForId))
+                _appliedClip = cachedForId;
+            else if (KMusicChopState.TryGetCachedClip(out var cachedAny))
+                _appliedClip = cachedAny;
         }
 
         if (_appliedClip == null)
@@ -1125,6 +1131,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         Debug.Log($"[Sampler] Loaded applied chops for '{resPath}' (clip={( _appliedClip != null ? _appliedClip.name : "null")}).");
 
         _didLoadAppliedChops = true;
+        _appliedRevisionSeen = rev;
     }
 
     private void EnsureSampleVoices()
@@ -1162,8 +1169,9 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         EnsureSampleVoices();
 
-        // ✅ monophonic sequencer voice: always use voice 1
-        var src = (_sampleVoicePool.Count > 1) ? _sampleVoicePool[1] : null;
+        // ✅ sequencer voice: always use voice 0.
+        // (Using index 1 breaks when sampleVoices==1 on Android: pool.Count==1 => NULL => no playback.)
+        var src = (_sampleVoicePool.Count > 0) ? _sampleVoicePool[0] : null;
         if (src == null) return;
 
         // Compute slice timing
@@ -1204,6 +1212,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         _playBpm = GetBpm();
         _stepDur = 60.0 / Math.Max(1.0, _playBpm) / 4.0; // 16th
         _nextStepNumber = 0;
+        _stepIndex = 0; // ✅ reset so audio + visuals start on step 0
         _lastVisualStep = -999;
 
         _playing = true;
@@ -1236,6 +1245,9 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (!_playing) return;
 
         _playing = false;
+
+        _stepIndex = 0;
+        _lastPlayhead = -1;
 
         if (_clock != null)
             _clock.pause = true;
