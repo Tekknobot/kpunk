@@ -76,7 +76,9 @@ namespace KMusic
                 id.StartsWith("mix.") ||
                 id.StartsWith("drum.") ||
                 id.StartsWith("sampler.") ||
-                id.StartsWith("mutes.")
+                id.StartsWith("mutes.") ||
+                id == "tempo" ||
+                id == "sample.master"
             );
         }
 
@@ -168,7 +170,9 @@ namespace KMusic
             id.StartsWith("mix.") ||
             id.StartsWith("drum.") ||
             id.StartsWith("sampler.") ||
-            id.StartsWith("mutes.")
+            id.StartsWith("mutes.") ||
+            id == "tempo" ||
+            id == "sample.master"
         );
 
         // Unhook event handler (prevents duplicate notifications later)
@@ -186,7 +190,9 @@ namespace KMusic
             id.StartsWith("mix.") ||
             id.StartsWith("drum.") ||
             id.StartsWith("sampler.") ||
-            id.StartsWith("mutes.")
+            id.StartsWith("mutes.") ||
+            id == "tempo" ||
+            id == "sample.master"
         );
     }
 
@@ -196,7 +202,9 @@ namespace KMusic
             id.StartsWith("mix.") ||
             id.StartsWith("drum.") ||
             id.StartsWith("sampler.") ||
-            id.StartsWith("mutes.")
+            id.StartsWith("mutes.") ||
+            id == "tempo" ||
+            id == "sample.master"
         );
     }
 

@@ -48,6 +48,40 @@ namespace KMusic
             public string display;   // nice name
         }
 
+        private const string PrefKey_SynthPresetRelPath = "kmusic.synth.preset.relpath.v1";
+        private const string PrefKey_SynthPresetIndex = "kmusic.synth.preset.index.v1";
+
+        private void SaveCurrentPresetChoice()
+        {
+            if (_all == null || _all.Count == 0) return;
+
+            PlayerPrefs.SetInt(PrefKey_SynthPresetIndex, _index);
+            PlayerPrefs.SetString(PrefKey_SynthPresetRelPath, _all[_index].relPath ?? "");
+            PlayerPrefs.Save();
+        }
+
+        private void RestorePresetChoice()
+        {
+            if (_all == null || _all.Count == 0) return;
+
+            // Prefer relPath (stable if index file changes order)
+            string want = PlayerPrefs.GetString(PrefKey_SynthPresetRelPath, "");
+            if (!string.IsNullOrEmpty(want))
+            {
+                for (int i = 0; i < _all.Count; i++)
+                {
+                    if (string.Equals(_all[i].relPath, want, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _index = i;
+                        return;
+                    }
+                }
+            }
+
+            // Fallback to index
+            _index = Mathf.Clamp(PlayerPrefs.GetInt(PrefKey_SynthPresetIndex, 0), 0, _all.Count - 1);
+        }
+
         private void OnEnable()
         {
             if (doc == null) doc = GetComponent<UIDocument>();
@@ -158,6 +192,9 @@ namespace KMusic
                 yield break;
             }
 
+            // ✅ NOW restore last saved preset
+            RestorePresetChoice();
+
             // keep index if component re-enabled
             _index = Mathf.Clamp(_index, 0, _all.Count - 1);
 
@@ -172,6 +209,7 @@ namespace KMusic
             if (_all.Count == 0) return;
             _index = (_index - 1 + _all.Count) % _all.Count;
             UpdatePatchUI();
+            SaveCurrentPresetChoice();
             StartCoroutine(LoadAndApplyPreset(_all[_index].relPath));
         }
 
@@ -180,6 +218,7 @@ namespace KMusic
             if (_all.Count == 0) return;
             _index = (_index + 1) % _all.Count;
             UpdatePatchUI();
+            SaveCurrentPresetChoice();
             StartCoroutine(LoadAndApplyPreset(_all[_index].relPath));
         }
 

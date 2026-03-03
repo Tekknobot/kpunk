@@ -750,8 +750,9 @@ private string _appliedResourcesPath = null;
                 _stepMask[i] = 0;
         }
     }
+    
+    
     // ---------------- END SAVE/LOAD (PATCHED) ----------------
-
     private void OnApplicationPause(bool pause)
     {
         if (pause) SaveDrumState();
@@ -1268,9 +1269,22 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         float bpm = GetBpm();
         if (_clock != null) _clock.bpm = bpm;
 
-        double stepDur = _stepDur; // ✅ lock to play-start step duration for alignment
+        // ✅ realtime BPM: recompute step duration from current bpm
+        double stepDurLive = 60.0 / Math.Max(1.0, (double)bpm) / 4.0; // 16th note
+
         double now = AudioSettings.dspTime;
         double windowEnd = now + lookaheadSeconds;
+
+        // ✅ if tempo changed, apply immediately by re-anchoring next step
+        // (prevents “must stop/play”)
+        if (Math.Abs(stepDurLive - _stepDur) > 0.000001)
+        {
+            _stepDur = stepDurLive;
+            _nextStepDspTime = now + _stepDur;
+        }
+
+        // Use the actual step duration we’re scheduling with
+        double stepDur = _stepDur;
 
         UpdateVisualPlayhead(now, stepDur);
         UpdateBpmLabel();
@@ -1319,7 +1333,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
 
         ApplySampleMasterVolume();
     }
-
+    
     private int _auditionToken = 0;
 
     public void AuditionChop(int chopId)

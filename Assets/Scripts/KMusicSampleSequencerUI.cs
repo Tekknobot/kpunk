@@ -8,6 +8,14 @@ public class KMusicSampleSequencerUI : MonoBehaviour
 {
     private const string PrefKey_SampleStepGrid = "kmusic.sample.stepgrid";
 
+    // ---------------- BPM / Chop volume persistence ----------------
+    private const string PrefKey_Bpm = "kmusic.bpm.v1";
+    private const string PrefKey_ChopVol = "kmusic.chopvol.v1";
+
+    // runtime cached values (fallback if ParameterBus tempo not present)
+    private float _savedBpmFallback = -1f;
+    private float _savedChopVolume = -1f;
+
     [SerializeField] private UIDocument doc;
 
     private StepGrid sampleGrid;
