@@ -526,7 +526,14 @@ private void Awake()
 
         // avoid duplicates (within ~0.5% of timeline)
         for (int i = 0; i < _chops01.Count; i++)
-            if (Mathf.Abs(_chops01[i] - t01) < 0.005f) return;
+            if (_snapEnabled)
+            {
+                float minSliceSeconds = 0.05f;
+                float minSlice01 = minSliceSeconds / _clip.length;
+
+                if (Mathf.Abs(_chops01[i] - t01) < minSlice01)
+                    return;
+            }
 
         // keep away from boundaries since 0 and 1 are implied
         if (t01 < 0.01f) t01 = 0.01f;
@@ -539,6 +546,8 @@ private void Awake()
         _scrub01 = t01;
 
         UpdateTrackTitle($"MARKER + {t01:0.000}");
+
+        Debug.Log($"ADD marker t01={t01:0.000} snap={_snapEnabled} div={_snapDiv}");
     }
 
     private void DeleteNearestMarkerTo01(float t01)
