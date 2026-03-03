@@ -143,6 +143,9 @@ public class KMusicChainUI : MonoBehaviour
             var b = new Button();
             b.AddToClassList("km-chain-bar");
             b.text = FormatBarText(barIndex);
+            
+            b.style.fontSize = 32; // or new StyleLength(32) if needed
+
             b.clicked += () =>
             {
                 _chain.cursor = barIndex;

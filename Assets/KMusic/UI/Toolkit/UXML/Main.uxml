@@ -430,7 +430,7 @@
         </ui:VisualElement>
 
         <!-- Chain grid -->
-        <ui:VisualElement class="km-card">
+        <ui:VisualElement name="ChainBarsCard" class="km-card">
           <ui:VisualElement class="km-row" style="align-items:center; justify-content:space-between;">
             <ui:Label class="km-subtitle" text="BARS"/>
             <ui:VisualElement class="km-row" style="align-items:center;">
@@ -441,7 +441,7 @@
             </ui:VisualElement>
           </ui:VisualElement>
 
-          <ui:ScrollView name="ChainScroll" class="km-chain-scroll" style="margin-top:12px; height:360px;">
+          <ui:ScrollView name="ChainScroll" class="km-chain-scroll" style="margin-top:12px; height:1200px;">
             <ui:VisualElement name="ChainBars" class="km-chain-bars" />
           </ui:ScrollView>
         </ui:VisualElement>

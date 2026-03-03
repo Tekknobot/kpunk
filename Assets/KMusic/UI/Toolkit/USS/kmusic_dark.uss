@@ -145,6 +145,11 @@
   height: auto
 }
 
+#ChainBarsCard {
+  height: 1600px;        /* whatever */
+  /* or */
+  min-height: 720px;
+}
 
 /* --- SYNTH: per-card sizing --- */
 /* Use names from UXML: CardMaster, CardOsc, CardFilter, CardMod */
@@ -244,52 +249,59 @@
    ---------------------------- */
 
 .km-pillbtn--chain {
-  width: 104px;
-  height: 48px;
-  margin-left: 10px;
-  border-radius: 16px;
-  background-color: #626c8b;
+width: 144px;
+height: 72px;
+margin-left: 12px;
+border-radius: 20px;
+background-color: #626c8b;
+border-width: 2px;
+border-color: var(--border);
+justify-content: center;
+align-items: center;
 }
 
 .km-pillbtn--chain > .unity-text-element {
-  font-size: 20px;
+font-size: 24px;
+-unity-font-style: bold;
+color: var(--text);
 }
 
 .km-chain-pattern {
-  color: var(--text);
-  font-size: 28px;
-  -unity-font-style: bold;
+color: var(--text);
+font-size: 34px;
+-unity-font-style: bold;
 }
 
 .km-muted {
-  color: var(--muted);
-  font-size: 20px;
+color: var(--muted);
+font-size: 24px;
 }
 
 .km-chain-scroll {
-  border-radius: var(--radius-md);
-  border-width: 2px;
-  border-color: var(--border);
-  background-color: #13161E;
-  padding: 10px;
+border-radius: var(--radius-md);
+border-width: 2px;
+border-color: var(--border);
+background-color: #13161E;
+padding: 16px;
 }
 
 .km-chain-bars {
-  flex-direction: row;
-  flex-wrap: wrap;
+flex-direction: row;
+flex-wrap: wrap;
+gap: 14px;
 }
 
 .km-chain-bar {
-  width: 120px;
-  height: 56px;
-  margin-right: 10px;
-  margin-bottom: 10px;
-  border-radius: 16px;
-  border-width: 2px;
-  border-color: var(--border);
-  background-color: #636f91;
-  justify-content: center;
-  align-items: center;
+width: 168px;
+height: 88px;
+margin-right: 0px;
+margin-bottom: 0px;
+border-radius: 22px;
+border-width: 2px;
+border-color: var(--border);
+background-color: #636f91;
+justify-content: center;
+align-items: center;
 }
 
 .km-chain-bar.is-cursor {
@@ -302,9 +314,10 @@
 }
 
 .km-chain-bar > .unity-text-element {
-  color: var(--text);
-  font-size: 18px;
-  -unity-font-style: bold;
+color: var(--text);
+font-size: 24px;
+-unity-font-style: bold;
+unity-text-align: middle-center;
 }
 
 .km-seq-grid {
