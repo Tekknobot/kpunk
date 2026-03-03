@@ -29,6 +29,9 @@ public class KMusicSampleSequencerUI : MonoBehaviour
 
     private IVisualElementScheduledItem _rebindLoop;
 
+    // CHAIN support: suppress writes while importing patterns
+    private bool _allowSaving = true;
+
     private void Awake()
     {
         Debug.Log("[KMusicSampleSequencerUI] Awake fired");
@@ -101,8 +104,35 @@ public class KMusicSampleSequencerUI : MonoBehaviour
 
     private void SavePattern()
     {
+        if (!_allowSaving) return;
         if (sampleGrid == null) return;
         KMusic.KMusicSaveState.SaveIntArray(PrefKey_SampleStepGrid, sampleGrid.ExportValuesFlat());
+    }
+
+    // ----------------------------
+    // CHAIN helpers
+    // ----------------------------
+
+    public void SetAllowSaving(bool on) => _allowSaving = on;
+
+    public int[] CaptureSampleStepsFlat()
+    {
+        if (sampleGrid == null) return null;
+        return sampleGrid.ExportValuesFlat();
+    }
+
+    public void ApplySampleStepsFlat(int[] flat)
+    {
+        if (sampleGrid == null) return;
+        if (flat == null || flat.Length != sampleGrid.RowCount * sampleGrid.ColCount)
+        {
+            sampleGrid.ClearAll();
+            ForceGridRefresh(sampleGrid);
+            return;
+        }
+
+        sampleGrid.ImportValuesFlat(flat, fireEvent: false);
+        ForceGridRefresh(sampleGrid);
     }
 
     private void CacheChopButtons(VisualElement root)

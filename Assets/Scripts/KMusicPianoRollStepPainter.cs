@@ -39,6 +39,9 @@ namespace KMusic.UI
 
         private HelmController _helm;
 
+        // CHAIN support: suppress writes while importing patterns
+        private bool _allowSaving = true;
+
         // valueId -> label/color
         private readonly Dictionary<int, string> _labelByValue = new();
         private readonly Dictionary<int, Color> _colorByValue = new();
@@ -389,6 +392,7 @@ namespace KMusic.UI
 
         private void SaveStepGrid()
         {
+            if (!_allowSaving) return;
             if (_step == null) return;
             KMusic.KMusicSaveState.SaveIntArray(PrefKey_SeqStepGrid, _step.ExportValuesFlat());
         }
@@ -436,6 +440,40 @@ namespace KMusic.UI
             }
 
             return Color.white;
+        }
+
+        // ----------------------------
+        // CHAIN helpers
+        // ----------------------------
+
+        public void SetAllowSaving(bool on) => _allowSaving = on;
+
+        public int[] CaptureSeqStepsFlat()
+        {
+            if (_step == null) return null;
+            return _step.ExportValuesFlat();
+        }
+
+        public void ApplySeqStepsFlat(int[] flat)
+        {
+            if (_step == null) return;
+            if (flat == null || flat.Length != _step.RowCount * _step.ColCount)
+            {
+                _step.ClearAll();
+                _step.RefreshAll();
+                return;
+            }
+
+            _step.ImportValuesFlat(flat, fireEvent: false);
+            _step.RefreshAll();
+        }
+
+        public void RebuildSynthSequenceNow()
+        {
+            if (helmSequencer == null) return;
+            RebuildHelmSequenceFromGrid();
+            helmSequencer.enabled = false;
+            helmSequencer.enabled = true;
         }
     }
 }

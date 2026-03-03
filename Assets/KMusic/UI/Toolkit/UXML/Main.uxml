@@ -400,11 +400,52 @@
         </ui:VisualElement>
       </ui:VisualElement>
 
-      <!-- FX (stub for now) -->
+      <!-- CHAIN / SONG MODE -->
       <ui:VisualElement name="PageFx" style="display:none; flex-direction:column;">
+
+        <!-- Pattern controls -->
         <ui:VisualElement class="km-card">
-          <ui:Label class="km-subtitle" text="FX"/>
+          <ui:VisualElement class="km-row" style="align-items:center; justify-content:space-between;">
+            <ui:Label class="km-subtitle" text="CHAIN"/>
+            <ui:Toggle name="ChainEnabledToggle" text="Song Mode" />
+          </ui:VisualElement>
+
+          <ui:VisualElement class="km-row" style="margin-top:12px; align-items:center;">
+            <ui:Label class="km-label" text="PATTERN" style="margin-right:12px;" />
+            <ui:Label name="ChainPatternLabel" class="km-chain-pattern" text="P01" />
+
+            <ui:VisualElement style="flex-grow:1;" />
+
+            <ui:Button name="ChainNewPatternButton" class="km-pillbtn km-pillbtn--chain" text="NEW" />
+            <ui:Button name="ChainSavePatternButton" class="km-pillbtn km-pillbtn--chain" text="SAVE" />
+            <ui:Button name="ChainDupPatternButton" class="km-pillbtn km-pillbtn--chain" text="DUP" />
+          </ui:VisualElement>
+
+          <ui:VisualElement class="km-row" style="margin-top:12px; align-items:center;">
+            <ui:Button name="ChainPlaceHereButton" class="km-pillbtn km-pillbtn--chain" text="PLACE" />
+            <ui:Button name="ChainDupNextButton" class="km-pillbtn km-pillbtn--chain" text="DUP+NEXT" style="width:140px;" />
+            <ui:Label name="ChainStatusLabel" class="km-muted" text="" style="margin-left:12px;" />
+          </ui:VisualElement>
+
         </ui:VisualElement>
+
+        <!-- Chain grid -->
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items:center; justify-content:space-between;">
+            <ui:Label class="km-subtitle" text="BARS"/>
+            <ui:VisualElement class="km-row" style="align-items:center;">
+              <ui:Button name="ChainClearButton" class="km-pillbtn km-pillbtn--chain" text="CLEAR" />
+              <ui:Button name="ChainLen16Button" class="km-pillbtn km-pillbtn--chain" text="16" />
+              <ui:Button name="ChainLen32Button" class="km-pillbtn km-pillbtn--chain" text="32" />
+              <ui:Button name="ChainLen64Button" class="km-pillbtn km-pillbtn--chain" text="64" />
+            </ui:VisualElement>
+          </ui:VisualElement>
+
+          <ui:ScrollView name="ChainScroll" class="km-chain-scroll" style="margin-top:12px; height:360px;">
+            <ui:VisualElement name="ChainBars" class="km-chain-bars" />
+          </ui:ScrollView>
+        </ui:VisualElement>
+
       </ui:VisualElement>
 
     </ui:VisualElement>

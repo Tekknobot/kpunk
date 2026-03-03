@@ -131,6 +131,11 @@ public class KMusicDrumSequencer : MonoBehaviour
     public string btnCrash = "DrumCrash";
 
     public int CurrentStepIndex => _stepIndex;
+    /// <summary>
+    /// Fired right before scheduling step 0 of each bar (quantized hook for CHAIN).
+    /// The int parameter is a 1-based bar counter.
+    /// </summary>
+    public event Action<int> OnBarStart;
     public bool IsPlaying => _playing;
 
     [Header("Timing")]
@@ -214,6 +219,7 @@ private string _appliedResourcesPath = null;
     private float _playBpm = -1f;          // cached bpm at Play
     private double _stepDur = 0.0;         // cached seconds per 16th note
     private int _stepIndex = 0; // 0..15
+    private int _barCounter = 0;
     private double _nextStepDspTime = 0.0;
     private double _playStartDspTime = 0.0;
     private int _lastVisualStep = -999;
@@ -1215,6 +1221,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         _nextStepNumber = 0;
         _stepIndex = 0; // ✅ reset so audio + visuals start on step 0
         _lastVisualStep = -999;
+        _barCounter = 0;
 
         _playing = true;
 
@@ -1292,6 +1299,14 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         while (_nextStepDspTime < windowEnd)
         {
             int step = _stepIndex;
+
+            // Quantized bar boundary (before reading masks for step 0)
+            if (step == 0)
+            {
+                _barCounter++;
+                try { OnBarStart?.Invoke(_barCounter); } catch { }
+            }
+
             byte mask = _stepMask[step];
 
             if (mask != 0)
@@ -1332,6 +1347,60 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         }
 
         ApplySampleMasterVolume();
+    }
+
+    // ----------------------------
+    // CHAIN support helpers
+    // ----------------------------
+
+    public void SetAllowSaving(bool on)
+    {
+        _allowSaving = on;
+    }
+
+    public byte[] CaptureDrumMask()
+    {
+        var b = new byte[steps];
+        if (_stepMask != null)
+            Array.Copy(_stepMask, b, Mathf.Min(_stepMask.Length, b.Length));
+        return b;
+    }
+
+    public void ApplyDrumMask(byte[] mask)
+    {
+        if (_stepMask == null || _stepMask.Length != steps)
+            _stepMask = new byte[steps];
+
+        if (mask == null)
+        {
+            Array.Clear(_stepMask, 0, _stepMask.Length);
+        }
+        else
+        {
+            Array.Clear(_stepMask, 0, _stepMask.Length);
+            Array.Copy(mask, _stepMask, Mathf.Min(mask.Length, _stepMask.Length));
+        }
+
+        // refresh visible grid if present
+        try { RefreshGridView(); } catch { }
+    }
+
+    public int[] CaptureSampleStepsFlat()
+    {
+        var v = new int[steps];
+        if (_sampleChopByStep != null)
+            Array.Copy(_sampleChopByStep, v, Mathf.Min(_sampleChopByStep.Length, v.Length));
+        return v;
+    }
+
+    public void ApplySampleStepsFlat(int[] flat)
+    {
+        if (_sampleChopByStep == null || _sampleChopByStep.Length != steps)
+            _sampleChopByStep = new int[steps];
+
+        Array.Clear(_sampleChopByStep, 0, _sampleChopByStep.Length);
+        if (flat != null)
+            Array.Copy(flat, _sampleChopByStep, Mathf.Min(flat.Length, _sampleChopByStep.Length));
     }
     
     private int _auditionToken = 0;

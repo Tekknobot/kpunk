@@ -71,6 +71,10 @@ namespace KMusic
             }
             BuildParameters();
 
+            // Ensure CHAIN controller exists (safe to add at runtime)
+            if (GetComponent<global::KMusicChainUI>() == null)
+                gameObject.AddComponent<global::KMusicChainUI>();
+
             // Load saved mixer/fader values after defaults exist.
             KMusicSaveState.LoadBus(_bus, PrefKey_Bus, id =>
                 id.StartsWith("mix.") ||

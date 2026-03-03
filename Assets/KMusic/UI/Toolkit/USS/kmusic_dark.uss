@@ -239,6 +239,74 @@
   font-size: 24px;
 }
 
+/* ----------------------------
+   CHAIN / SONG MODE
+   ---------------------------- */
+
+.km-pillbtn--chain {
+  width: 104px;
+  height: 48px;
+  margin-left: 10px;
+  border-radius: 16px;
+  background-color: #626c8b;
+}
+
+.km-pillbtn--chain > .unity-text-element {
+  font-size: 20px;
+}
+
+.km-chain-pattern {
+  color: var(--text);
+  font-size: 28px;
+  -unity-font-style: bold;
+}
+
+.km-muted {
+  color: var(--muted);
+  font-size: 20px;
+}
+
+.km-chain-scroll {
+  border-radius: var(--radius-md);
+  border-width: 2px;
+  border-color: var(--border);
+  background-color: #13161E;
+  padding: 10px;
+}
+
+.km-chain-bars {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.km-chain-bar {
+  width: 120px;
+  height: 56px;
+  margin-right: 10px;
+  margin-bottom: 10px;
+  border-radius: 16px;
+  border-width: 2px;
+  border-color: var(--border);
+  background-color: #636f91;
+  justify-content: center;
+  align-items: center;
+}
+
+.km-chain-bar.is-cursor {
+  border-color: var(--accent2);
+}
+
+.km-chain-bar.is-playing {
+  border-color: var(--accent);
+  background-color: #202532;
+}
+
+.km-chain-bar > .unity-text-element {
+  color: var(--text);
+  font-size: 18px;
+  -unity-font-style: bold;
+}
+
 .km-seq-grid {
   margin-top: 12px;
   flex-direction: column;
