@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
 using AudioHelm;
+using KMusic.Core;
 
 namespace KMusic.UI
 {
@@ -405,7 +406,7 @@ namespace KMusic.UI
             _step.ImportValuesFlat(v, fireEvent: false);
             _step.RefreshAll();
 
-            Debug.Log($"LOAD {PrefKey_SeqStepGrid} hasKey={PlayerPrefs.HasKey(PrefKey_SeqStepGrid)}");
+            Debug.Log($"LOAD {PrefKey_SeqStepGrid} hasKey={ProjectPrefs.HasKey(PrefKey_SeqStepGrid)}");
         }
 
         private void CacheValue(int valueId, string label, Color color)

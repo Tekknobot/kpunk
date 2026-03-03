@@ -7,6 +7,7 @@ using System.IO;
 using UnityEngine;
 using UnityEngine.UIElements;
 using AudioHelm;
+using KMusic.Core;
 
 namespace KMusic
 {
@@ -60,7 +61,7 @@ namespace KMusic
             {
                 if (_all != null && _all.Count > 0 && _index >= 0 && _index < _all.Count)
                     return _all[_index].relPath;
-                return PlayerPrefs.GetString(PrefKey_SynthPresetRelPath, "");
+                return ProjectPrefs.GetString(PrefKey_SynthPresetRelPath, "");
             }
         }
 
@@ -71,9 +72,9 @@ namespace KMusic
         {
             if (_all == null || _all.Count == 0) return;
 
-            PlayerPrefs.SetInt(PrefKey_SynthPresetIndex, _index);
-            PlayerPrefs.SetString(PrefKey_SynthPresetRelPath, _all[_index].relPath ?? "");
-            PlayerPrefs.Save();
+            ProjectPrefs.SetInt(PrefKey_SynthPresetIndex, _index);
+            ProjectPrefs.SetString(PrefKey_SynthPresetRelPath, _all[_index].relPath ?? "");
+            ProjectPrefs.Save();
         }
 
         private void RestorePresetChoice()
@@ -81,7 +82,7 @@ namespace KMusic
             if (_all == null || _all.Count == 0) return;
 
             // Prefer relPath (stable if index file changes order)
-            string want = PlayerPrefs.GetString(PrefKey_SynthPresetRelPath, "");
+            string want = ProjectPrefs.GetString(PrefKey_SynthPresetRelPath, "");
             if (!string.IsNullOrEmpty(want))
             {
                 for (int i = 0; i < _all.Count; i++)
@@ -95,7 +96,7 @@ namespace KMusic
             }
 
             // Fallback to index
-            _index = Mathf.Clamp(PlayerPrefs.GetInt(PrefKey_SynthPresetIndex, 0), 0, _all.Count - 1);
+            _index = Mathf.Clamp(ProjectPrefs.GetInt(PrefKey_SynthPresetIndex, 0), 0, _all.Count - 1);
         }
 
         private void OnEnable()

@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using KMusic.Core;
 
 namespace KMusic.Core
 {
@@ -50,11 +51,11 @@ namespace KMusic.Core
         {
             try
             {
-                PlayerPrefs.SetInt(Key_ChainLen, Mathf.Clamp(length, 1, 64));
-                PlayerPrefs.SetInt(Key_ChainCursor, Mathf.Clamp(cursor, 0, 63));
-                PlayerPrefs.SetInt(Key_ChainEnabled, enabled ? 1 : 0);
-                PlayerPrefs.SetString(Key_ChainSlots, JsonUtility.ToJson(new IntArraySave { v = slots }));
-                PlayerPrefs.Save();
+                ProjectPrefs.SetInt(Key_ChainLen, Mathf.Clamp(length, 1, 64));
+                ProjectPrefs.SetInt(Key_ChainCursor, Mathf.Clamp(cursor, 0, 63));
+                ProjectPrefs.SetInt(Key_ChainEnabled, enabled ? 1 : 0);
+                ProjectPrefs.SetString(Key_ChainSlots, JsonUtility.ToJson(new IntArraySave { v = slots }));
+                ProjectPrefs.Save();
             }
             catch
             {
@@ -67,13 +68,13 @@ namespace KMusic.Core
             var s = new ChainState();
             try
             {
-                s.length = Mathf.Clamp(PlayerPrefs.GetInt(Key_ChainLen, 32), 1, 64);
-                s.cursor = Mathf.Clamp(PlayerPrefs.GetInt(Key_ChainCursor, 0), 0, 63);
-                s.enabled = PlayerPrefs.GetInt(Key_ChainEnabled, 0) != 0;
+                s.length = Mathf.Clamp(ProjectPrefs.GetInt(Key_ChainLen, 32), 1, 64);
+                s.cursor = Mathf.Clamp(ProjectPrefs.GetInt(Key_ChainCursor, 0), 0, 63);
+                s.enabled = ProjectPrefs.GetInt(Key_ChainEnabled, 0) != 0;
 
-                if (PlayerPrefs.HasKey(Key_ChainSlots))
+                if (ProjectPrefs.HasKey(Key_ChainSlots))
                 {
-                    var json = PlayerPrefs.GetString(Key_ChainSlots, "");
+                    var json = ProjectPrefs.GetString(Key_ChainSlots, "");
                     var arr = JsonUtility.FromJson<IntArraySave>(json);
                     if (arr?.v != null && arr.v.Length == 64)
                         s.slots = arr.v;

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using KMusic.Core;
 
 namespace KMusic
 {
@@ -50,10 +51,10 @@ public static bool TryGetCachedClip(out AudioClip clip)
 
         public static void ClearApplied()
         {
-            if (PlayerPrefs.HasKey(PrefKey_Json))
+            if (ProjectPrefs.HasKey(PrefKey_Json))
             {
-                PlayerPrefs.DeleteKey(PrefKey_Json);
-                PlayerPrefs.Save();
+                ProjectPrefs.DeleteKey(PrefKey_Json);
+                ProjectPrefs.Save();
             }
 
             _appliedRevision++;
@@ -149,8 +150,8 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
                 sliceEnd01 = ends
             };
 
-            PlayerPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));
-            PlayerPrefs.Save();
+            ProjectPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));
+            ProjectPrefs.Save();
 
             _appliedRevision++;
 
@@ -163,10 +164,10 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             sliceStart01 = null;
             sliceEnd01 = null;
 
-            if (!PlayerPrefs.HasKey(PrefKey_Json))
+            if (!ProjectPrefs.HasKey(PrefKey_Json))
                 return false;
 
-            var json = PlayerPrefs.GetString(PrefKey_Json, "");
+            var json = ProjectPrefs.GetString(PrefKey_Json, "");
             if (string.IsNullOrEmpty(json))
                 return false;
 
@@ -216,8 +217,8 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
                 sliceEnd01 = ends
             };
 
-            PlayerPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));
-            PlayerPrefs.Save();
+            ProjectPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));
+            ProjectPrefs.Save();
             _appliedRevision++;
         }
     }

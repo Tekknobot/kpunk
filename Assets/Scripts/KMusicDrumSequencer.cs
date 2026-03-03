@@ -383,8 +383,8 @@ private string _appliedResourcesPath = null;
         EnsureSamplerEngine();
 
         // Restore saved kit index before loading kits.
-        if (PlayerPrefs.HasKey(PrefKey_DrumKitIndex))
-            _kitIndex = Mathf.Max(0, PlayerPrefs.GetInt(PrefKey_DrumKitIndex, 0));
+        if (ProjectPrefs.HasKey(PrefKey_DrumKitIndex))
+            _kitIndex = Mathf.Max(0, ProjectPrefs.GetInt(PrefKey_DrumKitIndex, 0));
 
         LoadKits();
 
@@ -695,7 +695,7 @@ private string _appliedResourcesPath = null;
                 try
                 {
                     string b64 = Convert.ToBase64String(b);
-                    PlayerPrefs.SetString(PrefKey_DrumStepMask_B64, b64);
+                    ProjectPrefs.SetString(PrefKey_DrumStepMask_B64, b64);
                 }
                 catch { }
             }
@@ -703,12 +703,12 @@ private string _appliedResourcesPath = null;
             // --- mutes / ui state ---
             try { KMusicSaveState.SaveBools(PrefKey_DrumMutes, _drumMute); } catch { }
 
-            PlayerPrefs.SetInt(PrefKey_DrumActive, _activeDrumId);
-            PlayerPrefs.SetInt(PrefKey_DrumKitIndex, _kitIndex);
-            PlayerPrefs.Save();
+            ProjectPrefs.SetInt(PrefKey_DrumActive, _activeDrumId);
+            ProjectPrefs.SetInt(PrefKey_DrumKitIndex, _kitIndex);
+            ProjectPrefs.Save();
 
             if (verbose)
-                Debug.Log($"[DRUM SAVE] b64Len={PlayerPrefs.GetString(PrefKey_DrumStepMask_B64, "").Length} mask0=0x{_stepMask[0]:X2} allowSaving={_allowSaving}");
+                Debug.Log($"[DRUM SAVE] b64Len={ProjectPrefs.GetString(PrefKey_DrumStepMask_B64, "").Length} mask0=0x{_stepMask[0]:X2} allowSaving={_allowSaving}");
         }
         catch { }
     }
@@ -721,7 +721,7 @@ private string _appliedResourcesPath = null;
         try
         {
             loaded = KMusicSaveState.LoadBytes(PrefKey_DrumStepMask, 16);
-            if (verbose) Debug.Log($"[DRUM LOAD] hasB64={PlayerPrefs.HasKey(PrefKey_DrumStepMask_B64)} mask0=0x{_stepMask[0]:X2}");
+            if (verbose) Debug.Log($"[DRUM LOAD] hasB64={ProjectPrefs.HasKey(PrefKey_DrumStepMask_B64)} mask0=0x{_stepMask[0]:X2}");
         }
         catch
         {
@@ -736,9 +736,9 @@ private string _appliedResourcesPath = null;
         {
             try
             {
-                if (PlayerPrefs.HasKey(PrefKey_DrumStepMask_B64))
+                if (ProjectPrefs.HasKey(PrefKey_DrumStepMask_B64))
                 {
-                    string b64 = PlayerPrefs.GetString(PrefKey_DrumStepMask_B64, "");
+                    string b64 = ProjectPrefs.GetString(PrefKey_DrumStepMask_B64, "");
                     if (!string.IsNullOrEmpty(b64))
                         loaded = Convert.FromBase64String(b64);
                 }

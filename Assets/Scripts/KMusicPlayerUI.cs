@@ -6,9 +6,11 @@ using UnityEngine;
 using UnityEngine.UIElements;
 using KMusic.UI;
 using KMusic;
+using KMusic.Core;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
 using KMusic.Android;
+using KMusic.Core;
 #endif
 
 public class KMusicPlayerUI : MonoBehaviour
@@ -69,13 +71,13 @@ public class KMusicPlayerUI : MonoBehaviour
         if (string.IsNullOrEmpty(id))
             return;
 
-        PlayerPrefs.SetString(PrefKey_LastTrack, id);
-        PlayerPrefs.Save();
+        ProjectPrefs.SetString(PrefKey_LastTrack, id);
+        ProjectPrefs.Save();
     }
 
     private static string LoadLastTrackId()
     {
-        return PlayerPrefs.GetString(PrefKey_LastTrack, "");
+        return ProjectPrefs.GetString(PrefKey_LastTrack, "");
     }
 
     // Project save/load hooks

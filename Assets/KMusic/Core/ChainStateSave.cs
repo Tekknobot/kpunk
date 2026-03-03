@@ -1,11 +1,12 @@
 using System;
 using UnityEngine;
+using KMusic.Core;
 
 namespace KMusic.Core
 {
     /// <summary>
     /// Project-friendly snapshot of ChainState.
-    /// ChainState itself is PlayerPrefs-backed; this wrapper can apply into PlayerPrefs.
+    /// ChainState itself is PlayerPrefs-backed; this wrapper can apply into ProjectPrefs.
     /// </summary>
     [Serializable]
     public sealed class ChainStateSave
@@ -41,11 +42,11 @@ namespace KMusic.Core
         {
             try
             {
-                PlayerPrefs.SetInt(Key_ChainLen, Mathf.Clamp(length, 1, 64));
-                PlayerPrefs.SetInt(Key_ChainCursor, Mathf.Clamp(cursor, 0, 63));
-                PlayerPrefs.SetInt(Key_ChainEnabled, enabled ? 1 : 0);
-                PlayerPrefs.SetString(Key_ChainSlots, JsonUtility.ToJson(new IntArraySave { v = slots ?? new int[64] }));
-                PlayerPrefs.Save();
+                ProjectPrefs.SetInt(Key_ChainLen, Mathf.Clamp(length, 1, 64));
+                ProjectPrefs.SetInt(Key_ChainCursor, Mathf.Clamp(cursor, 0, 63));
+                ProjectPrefs.SetInt(Key_ChainEnabled, enabled ? 1 : 0);
+                ProjectPrefs.SetString(Key_ChainSlots, JsonUtility.ToJson(new IntArraySave { v = slots ?? new int[64] }));
+                ProjectPrefs.Save();
             }
             catch
             {

@@ -35,18 +35,18 @@ namespace KMusic
             foreach (var p in bus.All)
                 s.items.Add(new ParamPair { id = p.Id, v = p.Value });
 
-            PlayerPrefs.SetString(key, JsonUtility.ToJson(s));
-            PlayerPrefs.Save();
+            ProjectPrefs.SetString(key, JsonUtility.ToJson(s));
+            ProjectPrefs.Save();
         }
 
         public static void LoadBus(ParameterBus bus, string key)
         {
             if (bus == null) return;
-            if (!PlayerPrefs.HasKey(key)) return;
+            if (!ProjectPrefs.HasKey(key)) return;
 
             try
             {
-                var json = PlayerPrefs.GetString(key, "");
+                var json = ProjectPrefs.GetString(key, "");
                 if (string.IsNullOrEmpty(json)) return;
                 var s = JsonUtility.FromJson<ParamSave>(json);
                 if (s?.items == null) return;
@@ -75,16 +75,16 @@ namespace KMusic
         public static void SaveIntArray(string key, int[] values)
         {
             if (values == null) return;
-            PlayerPrefs.SetString(key, JsonUtility.ToJson(new IntArraySave { v = values }));
-            PlayerPrefs.Save();
+            ProjectPrefs.SetString(key, JsonUtility.ToJson(new IntArraySave { v = values }));
+            ProjectPrefs.Save();
         }
 
         public static int[] LoadIntArray(string key, int expectedLen)
         {
-            if (!PlayerPrefs.HasKey(key)) return null;
+            if (!ProjectPrefs.HasKey(key)) return null;
             try
             {
-                var s = JsonUtility.FromJson<IntArraySave>(PlayerPrefs.GetString(key, ""));
+                var s = JsonUtility.FromJson<IntArraySave>(ProjectPrefs.GetString(key, ""));
                 if (s?.v == null) return null;
                 if (expectedLen > 0 && s.v.Length != expectedLen) return null;
                 return s.v;
@@ -102,16 +102,16 @@ namespace KMusic
         public static void SaveBytes(string key, byte[] bytes)
         {
             if (bytes == null) return;
-            PlayerPrefs.SetString(key, Convert.ToBase64String(bytes));
-            PlayerPrefs.Save();
+            ProjectPrefs.SetString(key, Convert.ToBase64String(bytes));
+            ProjectPrefs.Save();
         }
 
         public static byte[] LoadBytes(string key, int expectedLen)
         {
-            if (!PlayerPrefs.HasKey(key)) return null;
+            if (!ProjectPrefs.HasKey(key)) return null;
             try
             {
-                var b = Convert.FromBase64String(PlayerPrefs.GetString(key, ""));
+                var b = Convert.FromBase64String(ProjectPrefs.GetString(key, ""));
                 if (expectedLen > 0 && b.Length != expectedLen) return null;
                 return b;
             }
@@ -134,16 +134,16 @@ namespace KMusic
         public static void SaveBools(string key, bool[] values)
         {
             if (values == null) return;
-            PlayerPrefs.SetString(key, JsonUtility.ToJson(new BoolArraySave { v = values }));
-            PlayerPrefs.Save();
+            ProjectPrefs.SetString(key, JsonUtility.ToJson(new BoolArraySave { v = values }));
+            ProjectPrefs.Save();
         }
 
         public static bool[] LoadBools(string key, int expectedLen)
         {
-            if (!PlayerPrefs.HasKey(key)) return null;
+            if (!ProjectPrefs.HasKey(key)) return null;
             try
             {
-                var s = JsonUtility.FromJson<BoolArraySave>(PlayerPrefs.GetString(key, ""));
+                var s = JsonUtility.FromJson<BoolArraySave>(ProjectPrefs.GetString(key, ""));
                 if (s?.v == null) return null;
                 if (expectedLen > 0 && s.v.Length != expectedLen) return null;
                 return s.v;
@@ -164,18 +164,18 @@ namespace KMusic
                 s.items.Add(new ParamPair { id = p.Id, v = p.Value });
             }
 
-            PlayerPrefs.SetString(key, JsonUtility.ToJson(s));
-            PlayerPrefs.Save();
+            ProjectPrefs.SetString(key, JsonUtility.ToJson(s));
+            ProjectPrefs.Save();
         }
 
         public static void LoadBus(ParameterBus bus, string key, Func<string, bool> allowId)
         {
             if (bus == null) return;
-            if (!PlayerPrefs.HasKey(key)) return;
+            if (!ProjectPrefs.HasKey(key)) return;
 
             try
             {
-                var json = PlayerPrefs.GetString(key, "");
+                var json = ProjectPrefs.GetString(key, "");
                 if (string.IsNullOrEmpty(json)) return;
                 var s = JsonUtility.FromJson<ParamSave>(json);
                 if (s?.items == null) return;

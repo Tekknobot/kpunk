@@ -61,13 +61,13 @@ namespace KMusic
                 _doc.visualTreeAsset = mainUxml;
 
             // If version changed, wipe old prefs so new defaults apply
-            int savedVer = PlayerPrefs.GetInt(PrefKey_BusVer, -1);
+            int savedVer = ProjectPrefs.GetInt(PrefKey_BusVer, -1);
             if (savedVer != PrefVer)
             {
-                PlayerPrefs.DeleteKey("kmusic.bus");        // delete old unversioned key
-                PlayerPrefs.DeleteKey(PrefKey_Bus);         // delete current version key (just in case)
-                PlayerPrefs.SetInt(PrefKey_BusVer, PrefVer);
-                PlayerPrefs.Save();
+                ProjectPrefs.DeleteKey("kmusic.bus");        // delete old unversioned key
+                ProjectPrefs.DeleteKey(PrefKey_Bus);         // delete current version key (just in case)
+                ProjectPrefs.SetInt(PrefKey_BusVer, PrefVer);
+                ProjectPrefs.Save();
             }
             BuildParameters();
 

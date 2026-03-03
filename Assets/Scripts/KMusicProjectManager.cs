@@ -52,7 +52,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private void Awake()
     {
         if (!doc) doc = GetComponent<UIDocument>();
-        CurrentSlot = Mathf.Clamp(PlayerPrefs.GetInt(PrefKey_CurrentSlot, 0), 0, 999);
+        CurrentSlot = Mathf.Clamp(ProjectPrefs.GetGlobalInt(PrefKey_CurrentSlot, 0), 0, 999);
+        ProjectPrefs.SetActiveSlot(CurrentSlot);
     }
 
     private void OnEnable()
@@ -178,8 +179,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
         int next = FindNextFreeSlot(CurrentSlot);
         CurrentSlot = next;
-        PlayerPrefs.SetInt(PrefKey_CurrentSlot, CurrentSlot);
-        PlayerPrefs.Save();
+        ProjectPrefs.SetActiveSlot(CurrentSlot);
 
         ResetToBlank();
         SaveProject(CurrentSlot);
@@ -340,8 +340,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private void SwitchToSlot(int slot)
     {
         CurrentSlot = slot;
-        PlayerPrefs.SetInt(PrefKey_CurrentSlot, CurrentSlot);
-        PlayerPrefs.Save();
+        ProjectPrefs.SetActiveSlot(CurrentSlot);
         UpdatePresetLabel();
     }
     // ----------------------------

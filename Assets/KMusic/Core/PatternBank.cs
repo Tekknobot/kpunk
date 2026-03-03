@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using KMusic.Core;
 
 namespace KMusic.Core
 {
@@ -51,8 +52,8 @@ namespace KMusic.Core
             idx.names.Add("P01");
             SaveIndexInternal(idx);
 
-            if (!PlayerPrefs.HasKey(Key_NextId))
-                PlayerPrefs.SetInt(Key_NextId, 1);
+            if (!ProjectPrefs.HasKey(Key_NextId))
+                ProjectPrefs.SetInt(Key_NextId, 1);
         }
 
         public static IReadOnlyList<int> ListIds()
@@ -63,7 +64,7 @@ namespace KMusic.Core
 
         public static string GetName(int id)
         {
-            string n = PlayerPrefs.GetString(KeyName(id), "");
+            string n = ProjectPrefs.GetString(KeyName(id), "");
             if (!string.IsNullOrEmpty(n)) return n;
 
             // fallback to index names
@@ -78,8 +79,8 @@ namespace KMusic.Core
         public static void SetName(int id, string name)
         {
             name ??= "";
-            PlayerPrefs.SetString(KeyName(id), name);
-            PlayerPrefs.Save();
+            ProjectPrefs.SetString(KeyName(id), name);
+            ProjectPrefs.Save();
 
             var idx = LoadIndexInternal();
             for (int i = 0; i < idx.ids.Count; i++)
@@ -96,9 +97,9 @@ namespace KMusic.Core
         {
             EnsureDefaultPatternExists();
 
-            int next = PlayerPrefs.GetInt(Key_NextId, 1);
+            int next = ProjectPrefs.GetInt(Key_NextId, 1);
             int id = Mathf.Max(0, next);
-            PlayerPrefs.SetInt(Key_NextId, id + 1);
+            ProjectPrefs.SetInt(Key_NextId, id + 1);
 
             var idx = LoadIndexInternal();
             idx.ids.Add(id);
@@ -106,7 +107,7 @@ namespace KMusic.Core
             SaveIndexInternal(idx);
 
             if (!string.IsNullOrEmpty(name))
-                PlayerPrefs.SetString(KeyName(id), name);
+                ProjectPrefs.SetString(KeyName(id), name);
 
             Save(id, data);
             return id;
@@ -161,7 +162,7 @@ namespace KMusic.Core
             var idx = LoadIndexInternal();
             var save = new PatternBankSave
             {
-                nextId = PlayerPrefs.GetInt(Key_NextId, 1),
+                nextId = ProjectPrefs.GetInt(Key_NextId, 1),
                 ids = new List<int>(idx.ids),
                 names = new List<string>(idx.names)
             };
@@ -189,8 +190,8 @@ namespace KMusic.Core
             if (save.names != null) idx.names.AddRange(save.names);
 
             SaveIndexInternal(idx);
-            PlayerPrefs.SetInt(Key_NextId, Mathf.Max(1, save.nextId));
-            PlayerPrefs.Save();
+            ProjectPrefs.SetInt(Key_NextId, Mathf.Max(1, save.nextId));
+            ProjectPrefs.Save();
 
             int count = idx.ids.Count;
             for (int i = 0; i < count; i++)
@@ -211,10 +212,10 @@ namespace KMusic.Core
                 Save(id, new PatternData { drumMask = drums, sampleSteps = sample, seqSteps = seq });
 
                 if (save.names != null && i < save.names.Count && !string.IsNullOrEmpty(save.names[i]))
-                    PlayerPrefs.SetString(KeyName(id), save.names[i]);
+                    ProjectPrefs.SetString(KeyName(id), save.names[i]);
             }
 
-            PlayerPrefs.Save();
+            ProjectPrefs.Save();
             EnsureDefaultPatternExists();
         }
 
@@ -222,19 +223,19 @@ namespace KMusic.Core
         {
             try
             {
-                PlayerPrefs.DeleteKey(Key_Index);
-                PlayerPrefs.DeleteKey(Key_NextId);
+                ProjectPrefs.DeleteKey(Key_Index);
+                ProjectPrefs.DeleteKey(Key_NextId);
 
                 // Best-effort cleanup for ids 0..999.
                 for (int id = 0; id <= 999; id++)
                 {
-                    PlayerPrefs.DeleteKey(KeyDrums(id));
-                    PlayerPrefs.DeleteKey(KeySample(id));
-                    PlayerPrefs.DeleteKey(KeySeq(id));
-                    PlayerPrefs.DeleteKey(KeyName(id));
+                    ProjectPrefs.DeleteKey(KeyDrums(id));
+                    ProjectPrefs.DeleteKey(KeySample(id));
+                    ProjectPrefs.DeleteKey(KeySeq(id));
+                    ProjectPrefs.DeleteKey(KeyName(id));
                 }
 
-                PlayerPrefs.Save();
+                ProjectPrefs.Save();
             }
             catch
             {
@@ -248,10 +249,10 @@ namespace KMusic.Core
         {
             try
             {
-                if (!PlayerPrefs.HasKey(Key_Index))
+                if (!ProjectPrefs.HasKey(Key_Index))
                     return new PatternIndex();
 
-                var json = PlayerPrefs.GetString(Key_Index, "");
+                var json = ProjectPrefs.GetString(Key_Index, "");
                 if (string.IsNullOrEmpty(json))
                     return new PatternIndex();
 
@@ -268,8 +269,8 @@ namespace KMusic.Core
         {
             try
             {
-                PlayerPrefs.SetString(Key_Index, JsonUtility.ToJson(idx));
-                PlayerPrefs.Save();
+                ProjectPrefs.SetString(Key_Index, JsonUtility.ToJson(idx));
+                ProjectPrefs.Save();
             }
             catch
             {
