@@ -1112,15 +1112,15 @@ namespace KMusic.UI
             style.paddingTop = 18;
             style.paddingBottom = 18;
 
-            var title = new Label("PRESETS");
+            var title = new Label("PROJECTS");
             title.style.color = new Color(0.60f, 0.64f, 0.70f, 1f);
             title.style.unityFontStyleAndWeight = FontStyle.Bold;
-            title.style.fontSize = 18;
+            title.style.fontSize = 32;
             Add(title);
 
             var hint = new Label("Preset browser scaffold (wire to JSON presets next).");
             hint.style.color = new Color(0.60f, 0.64f, 0.70f, 1f);
-            hint.style.fontSize = 14;
+            hint.style.fontSize = 24;
             hint.style.marginTop = 8;
             Add(hint);
         }

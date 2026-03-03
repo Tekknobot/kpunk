@@ -25,6 +25,23 @@ namespace KMusic.Core
         private static string KeySeq(int id)    => $"kmusic.pattern.{id:000}.seq.stepgrid";
         private static string KeyName(int id)   => $"kmusic.pattern.{id:000}.name";
 
+        // ----------------------------
+        // Project import/export
+        // ----------------------------
+
+        [Serializable]
+        public class PatternBankSave
+        {
+            public int nextId;
+            public List<int> ids = new();
+            public List<string> names = new();
+
+            // Parallel arrays aligned to ids[]
+            public List<string> drumMaskB64 = new();
+            public List<int[]> sampleSteps = new();
+            public List<int[]> seqSteps = new();
+        }
+
         public static void EnsureDefaultPatternExists()
         {
             var idx = LoadIndexInternal();
@@ -135,6 +152,96 @@ namespace KMusic.Core
             if (seq != null) p.seqSteps = seq;
 
             return p;
+        }
+
+        public static PatternBankSave ExportAll()
+        {
+            EnsureDefaultPatternExists();
+
+            var idx = LoadIndexInternal();
+            var save = new PatternBankSave
+            {
+                nextId = PlayerPrefs.GetInt(Key_NextId, 1),
+                ids = new List<int>(idx.ids),
+                names = new List<string>(idx.names)
+            };
+
+            for (int i = 0; i < idx.ids.Count; i++)
+            {
+                int id = idx.ids[i];
+                var p = Load(id);
+                save.drumMaskB64.Add(p.drumMask != null ? Convert.ToBase64String(p.drumMask) : "");
+                save.sampleSteps.Add(p.sampleSteps);
+                save.seqSteps.Add(p.seqSteps);
+            }
+
+            return save;
+        }
+
+        public static void ImportAll(PatternBankSave save)
+        {
+            if (save == null) return;
+
+            ResetAll();
+
+            var idx = new PatternIndex();
+            if (save.ids != null) idx.ids.AddRange(save.ids);
+            if (save.names != null) idx.names.AddRange(save.names);
+
+            SaveIndexInternal(idx);
+            PlayerPrefs.SetInt(Key_NextId, Mathf.Max(1, save.nextId));
+            PlayerPrefs.Save();
+
+            int count = idx.ids.Count;
+            for (int i = 0; i < count; i++)
+            {
+                int id = idx.ids[i];
+
+                byte[] drums = null;
+                try
+                {
+                    if (save.drumMaskB64 != null && i < save.drumMaskB64.Count && !string.IsNullOrEmpty(save.drumMaskB64[i]))
+                        drums = Convert.FromBase64String(save.drumMaskB64[i]);
+                }
+                catch { drums = null; }
+
+                int[] sample = (save.sampleSteps != null && i < save.sampleSteps.Count) ? save.sampleSteps[i] : null;
+                int[] seq = (save.seqSteps != null && i < save.seqSteps.Count) ? save.seqSteps[i] : null;
+
+                Save(id, new PatternData { drumMask = drums, sampleSteps = sample, seqSteps = seq });
+
+                if (save.names != null && i < save.names.Count && !string.IsNullOrEmpty(save.names[i]))
+                    PlayerPrefs.SetString(KeyName(id), save.names[i]);
+            }
+
+            PlayerPrefs.Save();
+            EnsureDefaultPatternExists();
+        }
+
+        public static void ResetAll()
+        {
+            try
+            {
+                PlayerPrefs.DeleteKey(Key_Index);
+                PlayerPrefs.DeleteKey(Key_NextId);
+
+                // Best-effort cleanup for ids 0..999.
+                for (int id = 0; id <= 999; id++)
+                {
+                    PlayerPrefs.DeleteKey(KeyDrums(id));
+                    PlayerPrefs.DeleteKey(KeySample(id));
+                    PlayerPrefs.DeleteKey(KeySeq(id));
+                    PlayerPrefs.DeleteKey(KeyName(id));
+                }
+
+                PlayerPrefs.Save();
+            }
+            catch
+            {
+                // ignore
+            }
+
+            EnsureDefaultPatternExists();
         }
 
         private static PatternIndex LoadIndexInternal()

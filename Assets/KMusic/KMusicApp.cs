@@ -75,6 +75,10 @@ namespace KMusic
             if (GetComponent<global::KMusicChainUI>() == null)
                 gameObject.AddComponent<global::KMusicChainUI>();
 
+            // Ensure project save/load manager exists (topbar NEW/LOAD)
+            if (GetComponent<global::KMusicProjectManager>() == null)
+                gameObject.AddComponent<global::KMusicProjectManager>();
+
             // Load saved mixer/fader values after defaults exist.
             KMusicSaveState.LoadBus(_bus, PrefKey_Bus, id =>
                 id.StartsWith("mix.") ||
@@ -151,20 +155,6 @@ namespace KMusic
                     bpmLabel.text = t.Format();
             };
             _bus.OnChanged += _onBusChanged;
-
-            // Toggle preset browser on preset label click
-            var presetLabel = root.Q<Label>("PresetLabel");
-            var presetBrowser = root.Q<VisualElement>("PresetBrowser");
-            if (presetLabel != null && presetBrowser != null)
-            {
-                presetLabel.RegisterCallback<PointerDownEvent>(_ =>
-                {
-                    presetBrowser.style.display =
-                        presetBrowser.resolvedStyle.display == DisplayStyle.None
-                            ? DisplayStyle.Flex
-                            : DisplayStyle.None;
-                });
-            }
         }
 
     private void OnDisable()

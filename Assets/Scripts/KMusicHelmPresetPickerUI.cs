@@ -51,6 +51,22 @@ namespace KMusic
         private const string PrefKey_SynthPresetRelPath = "kmusic.synth.preset.relpath.v1";
         private const string PrefKey_SynthPresetIndex = "kmusic.synth.preset.index.v1";
 
+        // Project system hooks
+        public int CurrentPresetIndex => _index;
+
+        public string CurrentPresetRelPath
+        {
+            get
+            {
+                if (_all != null && _all.Count > 0 && _index >= 0 && _index < _all.Count)
+                    return _all[_index].relPath;
+                return PlayerPrefs.GetString(PrefKey_SynthPresetRelPath, "");
+            }
+        }
+
+        private int _pendingPresetIndex = -1;
+        private string _pendingPresetRelPath = null;
+
         private void SaveCurrentPresetChoice()
         {
             if (_all == null || _all.Count == 0) return;
@@ -141,6 +157,52 @@ namespace KMusic
             _patchNameLabel.style.color = Color.white;
         }
 
+        /// <summary>
+        /// Force-apply a preset choice (used by project load).
+        /// If presets haven't loaded yet, the choice will be applied after presets_index.txt loads.
+        /// </summary>
+        public void ApplyPresetChoice(int index, string relPath)
+        {
+            _pendingPresetIndex = index;
+            _pendingPresetRelPath = relPath;
+
+            if (_all != null && _all.Count > 0)
+                ApplyPendingPresetNow();
+        }
+
+        private void ApplyPendingPresetNow()
+        {
+            if (_all == null || _all.Count == 0) return;
+
+            // Prefer relPath if provided.
+            if (!string.IsNullOrEmpty(_pendingPresetRelPath))
+            {
+                for (int i = 0; i < _all.Count; i++)
+                {
+                    if (string.Equals(_all[i].relPath, _pendingPresetRelPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _index = i;
+                        _pendingPresetIndex = -1;
+                        _pendingPresetRelPath = null;
+                        UpdatePatchUI();
+                        SaveCurrentPresetChoice();
+                        StartCoroutine(LoadAndApplyPreset(_all[_index].relPath));
+                        return;
+                    }
+                }
+            }
+
+            // Fallback to index.
+            if (_pendingPresetIndex >= 0)
+                _index = Mathf.Clamp(_pendingPresetIndex, 0, _all.Count - 1);
+
+            _pendingPresetIndex = -1;
+            _pendingPresetRelPath = null;
+            UpdatePatchUI();
+            SaveCurrentPresetChoice();
+            StartCoroutine(LoadAndApplyPreset(_all[_index].relPath));
+        }
+
         private void OnDisable()
         {
             if (_prevBtn != null) _prevBtn.clicked -= OnPrev;
@@ -194,6 +256,13 @@ namespace KMusic
 
             // ✅ NOW restore last saved preset
             RestorePresetChoice();
+
+            // If a project load queued a preset, prefer that.
+            if (_pendingPresetIndex >= 0 || !string.IsNullOrEmpty(_pendingPresetRelPath))
+            {
+                ApplyPendingPresetNow();
+                yield break;
+            }
 
             // keep index if component re-enabled
             _index = Mathf.Clamp(_index, 0, _all.Count - 1);

@@ -192,5 +192,33 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
                 return false;
             }
         }
+
+        /// <summary>
+        /// Directly set applied chops (used by project load).
+        /// Bumps AppliedRevision so samplers refresh.
+        /// </summary>
+        public static void SetAppliedRaw(string resourcesPath, float[] sliceStart01, float[] sliceEnd01)
+        {
+            if (string.IsNullOrEmpty(resourcesPath)) return;
+
+            var starts = new float[16];
+            var ends = new float[16];
+
+            if (sliceStart01 != null)
+                Array.Copy(sliceStart01, starts, Mathf.Min(16, sliceStart01.Length));
+            if (sliceEnd01 != null)
+                Array.Copy(sliceEnd01, ends, Mathf.Min(16, sliceEnd01.Length));
+
+            var save = new ChopSave
+            {
+                resourcesPath = resourcesPath,
+                sliceStart01 = starts,
+                sliceEnd01 = ends
+            };
+
+            PlayerPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));
+            PlayerPrefs.Save();
+            _appliedRevision++;
+        }
     }
 }

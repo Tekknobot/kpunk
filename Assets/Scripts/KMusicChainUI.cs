@@ -64,6 +64,21 @@ public class KMusicChainUI : MonoBehaviour
         RefreshAllUI();
     }
 
+    /// <summary>
+    /// Reload chain + pattern bank from saved storage (used by project load).
+    /// </summary>
+    public void ReloadFromSaved()
+    {
+        try
+        {
+            PatternBank.EnsureDefaultPatternExists();
+            _chain = ChainState.LoadOrCreate();
+            _selectedPatternId = Mathf.Clamp(_selectedPatternId, 0, 999);
+            RefreshAllUI();
+        }
+        catch { }
+    }
+
     private void OnDisable()
     {
         if (_drums != null)

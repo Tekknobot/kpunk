@@ -78,6 +78,22 @@ public class KMusicPlayerUI : MonoBehaviour
         return PlayerPrefs.GetString(PrefKey_LastTrack, "");
     }
 
+    // Project save/load hooks
+    public string GetLastTrackId() => LoadLastTrackId();
+
+    public void SetLastTrackId(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        SaveLastTrackId(id);
+        // Best-effort: if we're already ready, try to load the track.
+        try
+        {
+            // This will be no-op if the id isn't in Resources and device isn't ready.
+            // LoadLastTrackOnEnable();
+        }
+        catch { }
+    }
+
 private void Awake()
     {
         if (!doc) doc = GetComponent<UIDocument>();

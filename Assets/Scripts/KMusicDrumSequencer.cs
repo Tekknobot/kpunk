@@ -651,6 +651,11 @@ private string _appliedResourcesPath = null;
         else b.RemoveFromClassList("is-muted");
     }
 
+    private void RefreshMuteUI()
+    {
+        try { WireMuteButtons(_root); } catch { }
+    }
+
     private float GetDrumVolume01To08(int drumId)
     {
         drumId = Mathf.Clamp(drumId, 1, 8);
@@ -1356,6 +1361,38 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
     public void SetAllowSaving(bool on)
     {
         _allowSaving = on;
+    }
+
+    // Project save/load helpers
+    public bool[] CaptureDrumMutes()
+    {
+        var b = new bool[_drumMute.Length];
+        Array.Copy(_drumMute, b, _drumMute.Length);
+        return b;
+    }
+
+    public void ApplyDrumMutes(bool[] m)
+    {
+        Array.Clear(_drumMute, 0, _drumMute.Length);
+        if (m != null)
+            Array.Copy(m, _drumMute, Mathf.Min(m.Length, _drumMute.Length));
+        RefreshMuteUI();
+    }
+
+    public int CaptureActiveDrumId() => _activeDrumId;
+
+    public void ApplyActiveDrumId(int drumId)
+    {
+        _activeDrumId = Mathf.Clamp(drumId, 1, 8);
+        try { RefreshGridView(); } catch { }
+    }
+
+    public int CaptureKitIndex() => _kitIndex;
+
+    public void ApplyKitIndex(int kitIndex)
+    {
+        _kitIndex = Mathf.Max(0, kitIndex);
+        try { ApplyKit(_kitIndex); } catch { }
     }
 
     public byte[] CaptureDrumMask()

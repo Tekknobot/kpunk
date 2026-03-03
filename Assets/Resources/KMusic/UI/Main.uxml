@@ -4,7 +4,7 @@
     <ui:VisualElement class="km-topbar">
       <ui:Label class="km-title" text="zpunk" />
       <ui:VisualElement class="km-presetbar">
-        <ui:Label name="PresetLabel" class="km-presetlabel" text="Preset: PROJECT 0" />
+        <ui:Label name="PresetLabel" class="km-presetlabel" text="File: PROJECT 0" />
       </ui:VisualElement>
       <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text="PLAY" />
       <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text="STOP" />

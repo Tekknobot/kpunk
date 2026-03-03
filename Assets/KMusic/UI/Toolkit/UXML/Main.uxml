@@ -4,7 +4,7 @@
     <ui:VisualElement class="km-topbar">
       <ui:Label class="km-title" text="zpunk" />
       <ui:VisualElement class="km-presetbar">
-        <ui:Label name="PresetLabel" class="km-presetlabel" text="Preset: PROJECT 0" />
+        <ui:Label name="PresetLabel" class="km-presetlabel" text="Project: PROJECT 0" />
       </ui:VisualElement>
       <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text="PLAY" />
       <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text="STOP" />
@@ -13,8 +13,7 @@
     </ui:VisualElement>
 
     <!-- Pages: tabs show/hide these panels -->
-    <ui:VisualElement name="Pages"
-                      style="flex-grow:1; flex-direction:column; overflow:scroll;">
+    <ui:VisualElement name="Pages" style="flex-grow:1; flex-direction:column; overflow:scroll;">
 
       <!-- SEQ (default visible) -->
       <ui:VisualElement name="PageSeq" style="display:flex; flex-direction:column;">
