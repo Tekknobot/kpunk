@@ -30,7 +30,6 @@ public class KMusicDrumSequencer : MonoBehaviour
     public double NextStepDspTime => _nextStepDspTime;
     public double StepDurSeconds => _stepDur;
     public int Steps => steps;
-
     private bool _allowSaving = false;
 
     private const string PrefKey_DrumStepMask = "kmusic.drum.stepmask";
@@ -681,6 +680,10 @@ private string _appliedResourcesPath = null;
 
         try
         {
+            // Namespaced keys for SaveState path
+            string kMask  = ProjectPrefs.Key(PrefKey_DrumStepMask);
+            string kMutes = ProjectPrefs.Key(PrefKey_DrumMutes);
+
             // --- step mask (16 bytes bitmask; each bit = lane on/off) ---
             if (_stepMask != null)
             {
@@ -688,10 +691,10 @@ private string _appliedResourcesPath = null;
                 for (int i = 0; i < _stepMask.Length; i++)
                     b[i] = _stepMask[i];
 
-                // Primary save (your existing system)
-                try { KMusicSaveState.SaveBytes(PrefKey_DrumStepMask, b); } catch { }
+                // Primary save (your existing system) — NOW namespaced
+                try { KMusicSaveState.SaveBytes(kMask, b); } catch { }
 
-                // Fallback save (base64 in PlayerPrefs)
+                // Fallback save (base64 in PlayerPrefs) — already namespaced by ProjectPrefs
                 try
                 {
                     string b64 = Convert.ToBase64String(b);
@@ -701,7 +704,7 @@ private string _appliedResourcesPath = null;
             }
 
             // --- mutes / ui state ---
-            try { KMusicSaveState.SaveBools(PrefKey_DrumMutes, _drumMute); } catch { }
+            try { KMusicSaveState.SaveBools(kMutes, _drumMute); } catch { }
 
             ProjectPrefs.SetInt(PrefKey_DrumActive, _activeDrumId);
             ProjectPrefs.SetInt(PrefKey_DrumKitIndex, _kitIndex);
@@ -712,15 +715,19 @@ private string _appliedResourcesPath = null;
         }
         catch { }
     }
+
     private void LoadDrumState()
     {
         // --- step mask (prefer KMusicSaveState, fallback to PlayerPrefs base64) ---
         byte[] loaded = null;
 
-        // 1) Try SaveState
+        // Namespaced key for SaveState path
+        string kMask = ProjectPrefs.Key(PrefKey_DrumStepMask);
+
+        // 1) Try SaveState — NOW namespaced
         try
         {
-            loaded = KMusicSaveState.LoadBytes(PrefKey_DrumStepMask, 16);
+            loaded = KMusicSaveState.LoadBytes(kMask, 16);
             if (verbose) Debug.Log($"[DRUM LOAD] hasB64={ProjectPrefs.HasKey(PrefKey_DrumStepMask_B64)} mask0=0x{_stepMask[0]:X2}");
         }
         catch
@@ -760,8 +767,12 @@ private string _appliedResourcesPath = null;
             for (int i = n; i < _stepMask.Length; i++)
                 _stepMask[i] = 0;
         }
+        else
+        {
+            // Optional: ensure no stale data sticks around if nothing was loaded
+            if (_stepMask != null) Array.Clear(_stepMask, 0, _stepMask.Length);
+        }
     }
-    
     
     // ---------------- END SAVE/LOAD (PATCHED) ----------------
     private void OnApplicationPause(bool pause)
@@ -1079,7 +1090,7 @@ private string _appliedResourcesPath = null;
         if (_didLoadSamplePattern) return;
 
         // KMusicSaveState stores a flat int array for the 2x8 grid.
-        var flat = KMusicSaveState.LoadIntArray(PrefKey_SampleStepGrid, 16);
+        var flat = KMusicSaveState.LoadIntArray(ProjectPrefs.Key(PrefKey_SampleStepGrid), 16);
         if (flat != null && flat.Length >= 16)
         {
             for (int i = 0; i < 16; i++)
@@ -1384,7 +1395,15 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
     public void ApplyActiveDrumId(int drumId)
     {
         _activeDrumId = Mathf.Clamp(drumId, 1, 8);
-        try { RefreshGridView(); } catch { }
+
+        try
+        {
+            if (_gridDrum != null)
+                _gridDrum.SetPaintValue(_activeDrumId);
+
+            RefreshGridForActiveDrum();
+        }
+        catch { }
     }
 
     public int CaptureKitIndex() => _kitIndex;
@@ -1408,18 +1427,32 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         if (_stepMask == null || _stepMask.Length != steps)
             _stepMask = new byte[steps];
 
-        if (mask == null)
+        // 1) clear internal data
+        Array.Clear(_stepMask, 0, _stepMask.Length);
+
+        // 2) clear UI hard (prevents leftover lit cells)
+        if (_gridDrum != null)
         {
-            Array.Clear(_stepMask, 0, _stepMask.Length);
-        }
-        else
-        {
-            Array.Clear(_stepMask, 0, _stepMask.Length);
-            Array.Copy(mask, _stepMask, Mathf.Min(mask.Length, _stepMask.Length));
+            _suppressGridEvents = true;
+            _suppressGridCallbacks = true;
+            try
+            {
+                _gridDrum.ClearAll();
+                _gridDrum.SetPlayheadStep(-1);
+            }
+            finally
+            {
+                _suppressGridCallbacks = false;
+                _suppressGridEvents = false;
+            }
         }
 
-        // refresh visible grid if present
-        try { RefreshGridView(); } catch { }
+        // 3) copy loaded data
+        if (mask != null)
+            Array.Copy(mask, _stepMask, Mathf.Min(mask.Length, _stepMask.Length));
+
+        // 4) redraw using your real drawer
+        try { RefreshGridForActiveDrum(); } catch { }
     }
 
     public int[] CaptureSampleStepsFlat()

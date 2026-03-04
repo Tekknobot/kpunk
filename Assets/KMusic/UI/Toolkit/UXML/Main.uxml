@@ -1,17 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:km="KMusic.UI">
   <ui:VisualElement name="Root" class="km-root">
-    <ui:VisualElement class="km-topbar">
-      <ui:Label class="km-title" text="zpunk" />
-      <ui:VisualElement class="km-presetbar">
-        <ui:Label name="PresetLabel" class="km-presetlabel" text="Project: PROJECT 0" />
-      </ui:VisualElement>
-      <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text="PLAY" />
-      <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text="STOP" />
-      <ui:Button name="NewFileButton" class="km-pillbtn" text="NEW" />
-      <ui:Button name="LoadButton" class="km-pillbtn" text="LOAD" />
-    </ui:VisualElement>
-
     <!-- Pages: tabs show/hide these panels -->
     <ui:VisualElement name="Pages" style="flex-grow:1; flex-direction:column; overflow:scroll;">
 
@@ -447,6 +436,18 @@
 
       </ui:VisualElement>
 
+    </ui:VisualElement>
+
+    <!-- TOP BAR -->
+    <ui:VisualElement class="km-topbar">
+      <ui:Label class="km-title" text="zpunk" />
+      <ui:VisualElement class="km-presetbar">
+        <ui:Label name="PresetLabel" class="km-presetlabel" text="Project: PROJECT 0" />
+      </ui:VisualElement>
+      <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text="PLAY" />
+      <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text="STOP" />
+      <ui:Button name="NewFileButton" class="km-pillbtn" text="NEW" />
+      <ui:Button name="LoadButton" class="km-pillbtn" text="LOAD" />
     </ui:VisualElement>
 
     <!-- Tabs -->
