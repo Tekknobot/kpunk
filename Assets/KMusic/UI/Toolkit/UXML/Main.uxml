@@ -444,8 +444,8 @@
       <ui:VisualElement class="km-presetbar">
         <ui:Label name="PresetLabel" class="km-presetlabel" text="Project: PROJECT 0" />
       </ui:VisualElement>
-      <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text="PLAY" />
-      <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text="STOP" />
+      <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text=" " />
+      <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text=" " />
       <ui:Button name="NewFileButton" class="km-pillbtn" text="NEW" />
       <ui:Button name="LoadButton" class="km-pillbtn" text="LOAD" />
     </ui:VisualElement>

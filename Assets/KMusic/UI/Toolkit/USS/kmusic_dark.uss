@@ -930,3 +930,18 @@ unity-text-align: middle-center;
     border-color: #6ae4ff;
     color: #e8ecf4;
 }
+
+#PlayButton {
+    background-image: resource("Icons/play");
+}
+
+#StopButton {
+    background-image: resource("Icons/stop");
+}
+
+#PlayButton,
+#StopButton {
+    background-size: 60%;
+    background-repeat: no-repeat;
+    background-position: center;
+}
