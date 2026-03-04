@@ -37,14 +37,6 @@
           <ui:Label name="PatchIndexLabel" class="km-patch-index" text="1 / 100" />
 
         </ui:VisualElement>
-
-        <ui:VisualElement class="km-card km-tempo">
-          <ui:Label class="km-label" text="TEMPO"/>
-          <ui:VisualElement class="km-tempo-row">
-            <km:FaderElement label="" paramId="tempo" horizontal="true" />
-            <ui:Label name="BpmLabel" class="km-bpm" text="107 BPM"/>
-          </ui:VisualElement>
-        </ui:VisualElement>
       </ui:VisualElement>
 
       <!-- SYNTH -->
@@ -378,7 +370,15 @@
 
           </ui:VisualElement>
         </ui:VisualElement>
-        
+
+        <ui:VisualElement class="km-card km-tempo">
+          <ui:Label class="km-label" text="TEMPO"/>
+          <ui:VisualElement class="km-tempo-row">
+            <km:FaderElement label="" paramId="tempo" horizontal="true" />
+            <ui:Label name="BpmLabel" class="km-bpm" text="107 BPM"/>
+          </ui:VisualElement>
+        </ui:VisualElement>
+
       </ui:VisualElement>
 
       <!-- ARP (stub for now) -->

@@ -945,3 +945,35 @@ unity-text-align: middle-center;
     background-repeat: no-repeat;
     background-position: center;
 }
+
+#ChainEnabledToggle.unity-toggle.unity-base-field
+{
+    min-height: 52px;
+    padding-left: 10px;
+    padding-right: 10px;
+
+    font-size: 18px;
+    -unity-font-style: bold;
+
+    align-items: center;
+}
+
+/* checkbox container */
+#ChainEnabledToggle.unity-toggle .unity-toggle__input
+{
+    width: 48px;
+    height: 48px;
+}
+
+/* checkmark */
+#ChainEnabledToggle.unity-toggle .unity-toggle__checkmark
+{
+    width: 36px;
+    height: 36px;
+}
+
+/* label text */
+#ChainEnabledToggle.unity-toggle .unity-toggle__label
+{
+    font-size: 18px;
+}
