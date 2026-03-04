@@ -39,8 +39,20 @@ namespace KMusic.Core
 
             // Parallel arrays aligned to ids[]
             public List<string> drumMaskB64 = new();
-            public List<int[]> sampleSteps = new();
-            public List<int[]> seqSteps = new();
+
+            // NOTE: Unity's JsonUtility is very limited. In particular it is unreliable
+            // with nested collections like List<int[]>.
+            // We wrap arrays in a serializable class so they survive SaveProject/LoadProject.
+            [Serializable]
+            public class IntArrayWrap
+            {
+                public int[] v;
+                public IntArrayWrap() { }
+                public IntArrayWrap(int[] arr) { v = arr; }
+            }
+
+            public List<IntArrayWrap> sampleSteps = new();
+            public List<IntArrayWrap> seqSteps = new();
         }
 
         public static void EnsureDefaultPatternExists()
@@ -172,8 +184,8 @@ namespace KMusic.Core
                 int id = idx.ids[i];
                 var p = Load(id);
                 save.drumMaskB64.Add(p.drumMask != null ? Convert.ToBase64String(p.drumMask) : "");
-                save.sampleSteps.Add(p.sampleSteps);
-                save.seqSteps.Add(p.seqSteps);
+                save.sampleSteps.Add(new PatternBankSave.IntArrayWrap(p.sampleSteps));
+                save.seqSteps.Add(new PatternBankSave.IntArrayWrap(p.seqSteps));
             }
 
             return save;
@@ -206,8 +218,13 @@ namespace KMusic.Core
                 }
                 catch { drums = null; }
 
-                int[] sample = (save.sampleSteps != null && i < save.sampleSteps.Count) ? save.sampleSteps[i] : null;
-                int[] seq = (save.seqSteps != null && i < save.seqSteps.Count) ? save.seqSteps[i] : null;
+                int[] sample = null;
+                if (save.sampleSteps != null && i < save.sampleSteps.Count && save.sampleSteps[i] != null)
+                    sample = save.sampleSteps[i].v;
+
+                int[] seq = null;
+                if (save.seqSteps != null && i < save.seqSteps.Count && save.seqSteps[i] != null)
+                    seq = save.seqSteps[i].v;
 
                 Save(id, new PatternData { drumMask = drums, sampleSteps = sample, seqSteps = seq });
 
