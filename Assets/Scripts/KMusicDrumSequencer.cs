@@ -1242,9 +1242,11 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         _playing = true;
 
         // Sampler: load latest sample grid + applied chops.
-        _didLoadSamplePattern = false;
-        EnsureSamplePatternLoaded();
-        _didLoadAppliedChops = false;
+        // Sampler: only load from prefs if nothing has been applied in-memory (eg first launch).
+        if (!_didLoadSamplePattern)
+            EnsureSamplePatternLoaded();
+
+        // Always allow chops to refresh if revision changed (project load bumps AppliedRevision).
         EnsureAppliedChopsLoaded();
 
         _playStartDspTime = AudioSettings.dspTime + startDelaySeconds;
@@ -1471,6 +1473,8 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         Array.Clear(_sampleChopByStep, 0, _sampleChopByStep.Length);
         if (flat != null)
             Array.Copy(flat, _sampleChopByStep, Mathf.Min(flat.Length, _sampleChopByStep.Length));
+
+        _didLoadSamplePattern = true; // ✅ critical: prevents Play from overwriting from prefs    
     }
     
     private int _auditionToken = 0;
