@@ -57,6 +57,8 @@ namespace KMusic.UI
 
         private bool _sequenceBuilt = false;
 
+        private KMusicChainUI _chainUI;
+
         private void Update()
         {
             if (_drumSeq == null)
@@ -84,6 +86,7 @@ namespace KMusic.UI
             _doc = GetComponent<UIDocument>();
             _helm = FindObjectOfType<HelmController>();
             _drumSeq = FindObjectOfType<KMusicDrumSequencer>();
+            _chainUI = FindObjectOfType<KMusicChainUI>();
 
 
             if (helmSequencer == null)
@@ -203,6 +206,13 @@ namespace KMusic.UI
         private void OnStepValueChanged(int r, int c, int v)
         {
             _seqDirty = true;
+
+            // Persist immediately so edits survive tab rebuilds / reloads.
+            SaveStepGrid();
+
+            // ✅ Also persist the currently-selected PatternBank entry.
+            if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+            _chainUI?.NotifyLiveEdited();
 
             // ✅ Audition only when a note is placed (v > 0), never when erased (v == 0)
             if (v > 0)

@@ -193,6 +193,9 @@ private string _appliedResourcesPath = null;
 
     private UIDocument _doc;
     private VisualElement _root;
+
+    // CHAIN autosave
+    private KMusicChainUI _chainUI;
     private Button _playBtn;
     private Button _stopBtn;
 
@@ -510,6 +513,8 @@ private string _appliedResourcesPath = null;
         if (_doc == null) return false;
 
         _root = _doc.rootVisualElement;
+
+        if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
         if (_root == null) return false;
 
         // Block saves until we're fully bound + we've rendered the loaded pattern
@@ -646,8 +651,18 @@ private string _appliedResourcesPath = null;
     private static void ApplyMuteButtonVisual(Button b, bool muted)
     {
         if (b == null) return;
-        if (muted) b.AddToClassList("is-muted");
-        else b.RemoveFromClassList("is-muted");
+
+        // USS expects .km-mute--on, but we also keep the legacy .is-muted in case.
+        if (muted)
+        {
+            b.AddToClassList("km-mute--on");
+            b.AddToClassList("is-muted");
+        }
+        else
+        {
+            b.RemoveFromClassList("km-mute--on");
+            b.RemoveFromClassList("is-muted");
+        }
     }
 
     private void RefreshMuteUI()
@@ -1020,6 +1035,10 @@ private string _appliedResourcesPath = null;
             TriggerDrumNow(_activeDrumId);
 
         SaveDrumState();
+
+        // ✅ Also persist the currently-selected PatternBank entry.
+        if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+        _chainUI?.NotifyLiveEdited();
 
         if (verbose)
             Debug.Log($"[DRUM GRID] r={r} c={c} step={step} active={_activeDrumId} v={v} shown={shown} mask=0x{_stepMask[step]:X2}");

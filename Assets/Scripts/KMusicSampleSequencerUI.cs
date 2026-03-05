@@ -29,6 +29,8 @@ public class KMusicSampleSequencerUI : MonoBehaviour
 
     private IVisualElementScheduledItem _rebindLoop;
 
+    private KMusicChainUI _chainUI;
+
     // CHAIN support: suppress writes while importing patterns
     private bool _allowSaving = true;
 
@@ -66,6 +68,7 @@ public class KMusicSampleSequencerUI : MonoBehaviour
 
             CacheChopButtons(root);
             if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
+            if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
 
             // do your normal bind/wire
             WireChops();
@@ -216,6 +219,10 @@ public class KMusicSampleSequencerUI : MonoBehaviour
 
             // Persist immediately so playback survives tab rebuilds.
             SavePattern();
+
+            // ✅ Also persist the currently-selected PatternBank entry.
+            if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+            _chainUI?.NotifyLiveEdited();
 
             Debug.Log($"[KMusicSampleSequencerUI] cell[{r},{c}]={v}");
             ForceGridRefresh(sampleGrid);

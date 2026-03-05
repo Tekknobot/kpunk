@@ -36,6 +36,14 @@ public class KMusicChainUI : MonoBehaviour
     private readonly List<Button> _barButtons = new();
     private bool _uiWired = false;
 
+    // long-press delete
+    private const int LongPressMs = 650;
+    private readonly Dictionary<Button, IVisualElementScheduledItem> _longPressJobs = new();
+    private readonly HashSet<Button> _longPressFired = new();
+
+    // autosave
+    private bool _suppressAutoSave = false;
+
     // playback
     private int _playBar = 0;
     private int _lastAppliedPattern = int.MinValue;
@@ -163,6 +171,13 @@ public class KMusicChainUI : MonoBehaviour
 
             b.clicked += () =>
             {
+                // if this click is the release after a long-press, ignore the normal click.
+                if (_longPressFired.Contains(b))
+                {
+                    _longPressFired.Remove(b);
+                    return;
+                }
+
                 _chain.cursor = barIndex;
                 _chain.Save();
 
@@ -178,9 +193,103 @@ public class KMusicChainUI : MonoBehaviour
                 RefreshPatternUI();
             };
 
+            // Long-press delete pattern assigned to this bar.
+            // (Mobile-friendly: hold the bar cell to delete the referenced pattern.)
+            b.RegisterCallback<PointerDownEvent>(_ => BeginLongPress(b, barIndex));
+            b.RegisterCallback<PointerUpEvent>(_ => CancelLongPress(b));
+            b.RegisterCallback<PointerLeaveEvent>(_ => CancelLongPress(b));
+            b.RegisterCallback<PointerCancelEvent>(_ => CancelLongPress(b));
+
             _barButtons.Add(b);
             _barsRoot.Add(b);
         }
+    }
+
+    private void BeginLongPress(Button b, int barIndex)
+    {
+        if (b == null) return;
+        CancelLongPress(b);
+
+        var job = b.schedule.Execute(() =>
+        {
+            CancelLongPress(b);
+            _longPressFired.Add(b);
+            TryDeletePatternFromBar(barIndex);
+        });
+
+        job.ExecuteLater(LongPressMs);
+        _longPressJobs[b] = job;
+    }
+
+    private void CancelLongPress(Button b)
+    {
+        if (b == null) return;
+        if (_longPressJobs.TryGetValue(b, out var job) && job != null)
+        {
+            try { job.Pause(); } catch { }
+        }
+        _longPressJobs.Remove(b);
+    }
+
+    private void TryDeletePatternFromBar(int barIndex)
+    {
+        if (_chain == null) return;
+        if (barIndex < 0 || barIndex >= _chain.slots.Length) return;
+
+        int pid = _chain.slots[barIndex];
+        if (pid < 0)
+        {
+            SetStatus("Nothing to delete");
+            return;
+        }
+
+        if (pid == 0)
+        {
+            SetStatus("Pattern P01 can't be deleted");
+            return;
+        }
+
+        string pname = PatternBank.GetName(pid);
+        bool removed = PatternBank.Delete(pid);
+        if (!removed)
+        {
+            SetStatus("Delete failed");
+            return;
+        }
+
+        // Clear ALL chain references to this pattern.
+        for (int i = 0; i < _chain.slots.Length; i++)
+            if (_chain.slots[i] == pid)
+                _chain.slots[i] = -1;
+
+        _chain.Save();
+
+        // If we were editing that pattern, fall back to 0.
+        if (_selectedPatternId == pid)
+        {
+            _selectedPatternId = 0;
+            LoadPatternToLive(_selectedPatternId);
+        }
+
+        RefreshAllUI();
+        SetStatus($"Deleted {pname}");
+    }
+
+    /// <summary>
+    /// Called by sequencers when a cell is painted/erased.
+    /// Saves the currently selected pattern immediately.
+    /// </summary>
+    public void NotifyLiveEdited()
+    {
+        if (_suppressAutoSave) return;
+        if (_selectedPatternId < 0) return;
+
+        try
+        {
+            var snap = CaptureLiveToPattern();
+            PatternBank.Save(_selectedPatternId, snap);
+        }
+        catch { }
     }
 
     private void RefreshAllUI()
@@ -327,6 +436,7 @@ public class KMusicChainUI : MonoBehaviour
         var p = PatternBank.Load(patternId);
 
         // suppress saving while importing
+        _suppressAutoSave = true;
         if (_drums != null) _drums.SetAllowSaving(false);
         if (_samplerUi != null) _samplerUi.SetAllowSaving(false);
         if (_keys != null) _keys.SetAllowSaving(false);
@@ -349,6 +459,8 @@ public class KMusicChainUI : MonoBehaviour
         if (_drums != null) _drums.SetAllowSaving(true);
         if (_samplerUi != null) _samplerUi.SetAllowSaving(true);
         if (_keys != null) _keys.SetAllowSaving(true);
+
+        _suppressAutoSave = false;
 
         _lastAppliedPattern = patternId;
         RefreshPatternUI();

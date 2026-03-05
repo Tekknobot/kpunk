@@ -262,6 +262,47 @@ namespace KMusic.Core
             EnsureDefaultPatternExists();
         }
 
+        /// <summary>
+        /// Delete a pattern from the bank (best-effort PlayerPrefs cleanup).
+        /// Returns true if the id existed and was removed.
+        /// NOTE: Pattern 0 is protected and will never be deleted.
+        /// </summary>
+        public static bool Delete(int id)
+        {
+            EnsureDefaultPatternExists();
+            if (id <= 0) return false; // protect default pattern 0
+
+            var idx = LoadIndexInternal();
+            int at = -1;
+            for (int i = 0; i < idx.ids.Count; i++)
+            {
+                if (idx.ids[i] == id) { at = i; break; }
+            }
+
+            if (at < 0) return false;
+
+            try
+            {
+                idx.ids.RemoveAt(at);
+                if (at < idx.names.Count) idx.names.RemoveAt(at);
+                SaveIndexInternal(idx);
+
+                // remove stored payloads
+                ProjectPrefs.DeleteKey(KeyDrums(id));
+                ProjectPrefs.DeleteKey(KeySample(id));
+                ProjectPrefs.DeleteKey(KeySeq(id));
+                ProjectPrefs.DeleteKey(KeyName(id));
+                ProjectPrefs.Save();
+            }
+            catch
+            {
+                // ignore
+            }
+
+            EnsureDefaultPatternExists();
+            return true;
+        }
+
         private static PatternIndex LoadIndexInternal()
         {
             try
