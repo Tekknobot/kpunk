@@ -122,34 +122,6 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!83 &21600565
-AudioClip:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: helm
-  m_LoadType: 0
-  m_Channels: 1
-  m_Frequency: 48000
-  m_BitsPerSample: 32
-  m_Length: 0
-  m_IsTrackerFormat: 0
-  m_Ambisonic: 0
-  m_SubsoundIndex: 0
-  m_PreloadAudioData: 1
-  m_LoadInBackground: 0
-  m_Legacy3D: 0
-  m_Resource:
-    m_Source: 
-    m_Offset: 0
-    m_Size: 0
-  m_CompressionFormat: 0
-  m_EditorResource:
-    m_Source: 
-    m_Offset: 0
-    m_Size: 0
-  m_EditorCompressionFormat: 0
 --- !u!1 &70991572
 GameObject:
   m_ObjectHideFlags: 0
@@ -296,11 +268,11 @@ GameObject:
   - component: {fileID: 161364357}
   - component: {fileID: 161364362}
   - component: {fileID: 161364363}
+  - component: {fileID: 161364364}
   - component: {fileID: 161364360}
   - component: {fileID: 161364359}
   - component: {fileID: 161364358}
   - component: {fileID: 161364361}
-  - component: {fileID: 161364364}
   m_Layer: 0
   m_Name: KMusicApp
   m_TagString: Untagged
@@ -424,6 +396,22 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0848513c2e0e46ad95896ed617bad804, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  drumMixer: {fileID: 24100000, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  driveMixerFromBus: 1
+  drumMasterGroup: {fileID: 24300002, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  drumGroups:
+  - {fileID: -8389554054869495077, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  - {fileID: -6175531510407080678, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  - {fileID: -6999170071167384259, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  - {fileID: 2122391323203075478, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  - {fileID: 968782749424359208, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  - {fileID: -318762539071600474, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  - {fileID: -6077559006539795105, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  - {fileID: -3130063847655657458, guid: dbd66816f484d944dabcf5e135bfb655, type: 2}
+  drumVolParamPrefix: Drum
+  drumVolParamSuffix: VolDb
+  routeDrumsToMixer: 1
+  drumVoicesPerLane: 4
   sampleMasterVolume: 1
   sampleMasterSliderName: SampleMasterVol
   uiDocument: {fileID: 161364351}
@@ -503,7 +491,7 @@ AudioSource:
   m_Enabled: 1
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 24300002, guid: 09156e7a2a9be2540871dda397a09286, type: 2}
-  m_audioClip: {fileID: 21600565}
+  m_audioClip: {fileID: 1534786326}
   m_PlayOnAwake: 1
   m_Volume: 1
   m_Pitch: 1
@@ -990,6 +978,34 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!83 &1534786326
+AudioClip:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: helm
+  m_LoadType: 0
+  m_Channels: 1
+  m_Frequency: 48000
+  m_BitsPerSample: 32
+  m_Length: 0
+  m_IsTrackerFormat: 0
+  m_Ambisonic: 0
+  m_SubsoundIndex: 0
+  m_PreloadAudioData: 1
+  m_LoadInBackground: 0
+  m_Legacy3D: 0
+  m_Resource:
+    m_Source: 
+    m_Offset: 0
+    m_Size: 0
+  m_CompressionFormat: 0
+  m_EditorResource:
+    m_Source: 
+    m_Offset: 0
+    m_Size: 0
+  m_EditorCompressionFormat: 0
 --- !u!1 &1560710007
 GameObject:
   m_ObjectHideFlags: 0

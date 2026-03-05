@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Audio;
 using UnityEngine.UIElements;
 using KMusic;
 using KMusic.Core;
@@ -46,7 +47,9 @@ public class KMusicDrumSequencer : MonoBehaviour
     private IVisualElementScheduledItem _rebindLoop;
     private StepGrid _lastBoundDrumGrid;
 
-    private readonly Dictionary<int, AudioSource> _drumSources = new();
+    // When routeDrumsToMixer is true, we use per-drum AudioSource voice pools (for mixer routing + meters).
+    private readonly Dictionary<int, List<AudioSource>> _drumVoicePools = new();
+    private readonly Dictionary<int, int> _drumVoiceCursor = new();
 
     private KMusicApp _app;
     private ParameterBus _bus;
@@ -54,6 +57,34 @@ public class KMusicDrumSequencer : MonoBehaviour
     private readonly bool[] _drumMute = new bool[8];
 
     private bool _didLoadState = false;
+
+    [Header("Unity AudioMixer (optional)")]
+    [Tooltip("If assigned, each drum AudioSource will be routed into these mixer groups so you can push above 0 dB and see meters in the mixer.")]
+    [SerializeField] private AudioMixer drumMixer = null;
+
+    [Tooltip("If true, drum.volXX from ParameterBus drives the AudioMixer exposed params. If false, you can mix directly in the AudioMixer.")]
+    [SerializeField] private bool driveMixerFromBus = true;
+
+    [Tooltip("Optional: a master group for drums (used if a per-drum group is not set).")]
+    [SerializeField] private AudioMixerGroup drumMasterGroup = null;
+
+    [Tooltip("Optional: per-drum output groups (size 8). Index 0 = Drum 1 (Kick).")]
+    [SerializeField] private AudioMixerGroup[] drumGroups = new AudioMixerGroup[8];
+
+    [Tooltip("Exposed parameter name prefix for per-drum volumes in dB. Example param names: Drum01VolDb, Drum02VolDb, ...")]
+    [SerializeField] private string drumVolParamPrefix = "Drum";
+
+    [Tooltip("Exposed parameter name suffix for per-drum volumes in dB.")]
+    [SerializeField] private string drumVolParamSuffix = "VolDb";
+
+    [Tooltip("Enable routing drums through per-drum AudioSources (instead of AudioHelm Sampler) so mixer meters/gain work per channel.")]
+    [SerializeField] private bool routeDrumsToMixer = true;
+
+    [Tooltip("Polyphony per drum lane when routing to mixer. Prevents cut-offs when hits overlap.")]
+    [Range(1, 8)]
+    [SerializeField] private int drumVoicesPerLane = 4;
+
+    private Action<string, float> _onBusChanged;
 
     [Header("Sampler Volume")]
     [Range(0f, 1f)] public float sampleMasterVolume = 1f;
@@ -73,43 +104,86 @@ public class KMusicDrumSequencer : MonoBehaviour
         WireMuteButtons(_root);
     }
 
-    private AudioSource GetOrCreateDrumSource(int drumId, AudioClip clip)
+    private AudioSource GetOrCreateDrumVoice(int drumId, AudioClip clip)
     {
-        if (_drumSources.TryGetValue(drumId, out var src) && src != null)
-            return src;
+        drumId = Mathf.Clamp(drumId, 1, 8);
 
-        var go = new GameObject($"DrumSource_{drumId}");
-        go.transform.SetParent(this.transform, false);
+        if (!_drumVoicePools.TryGetValue(drumId, out var pool) || pool == null)
+        {
+            pool = new List<AudioSource>(Mathf.Max(1, drumVoicesPerLane));
+            _drumVoicePools[drumId] = pool;
+            _drumVoiceCursor[drumId] = 0;
+        }
 
-        src = go.AddComponent<AudioSource>();
-        src.playOnAwake = false;
-        src.clip = clip;
+        // Lazily create voices for this drum
+        while (pool.Count < Mathf.Max(1, drumVoicesPerLane))
+        {
+            var go = new GameObject($"Drum{drumId:00}_Voice{pool.Count}");
+            go.transform.SetParent(this.transform, false);
 
-        _drumSources[drumId] = src;
-        return src;
+            var src = go.AddComponent<AudioSource>();
+            src.playOnAwake = false;
+            src.loop = false;
+            src.spatialBlend = 0f;
+            src.volume = 1f;
+
+            // Route into mixer if provided
+            var g = GetMixerGroupForDrum(drumId);
+            if (g != null) src.outputAudioMixerGroup = g;
+
+            pool.Add(src);
+        }
+
+        int cur = _drumVoiceCursor.TryGetValue(drumId, out var c) ? c : 0;
+        if (cur < 0 || cur >= pool.Count) cur = 0;
+
+        var voice = pool[cur];
+        _drumVoiceCursor[drumId] = (cur + 1) % pool.Count;
+
+        if (voice != null)
+        {
+            voice.clip = clip; // clip can change with kit
+            // keep output group in sync in case inspector changed
+            var g = GetMixerGroupForDrum(drumId);
+            if (g != null) voice.outputAudioMixerGroup = g;
+        }
+
+        return voice;
     }
+
+    private AudioMixerGroup GetMixerGroupForDrum(int drumId)
+    {
+        if (drumGroups != null && drumGroups.Length >= drumId && drumGroups[drumId - 1] != null)
+            return drumGroups[drumId - 1];
+        return drumMasterGroup;
+    }
+
 
     private void ScheduleDrum(int drumId, double dspTime)
     {
-        if (!_drumSources.TryGetValue(drumId, out var src) || src == null)
+        if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
             return;
 
-        // If there’s no clip, nothing to play.
-        if (src.clip == null)
-            return;
+        var src = GetOrCreateDrumVoice(drumId, clip);
+        if (src == null) return;
 
         // Scheduled playback (tight timing)
         src.Stop();
+        src.volume = 1f;
         src.PlayScheduled(dspTime);
     }
 
     private void PreviewDrum(int drumId)
     {
-        if (!_drumSources.TryGetValue(drumId, out var src) || src == null) return;
-        if (src.clip == null) return;
+        if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
+            return;
+
+        var src = GetOrCreateDrumVoice(drumId, clip);
+        if (src == null) return;
 
         src.Stop();
-        src.PlayOneShot(src.clip);
+        src.volume = 1f;
+        src.PlayOneShot(clip, 1f);
     }
 
     [SerializeField] private UIDocument uiDocument;
@@ -193,9 +267,6 @@ private string _appliedResourcesPath = null;
 
     private UIDocument _doc;
     private VisualElement _root;
-
-    // CHAIN autosave
-    private KMusicChainUI _chainUI;
     private Button _playBtn;
     private Button _stopBtn;
 
@@ -513,8 +584,6 @@ private string _appliedResourcesPath = null;
         if (_doc == null) return false;
 
         _root = _doc.rootVisualElement;
-
-        if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
         if (_root == null) return false;
 
         // Block saves until we're fully bound + we've rendered the loaded pattern
@@ -545,6 +614,29 @@ private string _appliedResourcesPath = null;
         if (_app == null) _app = FindObjectOfType<KMusicApp>();
         _bus = _app != null ? _app.Bus : null;
         ApplySampleMasterVolume();
+        // Keep mixer params in sync with ParameterBus changes.
+        if (_bus != null)
+        {
+            if (_onBusChanged == null)
+            {
+                _onBusChanged = (id, v) =>
+                {
+                    if (id == "sample.master")
+                        ApplySampleMasterVolume();
+
+                    // Only drive mixer automatically if enabled
+                    if (driveMixerFromBus && id != null && id.StartsWith("drum.vol", StringComparison.OrdinalIgnoreCase))
+                        ApplyDrumMixerFromBus();
+                };
+            }
+
+            _bus.OnChanged -= _onBusChanged;
+            _bus.OnChanged += _onBusChanged;
+        }
+
+        // Push current drum faders into the mixer right away (if assigned).
+        ApplyDrumMixerFromBus();
+
 
         // --- Kit UI ---
         _kitNameLabel = _root.Q<Label>("KitName");
@@ -559,6 +651,7 @@ private string _appliedResourcesPath = null;
 
         // Restore saved pattern / mutes / active drum.
         LoadDrumState();
+        ApplyDrumMixerFromBus();
         _didLoadState = true;
 
         // Ensure currently loaded kit matches restored index.
@@ -641,6 +734,7 @@ private string _appliedResourcesPath = null;
                     _drumMute[idx] = !_drumMute[idx];
                     ApplyMuteButtonVisual(b, _drumMute[idx]);
                     SaveDrumState();
+                    ApplyDrumMixerFromBus();
                 };
             }
 
@@ -651,18 +745,8 @@ private string _appliedResourcesPath = null;
     private static void ApplyMuteButtonVisual(Button b, bool muted)
     {
         if (b == null) return;
-
-        // USS expects .km-mute--on, but we also keep the legacy .is-muted in case.
-        if (muted)
-        {
-            b.AddToClassList("km-mute--on");
-            b.AddToClassList("is-muted");
-        }
-        else
-        {
-            b.RemoveFromClassList("km-mute--on");
-            b.RemoveFromClassList("is-muted");
-        }
+        if (muted) b.AddToClassList("is-muted");
+        else b.RemoveFromClassList("is-muted");
     }
 
     private void RefreshMuteUI()
@@ -1036,10 +1120,6 @@ private string _appliedResourcesPath = null;
 
         SaveDrumState();
 
-        // ✅ Also persist the currently-selected PatternBank entry.
-        if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
-        _chainUI?.NotifyLiveEdited();
-
         if (verbose)
             Debug.Log($"[DRUM GRID] r={r} c={c} step={step} active={_activeDrumId} v={v} shown={shown} mask=0x{_stepMask[step]:X2}");
     }
@@ -1363,9 +1443,18 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                         if (verbose)
                             Debug.Log($"[KMusicDrumSequencer] SCHED drumId={drumId} note={note} clip={clip.name} t={_nextStepDspTime:0.000}");
 
-                        float vel = GetDrumGain(drumId);
-                        if (vel > 0f)
-                            _sampler.NoteOnScheduled(note, vel, _nextStepDspTime, end);
+                        if (routeDrumsToMixer)
+                        {
+                            // Use per-drum AudioSources so Unity AudioMixer meters/gain work per channel.
+                            if (!IsDrumMuted(drumId))
+                                ScheduleDrum(drumId, _nextStepDspTime);
+                        }
+                        else
+                        {
+                            float vel = GetDrumGain(drumId);
+                            if (vel > 0f)
+                                _sampler.NoteOnScheduled(note, vel, _nextStepDspTime, end);
+                        }
                     }
                     else if (verbose)
                     {
@@ -1725,6 +1814,57 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                 Debug.Log($"[KMusicDrumSequencer] drumId={id} clip={(clip ? clip.name : "NULL")}");
             }
         }
+    }
+
+    private void ApplyDrumMixerFromBus()
+    {
+        if (drumMixer == null) return;
+        if (!driveMixerFromBus) return; // ✅ allow manual mixer control
+
+        for (int drumId = 1; drumId <= 8; drumId++)
+        {
+            float t01 = 1f;
+            if (_bus != null) t01 = Mathf.Clamp01(_bus.GetValue($"drum.vol{drumId:00}"));
+
+            float db = Vol01ToDbWithPlus6(t01);
+            if (IsDrumMuted(drumId)) db = -80f;
+
+            string param = $"{drumVolParamPrefix}{drumId:00}{drumVolParamSuffix}";
+            drumMixer.SetFloat(param, db);
+        }
+    }
+
+    /// <summary>
+    /// Maps your existing 0..1 drum fader into a mixer-style dB range:
+    /// - 0.00 -> -80 dB (effectively silent)
+    /// - 0.80 -> 0 dB (unity, matches your old "default ~ loud enough")
+    /// - 1.00 -> +6 dB (headroom above unity)
+    /// </summary>
+    private static float Vol01ToDbWithPlus6(float t01)
+    {
+        t01 = Mathf.Clamp01(t01);
+
+        if (t01 <= 0.0001f)
+            return -80f;
+
+        // Normalize so the UI range actually reaches +6
+        float normalized = Mathf.InverseLerp(0f, 1f, t01);
+
+        // Mixer-style taper
+        float db;
+
+        if (normalized < 0.8f)
+        {
+            float u = normalized / 0.8f;
+            db = Mathf.Lerp(-80f, 0f, u);
+        }
+        else
+        {
+            float u = (normalized - 0.8f) / 0.2f;
+            db = Mathf.Lerp(0f, 6f, u);
+        }
+
+        return db;
     }
 
     private float GetDrumGain(int drumId)

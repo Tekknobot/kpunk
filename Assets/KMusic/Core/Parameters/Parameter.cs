@@ -54,6 +54,41 @@ namespace KMusic.Core
 
         public string Format()
         {
+            // Special-case: drum mixer faders are stored as 0..1 in the bus,
+            // but we want to *display* mixer-style dB (-80..+6) like a real mixer.
+            // This keeps the rest of the app (which expects 0..1) intact.
+            if (!string.IsNullOrEmpty(Id) && Id.StartsWith("drum.vol", StringComparison.OrdinalIgnoreCase))
+            {
+                float t01 = Mathf.Clamp01(Value);
+
+                // Match the same taper you use when driving the Unity AudioMixer.
+                // 0.00 -> -80 dB (silent)
+                // 0.80 -> 0 dB (unity)
+                // 1.00 -> +6 dB
+                const float unityAt = 0.80f;
+                float db;
+
+                if (t01 <= 0.0001f)
+                {
+                    // -inf reads nicer than a hard floor.
+                    return "-\u221E dB";
+                }
+
+                if (t01 < unityAt)
+                {
+                    float u = Mathf.Clamp01(t01 / unityAt);
+                    db = Mathf.Lerp(-80f, 0f, u);
+                }
+                else
+                {
+                    float u = Mathf.Clamp01((t01 - unityAt) / (1f - unityAt));
+                    db = Mathf.Lerp(0f, 6f, u);
+                }
+
+                if (db >= 0f) return $"+{db:0.#} dB";
+                return $"{db:0} dB";
+            }
+
             if (Unit == "bpm") return $"{Mathf.RoundToInt(Value)} BPM";
             if (Unit == "ms") return $"{Mathf.RoundToInt(Value)} ms";
             if (Unit == "%") return $"{Mathf.RoundToInt(Value)}%";
