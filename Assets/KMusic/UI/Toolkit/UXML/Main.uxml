@@ -242,7 +242,7 @@
                       <km:KnobElement name="SampleMasterVol" label="CHOP VOL" paramId="sample.master" style="width:90px; height:90px;" />
                   </ui:VisualElement> 
               </ui:VisualElement>
-              
+
             <!-- Chop Picker (2 rows x 8) -->
             <ui:VisualElement class="km-card">
               <ui:Label class="km-subtitle" text="CHOP PICKER"/>
@@ -456,12 +456,14 @@
         <ui:VisualElement name="ChainBarsCard" class="km-card">
           <ui:VisualElement class="km-row" style="align-items:center; justify-content:space-between;">
             <ui:Label class="km-subtitle" text="BARS"/>
-            <ui:VisualElement class="km-row" style="align-items:center;">
-              <ui:Button name="ChainClearButton" class="km-pillbtn km-pillbtn--chain" text="CLEAR" />
-              <ui:Button name="ChainLen16Button" class="km-pillbtn km-pillbtn--chain" text="16" />
-              <ui:Button name="ChainLen32Button" class="km-pillbtn km-pillbtn--chain" text="32" />
-              <ui:Button name="ChainLen64Button" class="km-pillbtn km-pillbtn--chain" text="64" />
-            </ui:VisualElement>
+              <ui:VisualElement class="km-row" style="align-items:center;">
+                <ui:Button name="ChainClearButton" class="km-pillbtn km-pillbtn--chain" text="CLEAR" />
+                <ui:Button name="ChainLen2Button" class="km-pillbtn km-pillbtn--chain" text="2" />
+                <ui:Button name="ChainLen4Button" class="km-pillbtn km-pillbtn--chain" text="4" />
+                <ui:Button name="ChainLen8Button" class="km-pillbtn km-pillbtn--chain" text="8" />
+                <ui:Button name="ChainLen16Button" class="km-pillbtn km-pillbtn--chain" text="16" />
+                <ui:Button name="ChainLen32Button" class="km-pillbtn km-pillbtn--chain" text="32" />
+              </ui:VisualElement>
           </ui:VisualElement>
 
           <ui:ScrollView name="ChainScroll" class="km-chain-scroll" style="margin-top:12px; height:1200px;">

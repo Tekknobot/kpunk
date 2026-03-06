@@ -31,7 +31,7 @@ public class KMusicChainUI : MonoBehaviour
     private Label _statusLabel;
     private VisualElement _barsRoot;
     private Button _btnNew, _btnSave, _btnDup, _btnPlace, _btnDupNext;
-    private Button _btnClear, _btnLen16, _btnLen32, _btnLen64;
+    private Button _btnClear, _btnLen2, _btnLen4, _btnLen8, _btnLen16, _btnLen32, _btnLen64;
 
     private readonly List<Button> _barButtons = new();
     private bool _uiWired = false;
@@ -122,6 +122,9 @@ public class KMusicChainUI : MonoBehaviour
         _btnDupNext = root.Q<Button>("ChainDupNextButton");
 
         _btnClear = root.Q<Button>("ChainClearButton");
+        _btnLen2 = root.Q<Button>("ChainLen2Button");
+        _btnLen4 = root.Q<Button>("ChainLen4Button");
+        _btnLen8 = root.Q<Button>("ChainLen8Button");
         _btnLen16 = root.Q<Button>("ChainLen16Button");
         _btnLen32 = root.Q<Button>("ChainLen32Button");
         _btnLen64 = root.Q<Button>("ChainLen64Button");
@@ -143,10 +146,20 @@ public class KMusicChainUI : MonoBehaviour
         if (_btnPlace != null) _btnPlace.clicked += OnPlaceHere;
         if (_btnDupNext != null) _btnDupNext.clicked += OnDupNext;
 
-        if (_btnClear != null) _btnClear.clicked += () => { _chain.Clear(); _chain.Save(); RefreshBarsUI(); SetStatus("Chain cleared"); };
-        if (_btnLen16 != null) _btnLen16.clicked += () => { _chain.length = 16; _chain.Save(); RefreshBarsUI(); };
-        if (_btnLen32 != null) _btnLen32.clicked += () => { _chain.length = 32; _chain.Save(); RefreshBarsUI(); };
-        if (_btnLen64 != null) _btnLen64.clicked += () => { _chain.length = 64; _chain.Save(); RefreshBarsUI(); };
+        if (_btnClear != null) _btnClear.clicked += () =>
+        {
+            _chain.Clear();
+            _chain.Save();
+            RefreshBarsUI();
+            SetStatus("Chain cleared");
+        };
+
+        if (_btnLen2 != null) _btnLen2.clicked += () => SetChainLength(2);
+        if (_btnLen4 != null) _btnLen4.clicked += () => SetChainLength(4);
+        if (_btnLen8 != null) _btnLen8.clicked += () => SetChainLength(8);
+        if (_btnLen16 != null) _btnLen16.clicked += () => SetChainLength(16);
+        if (_btnLen32 != null) _btnLen32.clicked += () => SetChainLength(32);
+        if (_btnLen64 != null) _btnLen64.clicked += () => SetChainLength(64);
 
         BuildBarsIfNeeded();
         _uiWired = true;
@@ -401,6 +414,19 @@ public class KMusicChainUI : MonoBehaviour
     private void SetStatus(string msg)
     {
         if (_statusLabel != null) _statusLabel.text = msg ?? "";
+    }
+
+    private void SetChainLength(int newLength)
+    {
+        if (_chain == null) return;
+
+        _chain.length = Mathf.Clamp(newLength, 1, 64);
+        _chain.cursor = Mathf.Clamp(_chain.cursor, 0, _chain.length - 1);
+        _playBar = Mathf.Clamp(_playBar, 0, _chain.length - 1);
+
+        _chain.Save();
+        RefreshBarsUI();
+        SetStatus($"Chain length: {_chain.length} bars");
     }
 
     // ----------------------------
