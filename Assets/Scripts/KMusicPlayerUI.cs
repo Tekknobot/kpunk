@@ -1172,23 +1172,22 @@ private void Awake()
     {
         if (_clip == null || _clip.length <= 0f) return;
 
-        // Markers are chop START points, so to get 4 / 8 / 16 playable chops
-        // we place one extra closing marker at the end of the auto layout.
         _chops01.Clear();
 
-        int markerCount = Mathf.Clamp(divisions + 1, 1, 17);
-        for (int i = 1; i <= markerCount; i++)
+        divisions = Mathf.Clamp(divisions, 1, 16);
+
+        // first chop always starts at 0
+        _chops01.Add(0f);
+
+        for (int i = 1; i < divisions; i++)
         {
-            float t01 = i / (float)(divisions + 1);
-
-            // Keep the final closing marker just inside the clip so it remains draggable.
-            if (i == markerCount)
-                t01 = Mathf.Min(t01, 0.999f);
-
-            if (t01 < 0.01f) t01 = 0.01f;
-            if (t01 > 0.999f) t01 = 0.999f;
+            float t01 = i / (float)divisions;
+            t01 = Mathf.Clamp(t01, 0f, 0.999f);
             _chops01.Add(t01);
         }
+
+        // closing marker near end so final chop has an end
+        _chops01.Add(0.999f);
 
         _selectedMarkerIndex = _chops01.Count > 0 ? 0 : -1;
         SyncMarkersToWave();
@@ -1196,7 +1195,7 @@ private void Awake()
         PersistMarkersIfPossible();
         UpdateTrackTitle($"AUTO {divisions}");
     }
-
+    
     private static float Snap01(float t01, int div)
     {
         if (div <= 1) return Mathf.Clamp01(t01);

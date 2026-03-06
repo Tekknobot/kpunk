@@ -342,5 +342,11 @@ namespace KMusic
 
             return false;
         }
+
+        public void RequestPullFromHelm()
+        {
+            PullHelmToBus();
+            _lastSent.Clear();
+        }        
     }
 }
