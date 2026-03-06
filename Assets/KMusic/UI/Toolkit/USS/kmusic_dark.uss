@@ -277,6 +277,12 @@ color: var(--muted);
 font-size: 24px;
 }
 
+.is-muted {
+    background-color: rgb(90, 30, 30);
+    color: rgb(255, 170, 170);
+    opacity: 0.8;
+}
+
 .km-chain-scroll {
 border-radius: var(--radius-md);
 border-width: 2px;

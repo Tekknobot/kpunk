@@ -820,24 +820,23 @@ private string _appliedResourcesPath = null;
         // --- step mask (prefer KMusicSaveState, fallback to PlayerPrefs base64) ---
         byte[] loaded = null;
 
-        // Namespaced key for SaveState path
         string kMask = ProjectPrefs.Key(PrefKey_DrumStepMask);
+        string kMutes = ProjectPrefs.Key(PrefKey_DrumMutes);
 
-        // 1) Try SaveState — NOW namespaced
+        // 1) Try SaveState
         try
         {
             loaded = KMusicSaveState.LoadBytes(kMask, 16);
-            if (verbose) Debug.Log($"[DRUM LOAD] hasB64={ProjectPrefs.HasKey(PrefKey_DrumStepMask_B64)} mask0=0x{_stepMask[0]:X2}");
         }
         catch
         {
             loaded = null;
         }
 
-        // IMPORTANT: if SaveState returns "blank but valid length", treat as missing
+        // IMPORTANT: if SaveState returns blank-but-valid, treat as missing
         bool treatAsMissing = (loaded == null || loaded.Length == 0 || IsAllZero(loaded));
 
-        // 2) Fallback to PlayerPrefs base64 if missing/blank
+        // 2) Fallback to PlayerPrefs base64
         if (treatAsMissing)
         {
             try
@@ -868,10 +867,43 @@ private string _appliedResourcesPath = null;
         }
         else
         {
-            // Optional: ensure no stale data sticks around if nothing was loaded
-            if (_stepMask != null) Array.Clear(_stepMask, 0, _stepMask.Length);
+            if (_stepMask != null)
+                Array.Clear(_stepMask, 0, _stepMask.Length);
         }
-    }
+
+        // --- restore mutes ---
+        try
+        {
+            var loadedMutes = KMusicSaveState.LoadBools(kMutes, 8);
+            if (loadedMutes != null)
+            {
+                for (int i = 0; i < _drumMute.Length; i++)
+                    _drumMute[i] = (i < loadedMutes.Length) ? loadedMutes[i] : false;
+            }
+            else
+            {
+                Array.Clear(_drumMute, 0, _drumMute.Length);
+            }
+        }
+        catch
+        {
+            Array.Clear(_drumMute, 0, _drumMute.Length);
+        }
+
+        // --- restore active drum ---
+        _activeDrumId = Mathf.Clamp(ProjectPrefs.GetInt(PrefKey_DrumActive, 1), 1, 8);
+
+        // --- restore kit index ---
+        _kitIndex = Mathf.Max(0, ProjectPrefs.GetInt(PrefKey_DrumKitIndex, 0));
+
+        if (verbose)
+        {
+            Debug.Log(
+                $"[DRUM LOAD] mask0=0x{_stepMask[0]:X2} " +
+                $"mutes=[{string.Join(",", _drumMute)}] active={_activeDrumId} kit={_kitIndex}"
+            );
+        }
+    } 
     
     // ---------------- END SAVE/LOAD (PATCHED) ----------------
     private void OnApplicationPause(bool pause)
