@@ -668,68 +668,101 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_samplerUi != null) _samplerUi.SetAllowSaving(false);
         if (_keys != null) _keys.SetAllowSaving(false);
 
-        if (_app != null && _app.Bus != null && data.bus != null)
+        try
         {
-            for (int i = 0; i < data.bus.Count; i++)
+            // hard clear current live state first so nothing from the previous
+            // project survives if the new one has fewer active cells
+            if (_drums != null)
             {
-                var it = data.bus[i];
-                if (it == null || string.IsNullOrEmpty(it.id)) continue;
-                _app.Bus.SetValue(it.id, it.v);
+                _drums.ApplyDrumMask(null);
+                _drums.ApplySampleStepsFlat(null);
+                _drums.ApplyDrumMutes(null);
             }
-        }
 
-        if (data.patterns != null)
-            PatternBank.ImportAll(data.patterns);
+            if (_samplerUi != null)
+                _samplerUi.ApplySampleStepsFlat(null);
 
-        if (data.chain != null)
-            data.chain.ApplyToPrefs();
-
-        if (_drums != null && data.drums != null)
-        {
-            byte[] mask = null;
-            try
+            if (_keys != null)
             {
-                if (!string.IsNullOrEmpty(data.drums.stepMaskB64))
-                    mask = Convert.FromBase64String(data.drums.stepMaskB64);
+                _keys.ApplySeqStepsFlat(null);
+                _keys.RebuildSynthSequenceNow();
             }
-            catch { mask = null; }
 
-            _drums.ApplyDrumMask(mask);
-            _drums.ApplySampleStepsFlat(data.drums.sampleSteps);
-            _drums.ApplyDrumMutes(data.drums.mutes);
-            _drums.ApplyKitIndex(data.drums.kitIndex);
-            _drums.ApplyActiveDrumId(data.drums.activeDrumId);
-        }
-
-        if (_samplerUi != null && data.sampler != null)
-            _samplerUi.ApplySampleStepsFlat(data.sampler.stepGrid);
-
-        if (_keys != null && data.seq != null)
-        {
-            _keys.ApplySeqStepsFlat(data.seq.stepGrid);
-            _keys.RebuildSynthSequenceNow();
-        }
-
-        if (_helm != null && data.synth != null)
-            _helm.ApplyPresetChoice(data.synth.presetIndex, data.synth.presetRelPath);
-
-        if (data.chops != null && !string.IsNullOrEmpty(data.chops.resourcesPath))
-            KMusicChopState.SetAppliedRaw(data.chops.resourcesPath, data.chops.sliceStart01, data.chops.sliceEnd01);
-        else
             KMusicChopState.ClearApplied();
 
-        if (_player != null && data.player != null)
-        {
-            _player.SetLastTrackId(data.player.lastTrackId);
-            _player.RefreshAppliedMarkersFromState();
+            if (_player != null)
+            {
+                _player.SetLastTrackId(null);
+                _player.RefreshAppliedMarkersFromState();
+            }
+
+            if (_app != null && _app.Bus != null && data.bus != null)
+            {
+                for (int i = 0; i < data.bus.Count; i++)
+                {
+                    var it = data.bus[i];
+                    if (it == null || string.IsNullOrEmpty(it.id)) continue;
+                    _app.Bus.SetValue(it.id, it.v);
+                }
+            }
+
+            if (data.patterns != null)
+                PatternBank.ImportAll(data.patterns);
+
+            if (data.chain != null)
+                data.chain.ApplyToPrefs();
+
+            if (_drums != null && data.drums != null)
+            {
+                byte[] mask = null;
+                try
+                {
+                    if (!string.IsNullOrEmpty(data.drums.stepMaskB64))
+                        mask = Convert.FromBase64String(data.drums.stepMaskB64);
+                }
+                catch
+                {
+                    mask = null;
+                }
+
+                _drums.ApplyDrumMask(mask);
+                _drums.ApplySampleStepsFlat(data.drums.sampleSteps);
+                _drums.ApplyDrumMutes(data.drums.mutes);
+                _drums.ApplyKitIndex(data.drums.kitIndex);
+            }
+
+            if (_samplerUi != null && data.sampler != null)
+                _samplerUi.ApplySampleStepsFlat(data.sampler.stepGrid);
+
+            if (_keys != null && data.seq != null)
+            {
+                _keys.ApplySeqStepsFlat(data.seq.stepGrid);
+                _keys.RebuildSynthSequenceNow();
+            }
+
+            if (_helm != null && data.synth != null)
+                _helm.ApplyPresetChoice(data.synth.presetIndex, data.synth.presetRelPath);
+
+            if (data.chops != null && !string.IsNullOrEmpty(data.chops.resourcesPath))
+                KMusicChopState.SetAppliedRaw(data.chops.resourcesPath, data.chops.sliceStart01, data.chops.sliceEnd01);
+            else
+                KMusicChopState.ClearApplied();
+
+            if (_player != null && data.player != null)
+            {
+                _player.SetLastTrackId(data.player.lastTrackId);
+                _player.RefreshAppliedMarkersFromState();
+            }
+
+            if (_chainUi != null)
+                _chainUi.ReloadFromSaved();
         }
-
-        if (_chainUi != null)
-            _chainUi.ReloadFromSaved();
-
-        if (_drums != null) _drums.SetAllowSaving(true);
-        if (_samplerUi != null) _samplerUi.SetAllowSaving(true);
-        if (_keys != null) _keys.SetAllowSaving(true);
+        finally
+        {
+            if (_drums != null) _drums.SetAllowSaving(true);
+            if (_samplerUi != null) _samplerUi.SetAllowSaving(true);
+            if (_keys != null) _keys.SetAllowSaving(true);
+        }
     }
 
     private void ResetToBlank()

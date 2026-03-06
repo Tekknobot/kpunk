@@ -904,7 +904,7 @@ private string _appliedResourcesPath = null;
             );
         }
     } 
-    
+
     // ---------------- END SAVE/LOAD (PATCHED) ----------------
     private void OnApplicationPause(bool pause)
     {
@@ -1610,13 +1610,62 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         if (_sampleChopByStep == null || _sampleChopByStep.Length != steps)
             _sampleChopByStep = new int[steps];
 
+        // 1) clear internal data
         Array.Clear(_sampleChopByStep, 0, _sampleChopByStep.Length);
+
+        // 2) clear UI hard
+        if (_gridSample != null)
+        {
+            _suppressGridEvents = true;
+            _suppressGridCallbacks = true;
+            try
+            {
+                _gridSample.ClearAll();
+                _gridSample.SetPlayheadStep(-1);
+            }
+            finally
+            {
+                _suppressGridCallbacks = false;
+                _suppressGridEvents = false;
+            }
+        }
+
+        // 3) copy loaded data
         if (flat != null)
             Array.Copy(flat, _sampleChopByStep, Mathf.Min(flat.Length, _sampleChopByStep.Length));
 
-        _didLoadSamplePattern = true; // ✅ critical: prevents Play from overwriting from prefs    
+        _didLoadSamplePattern = true;
+
+        // 4) redraw UI from loaded data
+        try
+        {
+            RefreshSampleGrid();
+        }
+        catch { }
     }
-    
+
+    private void RefreshSampleGrid()
+    {
+        if (_gridSample == null || _sampleChopByStep == null) return;
+
+        _suppressGridCallbacks = true;
+        try
+        {
+            for (int step = 0; step < steps; step++)
+            {
+                int r = step / 8;
+                int c = step % 8;
+
+                int chopId = _sampleChopByStep[step];
+                _gridSample.SetValue(r, c, chopId);
+            }
+        }
+        finally
+        {
+            _suppressGridCallbacks = false;
+        }
+    }
+
     private int _auditionToken = 0;
 
     public void AuditionChop(int chopId)
