@@ -28,11 +28,13 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private Label _presetLabel;
     private Button _newBtn;
     private Button _loadBtn;
+    private Button _deleteBtn;
 
     // Modal
     private VisualElement _modal;
     private VisualElement _modalList;
     private Label _modalTitle;
+    private readonly Dictionary<int, string> _cachedProjectNames = new();
 
     // Runtime refs
     private KMusicApp _app;
@@ -90,6 +92,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         _presetBrowser = root.Q<VisualElement>("PresetBrowser");
         _newBtn = root.Q<Button>("NewFileButton");
         _loadBtn = root.Q<Button>("LoadButton");
+        _deleteBtn = root.Q<Button>("DeleteProjectButton");
 
         if (_newBtn != null)
         {
@@ -103,6 +106,12 @@ public sealed class KMusicProjectManager : MonoBehaviour
             _loadBtn.clicked += OnLoadClicked;
         }
 
+        if (_deleteBtn != null)
+        {
+            _deleteBtn.clicked -= OnDeleteClicked;
+            _deleteBtn.clicked += OnDeleteClicked;
+        }
+
         EnsureModal(root);
     }
 
@@ -111,6 +120,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_modal != null) return;
 
         _modal = new VisualElement { name = "ProjectModal" };
+        _modal.AddToClassList("km-project-modal");
         _modal.style.position = Position.Absolute;
         _modal.style.left = 0;
         _modal.style.right = 0;
@@ -121,6 +131,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         _modal.pickingMode = PickingMode.Position;
 
         var card = new VisualElement();
+        card.AddToClassList("km-project-card");
         card.style.position = Position.Absolute;
         card.style.left = 32;
         card.style.right = 32;
@@ -138,12 +149,14 @@ public sealed class KMusicProjectManager : MonoBehaviour
         card.style.flexDirection = FlexDirection.Column;
 
         _modalTitle = new Label("PROJECTS");
+        _modalTitle.AddToClassList("km-project-title");
         _modalTitle.style.unityFontStyleAndWeight = FontStyle.Bold;
-        _modalTitle.style.fontSize = 26;
+        _modalTitle.style.fontSize = 36;
         _modalTitle.style.marginBottom = 12;
         card.Add(_modalTitle);
 
         var row = new VisualElement();
+        row.AddToClassList("km-project-toolbar");
         row.style.flexDirection = FlexDirection.Row;
         row.style.justifyContent = Justify.SpaceBetween;
         row.style.alignItems = Align.Center;
@@ -151,14 +164,18 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
         var saveBtn = new Button(() => { SaveProject(CurrentSlot); HideModal(); }) { text = "SAVE" };
         saveBtn.AddToClassList("km-pillbtn");
+        saveBtn.AddToClassList("km-project-toolbar-btn");
         row.Add(saveBtn);
 
         var closeBtn = new Button(HideModal) { text = "CLOSE" };
         closeBtn.AddToClassList("km-pillbtn");
+        closeBtn.AddToClassList("km-project-toolbar-btn");
+        closeBtn.AddToClassList("km-project-toolbar-btn--secondary");
         row.Add(closeBtn);
         card.Add(row);
 
         _modalList = new ScrollView(ScrollViewMode.Vertical);
+        _modalList.AddToClassList("km-project-scroll");
         _modalList.style.flexGrow = 1;
         card.Add(_modalList);
 
@@ -191,6 +208,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
         ShowModal();
     }
 
+    private void OnDeleteClicked()
+    {
+        DeleteProject(CurrentSlot, closeModal: false);
+    }
+
     private int FindNextFreeSlot(int start)
     {
         for (int i = 1; i <= 200; i++)
@@ -217,7 +239,74 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private void UpdatePresetLabel()
     {
         if (_presetLabel != null)
-            _presetLabel.text = $"Preset: PROJECT {CurrentSlot}";
+            _presetLabel.text = $"Preset: {GetProjectDisplayName(CurrentSlot)}";
+    }
+
+    private string DefaultProjectName(int slot) => $"PROJECT {slot:000}";
+
+    private string GetProjectDisplayName(int slot)
+    {
+        string raw = GetStoredProjectName(slot);
+        return string.IsNullOrWhiteSpace(raw) ? DefaultProjectName(slot) : raw.Trim();
+    }
+
+    private string GetStoredProjectName(int slot)
+    {
+        if (_cachedProjectNames.TryGetValue(slot, out var cached))
+            return cached;
+
+        string path = SlotPath(slot);
+        if (!File.Exists(path))
+            return null;
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            var data = JsonUtility.FromJson<ProjectData>(json);
+            string value = data != null ? data.projectName : null;
+            _cachedProjectNames[slot] = value;
+            return value;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private bool RenameProject(int slot, string newName)
+    {
+        string clean = string.IsNullOrWhiteSpace(newName) ? DefaultProjectName(slot) : newName.Trim();
+        string path = SlotPath(slot);
+        if (!File.Exists(path))
+            return false;
+
+        try
+        {
+            var data = JsonUtility.FromJson<ProjectData>(File.ReadAllText(path));
+            if (data == null)
+                data = new ProjectData();
+
+            data.projectName = clean;
+            if (data.slot <= 0 && slot != 0)
+                data.slot = slot;
+            if (data.ver <= 0)
+                data.ver = ProjectVer;
+            if (data.utc <= 0)
+                data.utc = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+            File.WriteAllText(path, JsonUtility.ToJson(data));
+            _cachedProjectNames[slot] = clean;
+
+            if (slot == CurrentSlot)
+                UpdatePresetLabel();
+
+            return true;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[Project] Rename failed: " + e.Message);
+            return false;
+        }
     }
 
     private void ShowModal()
@@ -261,6 +350,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
             bool has = File.Exists(path);
 
             var row = new VisualElement();
+            row.AddToClassList("km-project-row");
+            if (slot == CurrentSlot)
+                row.AddToClassList("km-project-row--current");
             row.style.flexDirection = FlexDirection.Column;
             row.style.marginBottom = 12;
             row.style.paddingLeft = 14;
@@ -273,22 +365,73 @@ public sealed class KMusicProjectManager : MonoBehaviour
             row.style.borderBottomRightRadius = 14;
             row.style.backgroundColor = new Color(0.12f, 0.13f, 0.16f, 1f);
 
-            // Title
-            var label = new Label(has ? $"PROJECT {slot:000}" : $"PROJECT {slot:000} (empty)");
-            label.style.fontSize = 22;
-            label.style.unityFontStyleAndWeight = FontStyle.Bold;
-            label.style.color = Color.white;
+            var headerRow = new VisualElement();
+            headerRow.AddToClassList("km-project-row-header");
+            headerRow.style.flexDirection = FlexDirection.Row;
+            headerRow.style.justifyContent = Justify.SpaceBetween;
+            headerRow.style.alignItems = Align.Center;
+            row.Add(headerRow);
+
+            var slotLabel = new Label(GetProjectDisplayName(slot));
+            slotLabel.AddToClassList("km-project-slot");
+            headerRow.Add(slotLabel);
+
+            string desc;
+            if (!has)
+                desc = $"Project {slot:000} • Empty slot ready for a new project.";
+            else if (slot == CurrentSlot)
+                desc = $"Project {slot:000} • Current project. You can rename, save, or delete it.";
+            else
+                desc = $"Project {slot:000} • Ready to load or delete.";
+
+            var label = new Label(desc);
+            label.AddToClassList("km-project-name");
             row.Add(label);
 
-            // Buttons row (THIS is fix 2)
             var btnRow = new VisualElement();
+            btnRow.AddToClassList("km-project-actions");
             btnRow.style.flexDirection = FlexDirection.Row;
             btnRow.style.marginTop = 10;
             row.Add(btnRow);
 
             if (has)
             {
-                // ✅ LOAD (saves current first)
+                if (slot == CurrentSlot)
+                {
+                    var renameRow = new VisualElement();
+                    renameRow.AddToClassList("km-project-rename-row");
+                    renameRow.style.flexDirection = FlexDirection.Row;
+                    renameRow.style.alignItems = Align.Center;
+                    renameRow.style.justifyContent = Justify.FlexStart;
+                    renameRow.style.width = Length.Percent(100);
+                    renameRow.style.marginTop = 10;
+
+                    var renameField = new TextField();
+                    renameField.value = GetProjectDisplayName(slot);
+                    renameField.label = string.Empty;
+                    renameField.AddToClassList("km-project-rename-field");
+                    renameField.style.flexGrow = 1;
+                    renameField.style.minWidth = 0;
+                    renameField.style.marginRight = 8;
+                    renameRow.Add(renameField);
+
+                    var btnRename = new Button(() =>
+                    {
+                        if (RenameProject(slot, renameField.value))
+                            BuildProjectList();
+                    })
+                    { text = "RENAME" };
+                    btnRename.AddToClassList("km-pillbtn");
+                    btnRename.AddToClassList("km-project-action-btn");
+                    btnRename.AddToClassList("km-project-rename-btn");
+                    btnRename.style.flexShrink = 0;
+                    btnRename.style.width = 110;
+                    btnRename.style.minWidth = 110;
+                    renameRow.Add(btnRename);
+
+                    row.Add(renameRow);
+                }
+
                 var btnLoad = new Button(() =>
                 {
                     SaveProject(CurrentSlot);
@@ -298,11 +441,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 })
                 { text = "LOAD" };
                 btnLoad.AddToClassList("km-pillbtn");
+                btnLoad.AddToClassList("km-project-action-btn");
                 btnLoad.style.flexGrow = 1;
                 btnLoad.style.height = 54;
                 btnRow.Add(btnLoad);
 
-                // ✅ LOAD (NO SAVE)
                 var btnNoSave = new Button(() =>
                 {
                     SwitchToSlot(slot);
@@ -311,13 +454,26 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 })
                 { text = "LOAD (NO SAVE)" };
                 btnNoSave.AddToClassList("km-pillbtn");
+                btnNoSave.AddToClassList("km-project-action-btn");
+                btnNoSave.AddToClassList("km-project-action-btn--secondary");
                 btnNoSave.style.flexGrow = 1;
                 btnNoSave.style.height = 54;
                 btnRow.Add(btnNoSave);
+
+                var btnDelete = new Button(() =>
+                {
+                    DeleteProject(slot);
+                })
+                { text = "DELETE" };
+                btnDelete.AddToClassList("km-pillbtn");
+                btnDelete.AddToClassList("km-pillbtn--danger");
+                btnDelete.AddToClassList("km-project-action-btn");
+                btnDelete.style.flexGrow = 1;
+                btnDelete.style.height = 54;
+                btnRow.Add(btnDelete);
             }
             else
             {
-                // ✅ CREATE (saves current, switches slot, blanks, saves new file)
                 var btnCreate = new Button(() =>
                 {
                     SaveProject(CurrentSlot);
@@ -328,12 +484,46 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 })
                 { text = "CREATE" };
                 btnCreate.AddToClassList("km-pillbtn");
+                btnCreate.AddToClassList("km-project-action-btn");
                 btnCreate.style.flexGrow = 1;
                 btnCreate.style.height = 54;
                 btnRow.Add(btnCreate);
             }
 
             _modalList.Add(row);
+        }
+    }
+
+    public void DeleteProject(int slot, bool closeModal = true)
+    {
+        EnsureProjectsDir();
+
+        string path = SlotPath(slot);
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+            _cachedProjectNames.Remove(slot);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[Project] Delete failed: " + e.Message);
+            return;
+        }
+
+        if (slot == CurrentSlot)
+        {
+            FindRuntimeRefs();
+            ResetToBlank();
+        }
+
+        UpdatePresetLabel();
+
+        if (_modal != null && _modal.style.display == DisplayStyle.Flex)
+        {
+            BuildProjectList();
+            if (closeModal)
+                HideModal();
         }
     }
 
@@ -353,6 +543,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         public int ver;
         public int slot;
         public long utc;
+        public string projectName;
 
         public List<BusPair> bus = new();
         public DrumState drums = new();
@@ -393,6 +584,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             ver = ProjectVer,
             slot = slot,
             utc = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            projectName = slot == CurrentSlot ? GetProjectDisplayName(CurrentSlot) : GetProjectDisplayName(slot),
         };
 
         if (_app != null && _app.Bus != null)
@@ -439,6 +631,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         try
         {
             File.WriteAllText(SlotPath(slot), JsonUtility.ToJson(data));
+            _cachedProjectNames[slot] = data.projectName;
         }
         catch (Exception e)
         {
@@ -520,11 +713,16 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_helm != null && data.synth != null)
             _helm.ApplyPresetChoice(data.synth.presetIndex, data.synth.presetRelPath);
 
-        if (_player != null && data.player != null)
-            _player.SetLastTrackId(data.player.lastTrackId);
-
         if (data.chops != null && !string.IsNullOrEmpty(data.chops.resourcesPath))
             KMusicChopState.SetAppliedRaw(data.chops.resourcesPath, data.chops.sliceStart01, data.chops.sliceEnd01);
+        else
+            KMusicChopState.ClearApplied();
+
+        if (_player != null && data.player != null)
+        {
+            _player.SetLastTrackId(data.player.lastTrackId);
+            _player.RefreshAppliedMarkersFromState();
+        }
 
         if (_chainUi != null)
             _chainUi.ReloadFromSaved();

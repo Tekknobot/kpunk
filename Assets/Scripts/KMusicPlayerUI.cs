@@ -38,10 +38,19 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private Button _btnAuto4, _btnAuto8, _btnAuto16;
     private Button _btnAddMode, _btnDelMode, _btnSnap, _btnReset;
+    private Button _btnMarkerPrev, _btnMarkerNext, _btnNudgeNeg10, _btnNudgeNeg01, _btnNudgePos01, _btnNudgePos10;
+    private readonly List<Button> _chopPickerButtons = new();
+    private Label _markerNavLabel;
 
     private bool _markerAddMode = true;
     private bool _snapEnabled = true;
     private int _snapDiv = 16;
+
+    private const float MinMarkerGapSeconds = 0.05f;
+    private const float MarkerAuditionThrottle = 0.075f;
+    private float _lastMarkerAuditionRealtime = -999f;
+    private Coroutine _markerPreviewCoroutine;
+    private int _selectedMarkerIndex = -1;
 
     // Markers: normalized [0..1], 0 and 1 are implied boundaries when applying.
     private readonly List<float> _chops01 = new();
@@ -87,13 +96,63 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (string.IsNullOrEmpty(id)) return;
         SaveLastTrackId(id);
-        // Best-effort: if we're already ready, try to load the track.
+
         try
         {
-            // This will be no-op if the id isn't in Resources and device isn't ready.
-            // LoadLastTrackOnEnable();
+            LoadTrackById(id);
         }
-        catch { }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[Player] SetLastTrackId load failed: " + e.Message);
+        }
+    }
+
+    public void RefreshAppliedMarkersFromState()
+    {
+        RestoreMarkersFromAppliedState();
+    }
+
+    private void LoadTrackById(string id)
+    {
+        if (string.IsNullOrEmpty(id))
+            return;
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (id.StartsWith("uri:"))
+        {
+            string want = id.Substring(4);
+            if (_deviceTracks != null && _deviceTracks.Length > 0)
+            {
+                for (int i = 0; i < _deviceTracks.Length; i++)
+                {
+                    if (_deviceTracks[i] != null && _deviceTracks[i].uri == want)
+                    {
+                        LoadDeviceTrackByIndex(i);
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+#endif
+
+        if (id.StartsWith("res:"))
+        {
+            string wantPath = id.Substring(4);
+            RefreshClipList();
+            if (_clips != null && _clips.Length > 0)
+            {
+                string wantName = wantPath.Contains("/") ? wantPath.Substring(wantPath.LastIndexOf('/') + 1) : wantPath;
+                for (int i = 0; i < _clips.Length; i++)
+                {
+                    if (_clips[i] != null && (_clips[i].name == wantName || ($"{resourcesFolder}/" + _clips[i].name) == wantPath))
+                    {
+                        LoadClipByIndex(i);
+                        return;
+                    }
+                }
+            }
+        }
     }
 
 private void Awake()
@@ -151,6 +210,14 @@ private void Awake()
         _btnDelMode = page.Q<Button>("MarkerDelMode");
         _btnSnap = page.Q<Button>("SnapToggle");
         _btnReset = page.Q<Button>("ResetMarkers");
+        _btnMarkerPrev = page.Q<Button>("MarkerPrev");
+        _btnMarkerNext = page.Q<Button>("MarkerNext");
+        _btnNudgeNeg10 = page.Q<Button>("MarkerNudgeNeg10");
+        _btnNudgeNeg01 = page.Q<Button>("MarkerNudgeNeg01");
+        _btnNudgePos01 = page.Q<Button>("MarkerNudgePos01");
+        _btnNudgePos10 = page.Q<Button>("MarkerNudgePos10");
+        _markerNavLabel = page.Q<Label>("MarkerNavLabel");
+        BindPlayerChopPicker(page);
 
         _timeLabel = page.Q<Label>("TimeLabel");
         _durLabel = page.Q<Label>("DurLabel");
@@ -178,6 +245,9 @@ private void Awake()
         // ✅ Touch/click interaction on waveform.
         _wave.UserPointer01 -= OnWavePointer01;
         _wave.UserPointer01 += OnWavePointer01;
+        _wave.MarkerDrag01 -= OnWaveMarkerDrag01;
+        _wave.MarkerDrag01 += OnWaveMarkerDrag01;
+        _wave.MarkersDraggable = _chopArmed;
 
         // Wire buttons
         if (_btnPlay != null) _btnPlay.clicked += OnPlayClicked;
@@ -203,9 +273,16 @@ private void Awake()
 
         if (_btnSnap != null) _btnSnap.clicked += () => ToggleSnap();
         if (_btnReset != null) _btnReset.clicked += ResetAllMarkers;
+        if (_btnMarkerPrev != null) _btnMarkerPrev.clicked += SelectPreviousMarker;
+        if (_btnMarkerNext != null) _btnMarkerNext.clicked += SelectNextMarker;
+        if (_btnNudgeNeg10 != null) _btnNudgeNeg10.clicked += () => NudgeSelectedMarkerSeconds(-0.10f);
+        if (_btnNudgeNeg01 != null) _btnNudgeNeg01.clicked += () => NudgeSelectedMarkerSeconds(-0.01f);
+        if (_btnNudgePos01 != null) _btnNudgePos01.clicked += () => NudgeSelectedMarkerSeconds(0.01f);
+        if (_btnNudgePos10 != null) _btnNudgePos10.clicked += () => NudgeSelectedMarkerSeconds(0.10f);
 
         SetMarkerMode(true);
         SetSnapState(_snapEnabled);
+        UpdateMarkerNavigatorUI();
 
         _root.schedule.Execute(UpdatePlayheadUI).Every(33);
 
@@ -275,9 +352,105 @@ private void Awake()
         else if (_clips.Length == 0) UpdateTrackTitle("NO TRACKS");
     }
 
+    private void RestoreMarkersFromAppliedState()
+    {
+        _chops01.Clear();
+
+        if (_clip == null || string.IsNullOrEmpty(_clipResourcesPath))
+        {
+            SyncMarkersToWave();
+            return;
+        }
+
+        if (!KMusicChopState.TryLoadApplied(out string appliedPath, out var sliceStart01, out var sliceEnd01))
+        {
+            SyncMarkersToWave();
+            return;
+        }
+
+        if (!string.Equals(appliedPath, _clipResourcesPath, StringComparison.Ordinal))
+        {
+            SyncMarkersToWave();
+            return;
+        }
+
+        bool hasStartMarkers = false;
+        if (sliceStart01 != null)
+        {
+            for (int i = 0; i < 16 && i < sliceStart01.Length; i++)
+            {
+                float s = sliceStart01[i];
+                float e = (sliceEnd01 != null && i < sliceEnd01.Length) ? sliceEnd01[i] : 0f;
+                if (s > 0.0001f && e > s)
+                {
+                    hasStartMarkers = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasStartMarkers)
+        {
+            for (int i = 0; i < 16 && i < sliceStart01.Length; i++)
+            {
+                float s = sliceStart01[i];
+                float e = (sliceEnd01 != null && i < sliceEnd01.Length) ? sliceEnd01[i] : 0f;
+                if (s <= 0.0001f || s >= 0.9999f)
+                    continue;
+                if (e <= s)
+                    continue;
+                if (_chops01.Count > 0 && Mathf.Abs(_chops01[_chops01.Count - 1] - s) <= 0.0001f)
+                    continue;
+                _chops01.Add(Mathf.Clamp01(s));
+            }
+
+            if (sliceEnd01 != null && sliceEnd01.Length >= 16)
+            {
+                float finalStart = sliceStart01[15];
+                float finalEnd = sliceEnd01[15];
+                if (finalEnd > finalStart + 0.0001f && finalEnd < 0.9999f)
+                {
+                    if (_chops01.Count == 0 || Mathf.Abs(_chops01[_chops01.Count - 1] - finalEnd) > 0.0001f)
+                        _chops01.Add(Mathf.Clamp01(finalEnd));
+                }
+            }
+        }
+        else if (sliceEnd01 != null)
+        {
+            // Legacy fallback for older save format where markers were restored from slice ends.
+            for (int i = 0; i < 16 && i < sliceEnd01.Length; i++)
+            {
+                float s = (sliceStart01 != null && i < sliceStart01.Length) ? sliceStart01[i] : 0f;
+                float e = sliceEnd01[i];
+                if (e <= 0f || e >= 0.9999f)
+                    continue;
+                if (e <= s)
+                    continue;
+                if (_chops01.Count > 0 && Mathf.Abs(_chops01[_chops01.Count - 1] - e) <= 0.0001f)
+                    continue;
+                _chops01.Add(Mathf.Clamp01(e));
+            }
+        }
+
+        _chops01.Sort();
+        ClampSelectedMarkerIndex();
+        SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+    }
+
     private void OnDisable()
     {
-        if (_wave != null) _wave.UserPointer01 -= OnWavePointer01;
+        if (_wave != null)
+        {
+            _wave.UserPointer01 -= OnWavePointer01;
+            _wave.MarkerDrag01 -= OnWaveMarkerDrag01;
+        }
+
+        if (_markerPreviewCoroutine != null)
+        {
+            StopCoroutine(_markerPreviewCoroutine);
+            _markerPreviewCoroutine = null;
+        }
 
 #if UNITY_ANDROID && !UNITY_EDITOR
         if (_loadDeviceCoroutine != null)
@@ -357,6 +530,7 @@ private void Awake()
 
         _wave.SetClip(_clip);
         _wave.SetPlayhead01(0f);
+        RestoreMarkersFromAppliedState();
         UpdateTimeLabels(0f, _clip.length);
         UpdateTrackTitle(_clip.name);
     }
@@ -421,6 +595,7 @@ private void Awake()
 
         _wave.SetClip(_clip);
         _wave.SetPlayhead01(0f);
+        RestoreMarkersFromAppliedState();
         UpdateTimeLabels(0f, _clip.length);
     }
 #endif
@@ -448,6 +623,7 @@ private void Awake()
             else _btnChop.RemoveFromClassList("km-chop-toggle--active");
         }
 
+        if (_wave != null) _wave.MarkersDraggable = _chopArmed;
         UpdateTrackTitle(_chopArmed ? "CHOP MODE" : (_clip != null ? _clip.name : "TRACK"));
     }
 
@@ -483,6 +659,131 @@ private void Awake()
 
         _wave?.SetPlayhead01(t01);
         UpdateTimeLabels(audioSource.time, _clip.length);
+    }
+
+    private void OnWaveMarkerDrag01(int markerIndex, float t01, bool isDrag)
+    {
+        if (_clip == null || _clip.length <= 0f || audioSource == null) return;
+        if (!_chopArmed) return;
+        if (markerIndex < 0 || markerIndex >= _chops01.Count) return;
+
+        float newT01 = GetClampedMarkerPosition01(markerIndex, t01);
+        if (_snapEnabled) newT01 = GetClampedMarkerPosition01(markerIndex, Snap01(newT01, _snapDiv));
+
+        if (Mathf.Abs(_chops01[markerIndex] - newT01) <= 0.0001f && isDrag)
+            return;
+
+        _chops01[markerIndex] = newT01;
+        _chops01.Sort();
+        _selectedMarkerIndex = FindNearestMarkerIndex(newT01);
+        ClampSelectedMarkerIndex();
+        SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+        _scrub01 = newT01;
+        _wave?.SetPlayhead01(newT01);
+        PersistMarkersIfPossible();
+
+        if (ShouldAuditionMarkerMove(isDrag))
+            AuditionMarkerBoundary(_selectedMarkerIndex);
+
+        if (!isDrag)
+            UpdateTrackTitle($"MARKER MOVE {newT01:0.000}");
+    }
+
+    private float GetClampedMarkerPosition01(int markerIndex, float t01)
+    {
+        if (_clip == null || _clip.length <= 0f) return Mathf.Clamp01(t01);
+
+        float minGap01 = MinMarkerGapSeconds / _clip.length;
+        float min = (markerIndex > 0) ? (_chops01[markerIndex - 1] + minGap01) : minGap01;
+        float max = (markerIndex < _chops01.Count - 1) ? (_chops01[markerIndex + 1] - minGap01) : (1f - minGap01);
+        if (max < min)
+        {
+            float mid = (min + max) * 0.5f;
+            min = mid;
+            max = mid;
+        }
+
+        return Mathf.Clamp(t01, min, max);
+    }
+
+    private bool ShouldAuditionMarkerMove(bool isDrag)
+    {
+        if (!isDrag)
+            return true;
+
+        float now = Time.realtimeSinceStartup;
+        if (now - _lastMarkerAuditionRealtime < MarkerAuditionThrottle)
+            return false;
+
+        _lastMarkerAuditionRealtime = now;
+        return true;
+    }
+
+    private void AuditionMarkerBoundary(int markerIndex)
+    {
+        if (_clip == null || _clip.length <= 0f || audioSource == null) return;
+        if (markerIndex < 0 || markerIndex >= _chops01.Count) return;
+
+        float leftStart01 = (markerIndex > 0) ? _chops01[markerIndex - 1] : 0f;
+        float leftEnd01 = _chops01[markerIndex];
+        float rightStart01 = _chops01[markerIndex];
+        float rightEnd01 = (markerIndex < _chops01.Count - 1) ? _chops01[markerIndex + 1] : 1f;
+
+        float start01;
+        float end01;
+
+        // Start markers should always audition the chop that starts at that marker.
+        // Only the optional closing marker (index 16 / marker 17) should audition left.
+        if (markerIndex >= 16)
+        {
+            start01 = leftStart01;
+            end01 = leftEnd01;
+        }
+        else
+        {
+            start01 = rightStart01;
+            end01 = rightEnd01;
+        }
+
+        if (end01 <= start01)
+            return;
+
+        float startTime = Mathf.Clamp(start01 * _clip.length, 0f, Mathf.Max(0f, _clip.length - 0.001f));
+        float dur = Mathf.Clamp((end01 - start01) * _clip.length, 0.03f, _clip.length);
+
+        if (_markerPreviewCoroutine != null)
+            StopCoroutine(_markerPreviewCoroutine);
+        _markerPreviewCoroutine = StartCoroutine(CoPreviewSlice(startTime, dur));
+    }
+
+    private IEnumerator CoPreviewSlice(float startTime, float duration)
+    {
+        if (_clip == null || audioSource == null)
+            yield break;
+
+        audioSource.Stop();
+        audioSource.clip = _clip;
+        audioSource.time = Mathf.Clamp(startTime, 0f, Mathf.Max(0f, _clip.length - 0.001f));
+        audioSource.Play();
+
+        yield return new WaitForSecondsRealtime(duration);
+
+        if (audioSource != null && audioSource.clip == _clip)
+            audioSource.Stop();
+
+        _markerPreviewCoroutine = null;
+    }
+
+    private void PersistMarkersIfPossible()
+    {
+        if (_clip == null || _clip.length <= 0f)
+            return;
+
+        if (!string.IsNullOrEmpty(_clipResourcesPath))
+            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01);
+        else
+            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01);
     }
 
     // ----------------------------
@@ -537,7 +838,7 @@ private void Awake()
     private void DropChopMarkerAt01(float t01)
     {
         if (_clip == null || _clip.length <= 0f) return;
-        if (_chops01.Count >= 16) return;
+        if (_chops01.Count >= 17) return;
 
         t01 = Mathf.Clamp01(t01);
         if (_snapEnabled) t01 = Snap01(t01, _snapDiv);
@@ -559,7 +860,11 @@ private void Awake()
 
         _chops01.Add(t01);
         _chops01.Sort();
+        _selectedMarkerIndex = _chops01.FindIndex(v => Mathf.Abs(v - t01) <= 0.0001f);
+        ClampSelectedMarkerIndex();
         SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+        PersistMarkersIfPossible();
         _wave?.SetPlayhead01(t01);
         _scrub01 = t01;
 
@@ -588,7 +893,12 @@ private void Awake()
         {
             float removed = _chops01[best];
             _chops01.RemoveAt(best);
+            if (_selectedMarkerIndex == best) _selectedMarkerIndex = Mathf.Clamp(best - 1, 0, _chops01.Count - 1);
+            else if (_selectedMarkerIndex > best) _selectedMarkerIndex--;
+            ClampSelectedMarkerIndex();
             SyncMarkersToWave();
+            UpdateMarkerNavigatorUI();
+            PersistMarkersIfPossible();
             UpdateTrackTitle($"MARKER - {removed:0.000}");
         }
     }
@@ -613,7 +923,7 @@ private void Awake()
         else
             KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01);
 
-        UpdateTrackTitle($"APPLIED {boundaries.Count - 1} SLICES");
+        UpdateTrackTitle($"APPLIED {Mathf.Min(16, _chops01.Count)} SLICES");
     }
 
     private void SendChops()
@@ -625,7 +935,156 @@ private void Awake()
         else
             KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01);
 
-        UpdateTrackTitle($"SENT {_chops01.Count + 1} CHOPS");
+        UpdateTrackTitle($"SENT {Mathf.Min(16, _chops01.Count)} CHOPS");
+    }
+
+
+    private int FindNearestMarkerIndex(float t01)
+    {
+        if (_chops01.Count == 0) return -1;
+        int best = 0;
+        float bestDist = Mathf.Abs(_chops01[0] - t01);
+        for (int i = 1; i < _chops01.Count; i++)
+        {
+            float d = Mathf.Abs(_chops01[i] - t01);
+            if (d < bestDist)
+            {
+                best = i;
+                bestDist = d;
+            }
+        }
+        return best;
+    }
+
+    private void ClampSelectedMarkerIndex()
+    {
+        if (_chops01.Count == 0)
+        {
+            _selectedMarkerIndex = -1;
+            return;
+        }
+
+        _selectedMarkerIndex = Mathf.Clamp(_selectedMarkerIndex, 0, _chops01.Count - 1);
+    }
+
+    private void BindPlayerChopPicker(VisualElement page)
+    {
+        _chopPickerButtons.Clear();
+        if (page == null) return;
+
+        for (int i = 1; i <= 16; i++)
+        {
+            int chopNumber = i;
+            var btn = page.Q<Button>($"Chop{chopNumber:00}");
+            if (btn == null) continue;
+
+            _chopPickerButtons.Add(btn);
+            btn.clicked += () => SelectMarkerFromChopPicker(chopNumber - 1);
+        }
+
+        RefreshChopPickerUI();
+    }
+
+    private void SelectMarkerFromChopPicker(int markerIndex)
+    {
+        if (_clip == null || _clip.length <= 0f) return;
+        if (markerIndex < 0 || markerIndex >= _chops01.Count) return;
+        if (markerIndex >= 16) return;
+
+        _selectedMarkerIndex = markerIndex;
+        ClampSelectedMarkerIndex();
+
+        float t01 = _chops01[_selectedMarkerIndex];
+        _scrub01 = t01;
+        _wave?.SetPlayhead01(t01);
+
+        UpdateMarkerNavigatorUI();
+        RefreshChopPickerUI();
+        AuditionMarkerBoundary(_selectedMarkerIndex);
+    }
+
+    private void RefreshChopPickerUI()
+    {
+        for (int i = 0; i < _chopPickerButtons.Count; i++)
+        {
+            var btn = _chopPickerButtons[i];
+            if (btn == null) continue;
+
+            bool hasMarker = i < _chops01.Count && i < 16;
+            btn.SetEnabled(hasMarker);
+            btn.EnableInClassList("km-chop-btn--wired", hasMarker);
+            btn.EnableInClassList("km-chop-btn--active", hasMarker && i == _selectedMarkerIndex);
+        }
+    }
+
+    private void UpdateMarkerNavigatorUI()
+    {
+        ClampSelectedMarkerIndex();
+
+        if (_markerNavLabel != null)
+        {
+            if (_chops01.Count == 0 || _selectedMarkerIndex < 0)
+            {
+                _markerNavLabel.text = "NO MARKER";
+            }
+            else
+            {
+                float t = _chops01[_selectedMarkerIndex] * ((_clip != null) ? _clip.length : 0f);
+                string role = (_selectedMarkerIndex == 16) ? "END 16" : $"START {_selectedMarkerIndex + 1:00}";
+                _markerNavLabel.text = $"M{_selectedMarkerIndex + 1:00}  {role}  {t:0.00}s";
+            }
+        }
+
+        RefreshChopPickerUI();
+    }
+
+    private void SelectPreviousMarker()
+    {
+        if (_chops01.Count == 0) return;
+        ClampSelectedMarkerIndex();
+        _selectedMarkerIndex = (_selectedMarkerIndex <= 0) ? (_chops01.Count - 1) : (_selectedMarkerIndex - 1);
+        float t01 = _chops01[_selectedMarkerIndex];
+        _scrub01 = t01;
+        _wave?.SetPlayhead01(t01);
+        UpdateMarkerNavigatorUI();
+        AuditionMarkerBoundary(_selectedMarkerIndex);
+    }
+
+    private void SelectNextMarker()
+    {
+        if (_chops01.Count == 0) return;
+        ClampSelectedMarkerIndex();
+        _selectedMarkerIndex = (_selectedMarkerIndex + 1) % _chops01.Count;
+        float t01 = _chops01[_selectedMarkerIndex];
+        _scrub01 = t01;
+        _wave?.SetPlayhead01(t01);
+        UpdateMarkerNavigatorUI();
+        AuditionMarkerBoundary(_selectedMarkerIndex);
+    }
+
+    private void NudgeSelectedMarkerSeconds(float deltaSeconds)
+    {
+        if (_clip == null || _clip.length <= 0f) return;
+        if (_chops01.Count == 0) return;
+
+        ClampSelectedMarkerIndex();
+        if (_selectedMarkerIndex < 0) return;
+
+        float delta01 = deltaSeconds / _clip.length;
+        float target01 = _chops01[_selectedMarkerIndex] + delta01;
+        target01 = GetClampedMarkerPosition01(_selectedMarkerIndex, target01);
+
+        _chops01[_selectedMarkerIndex] = target01;
+        _chops01.Sort();
+        _selectedMarkerIndex = FindNearestMarkerIndex(target01);
+        ClampSelectedMarkerIndex();
+        SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+        PersistMarkersIfPossible();
+
+        _scrub01 = target01;
+        _wave?.SetPlayhead01(target01);
+        AuditionMarkerBoundary(_selectedMarkerIndex);
     }
 
     private void SyncMarkersToWave()
@@ -693,7 +1152,15 @@ private void Awake()
     private void ResetAllMarkers()
     {
         _chops01.Clear();
+        _selectedMarkerIndex = -1;
         SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+
+        if (_markerPreviewCoroutine != null)
+        {
+            StopCoroutine(_markerPreviewCoroutine);
+            _markerPreviewCoroutine = null;
+        }
 
         // Also clear any applied chop set used by the sampler.
         KMusicChopState.ClearApplied();
@@ -705,16 +1172,28 @@ private void Awake()
     {
         if (_clip == null || _clip.length <= 0f) return;
 
+        // Markers are chop START points, so to get 4 / 8 / 16 playable chops
+        // we place one extra closing marker at the end of the auto layout.
         _chops01.Clear();
-        for (int i = 1; i < divisions; i++)
+
+        int markerCount = Mathf.Clamp(divisions + 1, 1, 17);
+        for (int i = 1; i <= markerCount; i++)
         {
-            float t01 = i / (float)divisions;
+            float t01 = i / (float)(divisions + 1);
+
+            // Keep the final closing marker just inside the clip so it remains draggable.
+            if (i == markerCount)
+                t01 = Mathf.Min(t01, 0.999f);
+
             if (t01 < 0.01f) t01 = 0.01f;
-            if (t01 > 0.99f) t01 = 0.99f;
+            if (t01 > 0.999f) t01 = 0.999f;
             _chops01.Add(t01);
         }
 
+        _selectedMarkerIndex = _chops01.Count > 0 ? 0 : -1;
         SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+        PersistMarkersIfPossible();
         UpdateTrackTitle($"AUTO {divisions}");
     }
 

@@ -226,15 +226,50 @@
                 <ui:Button name="SnapToggle" class="chop-btn chop-btn-mode" text="SNAP"/>
                 <ui:Button name="ResetMarkers" class="chop-btn chop-btn-reset" text="RESET"/>
             </ui:VisualElement>
-            <ui:VisualElement class="chop-row-third">
-                <ui:VisualElement class="km-chip-group">
-                    <km:KnobElement
-                        name="SampleMasterVol"
-                        label="CHOP VOL"
-                        paramId="sample.master"
-                        style="width:90px; height:90px;" />
-                </ui:VisualElement> 
-            </ui:VisualElement>             
+            <ui:VisualElement class="chop-row-secondary" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                <ui:Button name="MarkerPrev" class="chop-btn chop-btn-mode" text="&lt;"/>
+                <ui:Label name="MarkerNavLabel" class="km-mini" text="NO MARKER" style="min-width:160px; unity-text-align:middle-center;"/>
+                <ui:Button name="MarkerNext" class="chop-btn chop-btn-mode" text="&gt;"/>
+            </ui:VisualElement>
+            <ui:VisualElement class="chop-row-secondary" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                <ui:Button name="MarkerNudgeNeg10" class="chop-btn chop-btn-mode" text="-0.10"/>
+                <ui:Button name="MarkerNudgeNeg01" class="chop-btn chop-btn-mode" text="-0.01"/>
+                <ui:Button name="MarkerNudgePos01" class="chop-btn chop-btn-mode" text="+0.01"/>
+                <ui:Button name="MarkerNudgePos10" class="chop-btn chop-btn-mode" text="+0.10"/>
+            </ui:VisualElement>
+              <ui:VisualElement class="chop-row-third">
+                  <ui:VisualElement class="km-chip-group" style="justify-content:center; align-items:center;">
+                      <km:KnobElement name="SampleMasterVol" label="CHOP VOL" paramId="sample.master" style="width:90px; height:90px;" />
+                  </ui:VisualElement> 
+              </ui:VisualElement>
+              
+            <!-- Chop Picker (2 rows x 8) -->
+            <ui:VisualElement class="km-card">
+              <ui:Label class="km-subtitle" text="CHOP PICKER"/>
+
+              <ui:VisualElement class="km-chop-strip">
+
+                <ui:Button name="Chop01" class="km-chop-btn" text="01"/>
+                <ui:Button name="Chop02" class="km-chop-btn" text="02"/>
+                <ui:Button name="Chop03" class="km-chop-btn" text="03"/>
+                <ui:Button name="Chop04" class="km-chop-btn" text="04"/>
+                <ui:Button name="Chop05" class="km-chop-btn" text="05"/>
+                <ui:Button name="Chop06" class="km-chop-btn" text="06"/>
+                <ui:Button name="Chop07" class="km-chop-btn" text="07"/>
+                <ui:Button name="Chop08" class="km-chop-btn" text="08"/>
+
+                <ui:Button name="Chop09" class="km-chop-btn" text="09"/>
+                <ui:Button name="Chop10" class="km-chop-btn" text="10"/>
+                <ui:Button name="Chop11" class="km-chop-btn" text="11"/>
+                <ui:Button name="Chop12" class="km-chop-btn" text="12"/>
+                <ui:Button name="Chop13" class="km-chop-btn" text="13"/>
+                <ui:Button name="Chop14" class="km-chop-btn" text="14"/>
+                <ui:Button name="Chop15" class="km-chop-btn" text="15"/>
+                <ui:Button name="Chop16" class="km-chop-btn" text="16"/>
+
+              </ui:VisualElement>
+            </ui:VisualElement>
+
         </ui:VisualElement>
 
       </ui:VisualElement>

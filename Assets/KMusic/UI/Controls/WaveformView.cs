@@ -28,9 +28,19 @@ namespace KMusic.UI
         /// isDrag true on move while pressed.
         /// </summary>
         public event Action<float, bool> UserPointer01;
+        public event Action<int, float, bool> MarkerDrag01;
+
+        private readonly VisualElement _markerLabelLayer;
+        private readonly List<Label> _markerLabels = new();
 
         private bool _pointerDown;
         private int _pointerIdPrimary = -1;
+        private bool _draggingMarker;
+        private int _dragMarkerIndex = -1;
+        private int _activeMarkerIndex = -1;
+        private const float MarkerGrabPx = 18f;
+
+        public bool MarkersDraggable { get; set; } = false;
 
         // --- Zoom window in timeline-normalized space ---
         // View maps [ViewStart01 .. ViewStart01+ViewLen01] to the control width.
@@ -63,6 +73,16 @@ namespace KMusic.UI
 
             generateVisualContent += OnGenerate;
 
+            _markerLabelLayer = new VisualElement();
+            _markerLabelLayer.pickingMode = PickingMode.Ignore;
+            _markerLabelLayer.style.position = Position.Absolute;
+            _markerLabelLayer.style.left = 0;
+            _markerLabelLayer.style.right = 0;
+            _markerLabelLayer.style.top = 0;
+            _markerLabelLayer.style.bottom = 0;
+            Add(_markerLabelLayer);
+
+            RegisterCallback<GeometryChangedEvent>(_ => UpdateMarkerLabels());
             RegisterCallback<PointerDownEvent>(OnPointerDown);
             RegisterCallback<PointerMoveEvent>(OnPointerMove);
             RegisterCallback<PointerUpEvent>(OnPointerUp);
@@ -97,6 +117,7 @@ namespace KMusic.UI
                 }
             }
             _markers01.Sort();
+            UpdateMarkerLabels();
             MarkDirtyRepaint();
         }
 
@@ -104,6 +125,7 @@ namespace KMusic.UI
         {
             ViewStart01 = 0f;
             ViewLen01 = 1f;
+            UpdateMarkerLabels();
             MarkDirtyRepaint();
         }
 
@@ -197,12 +219,14 @@ namespace KMusic.UI
                 painter.lineWidth = 2f;
                 painter.strokeColor = MarkerColor;
 
-                foreach (var m in _markers01)
+                for (int i = 0; i < _markers01.Count; i++)
                 {
+                    float m = _markers01[i];
                     if (m < v0 || m > v1) continue;
                     float tWin = (m - v0) / vLen;
                     float px = r.x + Mathf.Clamp01(tWin) * r.width;
 
+                    painter.lineWidth = (i == _activeMarkerIndex) ? 4f : 2f;
                     painter.BeginPath();
                     painter.MoveTo(new Vector2(px, r.y));
                     painter.LineTo(new Vector2(px, r.y + r.height));
@@ -246,14 +270,31 @@ namespace KMusic.UI
                 BeginPinch();
             }
 
-            // If we are NOT pinching, treat first pointer as primary for scrub/tap
+            // If we are NOT pinching, treat first pointer as primary for scrub/tap/marker-drag.
             if (!_pinching)
             {
                 _pointerDown = true;
                 _pointerIdPrimary = evt.pointerId;
 
                 float t01 = PositionToTimeline01(evt.localPosition);
-                UserPointer01?.Invoke(t01, false);
+                int markerIndex = MarkersDraggable ? FindMarkerIndexNear(evt.localPosition) : -1;
+                if (markerIndex >= 0)
+                {
+                    _draggingMarker = true;
+                    _dragMarkerIndex = markerIndex;
+                    _activeMarkerIndex = markerIndex;
+                    MarkerDrag01?.Invoke(markerIndex, t01, false);
+                    UpdateMarkerLabels();
+                    MarkDirtyRepaint();
+                }
+                else
+                {
+                    _draggingMarker = false;
+                    _dragMarkerIndex = -1;
+                    _activeMarkerIndex = -1;
+                    UpdateMarkerLabels();
+                    UserPointer01?.Invoke(t01, false);
+                }
             }
 
             evt.StopPropagation();
@@ -277,7 +318,10 @@ namespace KMusic.UI
             if (_pointerDown && evt.pointerId == _pointerIdPrimary)
             {
                 float t01 = PositionToTimeline01(evt.localPosition);
-                UserPointer01?.Invoke(t01, true);
+                if (_draggingMarker && _dragMarkerIndex >= 0)
+                    MarkerDrag01?.Invoke(_dragMarkerIndex, t01, true);
+                else
+                    UserPointer01?.Invoke(t01, true);
                 evt.StopPropagation();
             }
         }
@@ -294,8 +338,19 @@ namespace KMusic.UI
 
             if (evt.pointerId == _pointerIdPrimary)
             {
+                if (_draggingMarker && _dragMarkerIndex >= 0)
+                {
+                    float t01 = PositionToTimeline01(evt.localPosition);
+                    MarkerDrag01?.Invoke(_dragMarkerIndex, t01, false);
+                }
+
                 _pointerDown = false;
                 _pointerIdPrimary = -1;
+                _draggingMarker = false;
+                _dragMarkerIndex = -1;
+                _activeMarkerIndex = -1;
+                UpdateMarkerLabels();
+                MarkDirtyRepaint();
             }
         }
 
@@ -303,6 +358,10 @@ namespace KMusic.UI
         {
             _pointerDown = false;
             _pointerIdPrimary = -1;
+            _draggingMarker = false;
+            _dragMarkerIndex = -1;
+            _activeMarkerIndex = -1;
+            UpdateMarkerLabels();
 
             _p1 = -1;
             _p2 = -1;
@@ -386,7 +445,97 @@ namespace KMusic.UI
             ViewStart01 = start01;
             ViewLen01 = len01;
 
+            UpdateMarkerLabels();
             MarkDirtyRepaint();
+        }
+
+
+        private void UpdateMarkerLabels()
+        {
+            if (_markerLabelLayer == null)
+                return;
+
+            while (_markerLabels.Count < _markers01.Count)
+            {
+                var lbl = new Label();
+                lbl.pickingMode = PickingMode.Ignore;
+                lbl.style.position = Position.Absolute;
+                lbl.style.top = 2;
+                lbl.style.unityFontStyleAndWeight = FontStyle.Bold;
+                lbl.style.fontSize = 12;
+                lbl.style.color = MarkerColor;
+                lbl.style.backgroundColor = new Color(0f, 0f, 0f, 0.45f);
+                lbl.style.paddingLeft = 4;
+                lbl.style.paddingRight = 4;
+                lbl.style.paddingTop = 1;
+                lbl.style.paddingBottom = 1;
+                lbl.style.borderTopLeftRadius = 4;
+                lbl.style.borderTopRightRadius = 4;
+                lbl.style.borderBottomLeftRadius = 4;
+                lbl.style.borderBottomRightRadius = 4;
+                _markerLabels.Add(lbl);
+                _markerLabelLayer.Add(lbl);
+            }
+
+            var r = contentRect;
+            float v0 = ViewStart01;
+            float v1 = Mathf.Clamp01(ViewStart01 + ViewLen01);
+            float vLen = Mathf.Max(1e-6f, v1 - v0);
+
+            for (int i = 0; i < _markerLabels.Count; i++)
+            {
+                var lbl = _markerLabels[i];
+                if (i >= _markers01.Count)
+                {
+                    lbl.style.display = DisplayStyle.None;
+                    continue;
+                }
+
+                float m = _markers01[i];
+                if (r.width <= 2f || m < v0 || m > v1)
+                {
+                    lbl.style.display = DisplayStyle.None;
+                    continue;
+                }
+
+                float tWin = (m - v0) / vLen;
+                float px = Mathf.Clamp01(tWin) * r.width;
+
+                lbl.text = $"{(i + 1):00}";
+                lbl.style.display = DisplayStyle.Flex;
+                lbl.style.left = Mathf.Max(0f, px - 12f);
+                lbl.style.color = (i == _activeMarkerIndex) ? Color.white : MarkerColor;
+            }
+        }
+
+        private int FindMarkerIndexNear(Vector2 localPos)
+        {
+            var r = contentRect;
+            if (r.width <= 1f || _markers01.Count == 0)
+                return -1;
+
+            float v0 = ViewStart01;
+            float v1 = Mathf.Clamp01(ViewStart01 + ViewLen01);
+            float vLen = Mathf.Max(1e-6f, v1 - v0);
+            float bestPx = MarkerGrabPx;
+            int bestIndex = -1;
+
+            for (int i = 0; i < _markers01.Count; i++)
+            {
+                float m = _markers01[i];
+                if (m < v0 || m > v1) continue;
+
+                float tWin = (m - v0) / vLen;
+                float px = r.x + Mathf.Clamp01(tWin) * r.width;
+                float d = Mathf.Abs(localPos.x - px);
+                if (d <= bestPx)
+                {
+                    bestPx = d;
+                    bestIndex = i;
+                }
+            }
+
+            return bestIndex;
         }
 
         // Convert local x into absolute timeline position based on view window.

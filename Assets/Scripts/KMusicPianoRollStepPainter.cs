@@ -10,13 +10,15 @@ namespace KMusic.UI
 {
     /// <summary>
     /// Bridges PianoRollGrid (note picker) -> StepGrid (paint target).
+    /// Tap = individual note.
+    /// Drag across adjacent cells = held note matching drag length.
     /// </summary>
     [RequireComponent(typeof(UIDocument))]
     public class KMusicPianoRollStepPainter : MonoBehaviour
     {
         [SerializeField] private HelmSequencer helmSequencer;   // assign or auto-find
         [SerializeField] private int helmChannelOverride = -1;  // -1 = use HelmController.channel
-        [SerializeField, Range(0.1f, 1.0f)] private float gateSixteenths = 0.90f; // note length in 16ths              
+        [SerializeField, Range(0.1f, 1.0f)] private float gateSixteenths = 0.90f;
         private const string PrefKey_SeqStepGrid = "kmusic.seq.stepgrid";
 
         [Header("UXML element names")]
@@ -54,10 +56,23 @@ namespace KMusic.UI
         [SerializeField] private HelmController helm;
 
         private bool _wasPlaying = false;
-
         private bool _sequenceBuilt = false;
-
         private KMusicChainUI _chainUI;
+
+        // Held-note metadata:
+        // start index -> run length
+        private int[] _noteRunLengthAtStart;
+        // any cell index -> owning run start, or -1
+        private int[] _noteRunStartForCell;
+
+        // Gesture tracking so taps stay single notes, drags become held notes
+        private readonly List<int> _gestureCells = new();
+        private int _gestureValueId = -1;
+        private float _lastGestureTime = -999f;
+        private int _lastGestureIndex = -999;
+        private IVisualElementScheduledItem _gestureFinalizeJob;
+
+        private const float GestureGapSeconds = 0.40f;
 
         private void Update()
         {
@@ -69,7 +84,6 @@ namespace KMusic.UI
 
             if (_drumSeq.IsPlaying)
             {
-                // build once when playback starts
                 if (!_sequenceBuilt)
                 {
                     RebuildHelmSequenceFromGrid();
@@ -81,13 +95,13 @@ namespace KMusic.UI
                 _sequenceBuilt = false;
             }
         }
+
         private void OnEnable()
         {
             _doc = GetComponent<UIDocument>();
             _helm = FindObjectOfType<HelmController>();
             _drumSeq = FindObjectOfType<KMusicDrumSequencer>();
             _chainUI = FindObjectOfType<KMusicChainUI>();
-
 
             if (helmSequencer == null)
                 helmSequencer = FindObjectOfType<HelmSequencer>();
@@ -98,7 +112,6 @@ namespace KMusic.UI
                 helmSequencer = go.AddComponent<HelmSequencer>();
             }
 
-            // match channel + timing
             int ch = (helmChannelOverride >= 0) ? helmChannelOverride : (_helm != null ? _helm.channel : 0);
             helmSequencer.channel = ch;
             helmSequencer.length = 16;
@@ -114,10 +127,9 @@ namespace KMusic.UI
             _rebindLoop = root.schedule.Execute(() =>
             {
                 var piano = root.Q<PianoRollGrid>(pianoRollName);
-                var step  = root.Q<StepGrid>(stepGridName);
+                var step = root.Q<StepGrid>(stepGridName);
                 if (piano == null || step == null) return;
 
-                // only rebind if instances changed (UI rebuilt)
                 if (piano == _lastPiano && step == _lastStep) return;
                 _lastPiano = piano;
                 _lastStep = step;
@@ -126,6 +138,8 @@ namespace KMusic.UI
                 _piano = piano;
                 _step = step;
 
+                EnsureRunArrays();
+
                 _piano.EnablePickerMode(true);
                 _step.EnableValueLabels(true, FormatValueLabel);
                 _step.EnableValueTint(true, TintForValue);
@@ -133,11 +147,9 @@ namespace KMusic.UI
                 _piano.OnCellPicked += OnPianoPicked;
                 _step.OnCellClicked += OnStepClicked;
 
-                // ✅ PAINT/ERASE updates come from value-changed (drag painting)
                 _step.OnCellValueChanged -= OnStepValueChanged;
                 _step.OnCellValueChanged += OnStepValueChanged;
 
-                // ✅ Debounce so painting doesn't rebuild every single drag tick
                 _seqRebuildJob?.Pause();
                 _seqRebuildJob = _step.schedule.Execute(() =>
                 {
@@ -146,77 +158,263 @@ namespace KMusic.UI
 
                     RebuildHelmSequenceFromGrid();
 
-                    // ✅ Forces AudioHelm to re-read the updated note list (older versions need this)
                     helmSequencer.enabled = false;
                     helmSequencer.enabled = true;
                 }).Every(30);
 
-                // default brush
-                // ✅ cache ALL note labels & colors
                 CacheAllPaletteValues();
 
-                // default brush
                 int v0 = _piano.GetCellValueId(0, 0);
                 _step.SetPaintValue(v0);
 
-                // LOAD after wiring
                 LoadStepGrid();
                 RebuildHelmSequenceFromGrid();
                 helmSequencer.enabled = false;
                 helmSequencer.enabled = true;
                 _sequenceBuilt = true;
 
-                // reset transport tracking so first tick plays correctly
                 _lastTransportStep = -999;
 
             }).Every(100);
+        }
+
+        private int TotalStepCount()
+        {
+            return _step != null ? _step.RowCount * _step.ColCount : 0;
+        }
+
+        private int ToIndex(int r, int c)
+        {
+            return r * _step.ColCount + c;
+        }
+
+        private void FromIndex(int index, out int r, out int c)
+        {
+            r = index / _step.ColCount;
+            c = index % _step.ColCount;
+        }
+
+        private void EnsureRunArrays()
+        {
+            int total = TotalStepCount();
+            if (total <= 0) return;
+
+            if (_noteRunLengthAtStart == null || _noteRunLengthAtStart.Length != total)
+            {
+                _noteRunLengthAtStart = new int[total];
+                _noteRunStartForCell = new int[total];
+                for (int i = 0; i < total; i++)
+                    _noteRunStartForCell[i] = -1;
+            }
+        }
+
+        private bool IsAdjacentStep(int a, int b)
+        {
+            return Mathf.Abs(a - b) == 1;
+        }
+
+        private void ClearRunAtOrContaining(int index)
+        {
+            EnsureRunArrays();
+            if (_noteRunStartForCell == null) return;
+            if (index < 0 || index >= _noteRunStartForCell.Length) return;
+
+            int start = -1;
+
+            if (_noteRunLengthAtStart[index] > 0)
+                start = index;
+            else if (_noteRunStartForCell[index] >= 0)
+                start = _noteRunStartForCell[index];
+
+            if (start < 0) return;
+
+            int len = Mathf.Max(1, _noteRunLengthAtStart[start]);
+            for (int i = 0; i < len; i++)
+            {
+                int cell = start + i;
+                if (cell >= 0 && cell < _noteRunStartForCell.Length)
+                    _noteRunStartForCell[cell] = -1;
+            }
+
+            _noteRunLengthAtStart[start] = 0;
+        }
+
+        private void SetSingleTapNote(int index)
+        {
+            EnsureRunArrays();
+            ClearRunAtOrContaining(index);
+
+            _noteRunLengthAtStart[index] = 1;
+            _noteRunStartForCell[index] = index;
+        }
+
+        private void SetDraggedRun(List<int> cells, int valueId)
+        {
+            EnsureRunArrays();
+            if (cells == null || cells.Count == 0) return;
+
+            cells.Sort();
+
+            var contiguous = new List<int>();
+            int prev = -999;
+
+            foreach (int idx in cells)
+            {
+                FromIndex(idx, out int r, out int c);
+                if (_step.GetValue(r, c) != valueId)
+                    continue;
+
+                if (contiguous.Count == 0 || IsAdjacentStep(idx, prev))
+                {
+                    contiguous.Add(idx);
+                    prev = idx;
+                }
+            }
+
+            if (contiguous.Count == 0) return;
+
+            foreach (int idx in contiguous)
+                ClearRunAtOrContaining(idx);
+
+            int start = contiguous[0];
+            int len = contiguous.Count;
+
+            _noteRunLengthAtStart[start] = len;
+            for (int i = 0; i < len; i++)
+                _noteRunStartForCell[start + i] = start;
+        }
+
+        private void FinalizeGesture()
+        {
+            if (_gestureCells.Count == 0) return;
+
+            var unique = new HashSet<int>(_gestureCells);
+            var ordered = new List<int>(unique);
+            ordered.Sort();
+
+            if (ordered.Count == 1)
+            {
+                int idx = ordered[0];
+                FromIndex(idx, out int r, out int c);
+                if (_step.GetValue(r, c) > 0)
+                    SetSingleTapNote(idx);
+            }
+            else
+            {
+                SetDraggedRun(ordered, _gestureValueId);
+            }
+
+            _gestureCells.Clear();
+            _gestureValueId = -1;
+            _lastGestureIndex = -999;
+            _lastGestureTime = -999f;
+
+            _seqDirty = true;
+        }
+
+        private void RestartGestureFinalizeTimer()
+        {
+            _gestureFinalizeJob?.Pause();
+            if (_step == null) return;
+
+            _gestureFinalizeJob = _step.schedule.Execute(() =>
+            {
+                FinalizeGesture();
+            }).StartingIn((long)(GestureGapSeconds * 1000f));
         }
 
         private void RebuildHelmSequenceFromGrid()
         {
             if (helmSequencer == null || _step == null) return;
 
+            EnsureRunArrays();
             helmSequencer.Clear();
 
-            // StepGrid is 16 steps (2x8). Sequencer start/end are in SIXTEENTHS.
-            for (int stepIndex = 0; stepIndex < 16; stepIndex++)
+            int totalSteps = _step.RowCount * _step.ColCount;
+
+            for (int stepIndex = 0; stepIndex < totalSteps; stepIndex++)
             {
                 int r = stepIndex / _step.ColCount;
                 int c = stepIndex % _step.ColCount;
-
                 int valueId = _step.GetValue(r, c);
-                if (valueId <= 0) continue;
+
+                if (valueId <= 0)
+                    continue;
+
+                if (_noteRunStartForCell[stepIndex] >= 0 && _noteRunStartForCell[stepIndex] != stepIndex)
+                    continue;
 
                 int midi = MidiFromValueIdChromatic(valueId, baseMidi: 60);
 
+                int runLen = _noteRunLengthAtStart[stepIndex];
+                if (runLen <= 0)
+                    runLen = 1;
+
                 float start = stepIndex;
-                float end = stepIndex + gateSixteenths;
+                float end = stepIndex + runLen - (1f - gateSixteenths);
+                if (end <= start)
+                    end = start + gateSixteenths;
 
                 helmSequencer.AddNote(midi, start, end, 1.0f);
             }
-        }        
+        }
 
         private void OnDisable()
         {
+            FinalizeGesture();
             SaveStepGrid();
+            _gestureFinalizeJob?.Pause();
             _rebindLoop?.Pause();
             Unbind();
         }
 
         private void OnStepValueChanged(int r, int c, int v)
         {
+            EnsureRunArrays();
+
+            int index = ToIndex(r, c);
+            float now = Time.unscaledTime;
+
             _seqDirty = true;
 
-            // Persist immediately so edits survive tab rebuilds / reloads.
+            if (v <= 0)
+            {
+                ClearRunAtOrContaining(index);
+                SaveStepGrid();
+
+                if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+                _chainUI?.NotifyLiveEdited();
+                return;
+            }
+
+            bool continuesGesture =
+                _gestureCells.Count > 0 &&
+                v == _gestureValueId &&
+                (now - _lastGestureTime) <= GestureGapSeconds &&
+                IsAdjacentStep(index, _lastGestureIndex);
+
+            if (!continuesGesture)
+            {
+                FinalizeGesture();
+                _gestureCells.Clear();
+                _gestureValueId = v;
+            }
+
+            if (!_gestureCells.Contains(index))
+                _gestureCells.Add(index);
+
+            _gestureValueId = v;
+            _lastGestureIndex = index;
+            _lastGestureTime = now;
+
+            RestartGestureFinalizeTimer();
+
             SaveStepGrid();
 
-            // ✅ Also persist the currently-selected PatternBank entry.
             if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
             _chainUI?.NotifyLiveEdited();
 
-            // ✅ Audition only when a note is placed (v > 0), never when erased (v == 0)
-            if (v > 0)
-                PlayHelmValueId(v, 1.0f, 0.18f);
+            PlayHelmValueId(v, 1.0f, 0.18f);
         }
 
         private void CacheAllPaletteValues()
@@ -235,7 +433,8 @@ namespace KMusic.UI
 
                 CacheValue(valueId, label, color);
             }
-        }        
+        }
+
         private void Unbind()
         {
             if (_piano != null)
@@ -251,6 +450,13 @@ namespace KMusic.UI
             _seqRebuildJob = null;
             _seqDirty = false;
 
+            _gestureFinalizeJob?.Pause();
+            _gestureFinalizeJob = null;
+            _gestureCells.Clear();
+            _gestureValueId = -1;
+            _lastGestureIndex = -999;
+            _lastGestureTime = -999f;
+
             _piano = null;
             _step = null;
             _root = null;
@@ -263,9 +469,8 @@ namespace KMusic.UI
             CacheValue(valueId, label, _piano.GetCellColor(r, c));
             _step.SetPaintValue(valueId);
 
-            // ALWAYS audition on pick (and prove it in logs)
             if (_helm == null) _helm = FindObjectOfType<HelmController>();
-            Debug.Log($"[PianoRollPainter] PICK r={r} c={c} label={label} valueId={valueId} helm={(_helm!=null)}");
+            Debug.Log($"[PianoRollPainter] PICK r={r} c={c} label={label} valueId={valueId} helm={(_helm != null)}");
 
             TryAuditionSynthNote(r, c);
 
@@ -279,23 +484,20 @@ namespace KMusic.UI
 
             int v = _step.GetValue(r, c);
 
-            // Always let sequencer catch up on any interaction (paint OR erase)
             _seqDirty = true;
 
-            // Brush follows whatever is currently in the cell (if any)
             if (v > 0)
                 _step.SetPaintValue(v);
 
-            // ✅ Audition ONLY when PAINTING / selecting a filled cell (never when erasing)
             if (v > 0)
                 PlayHelmValueId(v, velocity: 1.0f, length: 0.18f);
 
             if (verboseLogs)
                 Debug.Log($"[PianoRollPainter] Step clicked r={r} c={c} v={v}");
         }
+
         private float GetTempoBpm()
         {
-            // Try to match whatever your drum sequencer uses (KMusicApp Bus "tempo").
             var app = FindObjectOfType<KMusicApp>();
             if (app != null && app.Bus != null && app.Bus.TryGet("tempo", out var p))
                 return p.Value;
@@ -310,7 +512,6 @@ namespace KMusic.UI
 
             if (_helm == null) return;
 
-            // Chromatic mapping: valueId(1..48) => MIDI from C4 upward.
             int midi = MidiFromValueIdChromatic(valueId, baseMidi: 60);
             _helm.NoteOn(midi, Mathf.Clamp01(velocity), Mathf.Max(0.01f, length));
 
@@ -320,8 +521,8 @@ namespace KMusic.UI
 
         private static int MidiFromValueIdChromatic(int valueId, int baseMidi = 60)
         {
-            int idx = Mathf.Max(0, valueId - 1);      // 0..47
-            int midi = baseMidi + idx;                // chromatic steps
+            int idx = Mathf.Max(0, valueId - 1);
+            int midi = baseMidi + idx;
             return Mathf.Clamp(midi, 0, 127);
         }
 
@@ -330,10 +531,8 @@ namespace KMusic.UI
             if (_helm == null) _helm = FindObjectOfType<HelmController>();
             if (_helm == null) return;
 
-            // We prefer the cached label because it matches your palette.
             string lbl = _labelByValue.TryGetValue(valueId, out var s) ? s : null;
 
-            // If cache missing, derive from id -> (r,c)
             int r = pianoRowHint;
             if (string.IsNullOrEmpty(lbl) && _piano != null)
             {
@@ -370,18 +569,13 @@ namespace KMusic.UI
             h.NoteOn(midi, 1.0f, 0.18f);
         }
 
-        // Maps your 6x8 palette to a real chromatic keyboard.
-        // valueId is 1-based (from PianoRollGrid.GetCellValueId).
-        // baseMidi = the MIDI note for palette cell (row 0, col 0). C4 = 60.
         private static int MidiFromValueIdChromatic(int valueId, int cols, int baseMidi = 60)
         {
-            int idx = Mathf.Max(0, valueId - 1);     // 0..(rows*cols-1)
-            int midi = baseMidi + idx;               // +1 semitone per cell
+            int idx = Mathf.Max(0, valueId - 1);
+            int midi = baseMidi + idx;
             return Mathf.Clamp(midi, 0, 127);
         }
 
-        // Map the A..G labels from your 6x8 palette to a musically sensible MIDI range.
-        // Top half is a bit higher so it feels responsive.
         private static int MidiFromLabel(string label, int row)
         {
             int semitone;
@@ -397,7 +591,7 @@ namespace KMusic.UI
                 default: return -1;
             }
 
-            int octave = (row < 3) ? 5 : 4; // C5..B5 then C4..B4
+            int octave = (row < 3) ? 5 : 4;
             return (octave + 1) * 12 + semitone;
         }
 
@@ -411,10 +605,30 @@ namespace KMusic.UI
         private void LoadStepGrid()
         {
             if (_step == null) return;
+
             var v = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SeqStepGrid, _step.RowCount * _step.ColCount);
             if (v == null) return;
+
+            EnsureRunArrays();
+
+            for (int i = 0; i < _noteRunLengthAtStart.Length; i++)
+            {
+                _noteRunLengthAtStart[i] = 0;
+                _noteRunStartForCell[i] = -1;
+            }
+
             _step.ImportValuesFlat(v, fireEvent: false);
             _step.RefreshAll();
+
+            // Default imported notes to individual taps.
+            for (int i = 0; i < v.Length; i++)
+            {
+                if (v[i] > 0)
+                {
+                    _noteRunLengthAtStart[i] = 1;
+                    _noteRunStartForCell[i] = i;
+                }
+            }
 
             Debug.Log($"LOAD {PrefKey_SeqStepGrid} hasKey={ProjectPrefs.HasKey(PrefKey_SeqStepGrid)}");
         }
@@ -436,11 +650,9 @@ namespace KMusic.UI
         {
             if (v <= 0) return new Color(0, 0, 0, 0);
 
-            // If cache exists, use it
             if (_colorByValue.TryGetValue(v, out var c))
                 return c;
 
-            // Safety fallback: try to recover from valueId -> (r,c)
             if (_piano != null)
             {
                 int idx = v - 1;
@@ -468,6 +680,15 @@ namespace KMusic.UI
         public void ApplySeqStepsFlat(int[] flat)
         {
             if (_step == null) return;
+
+            EnsureRunArrays();
+
+            for (int i = 0; i < _noteRunLengthAtStart.Length; i++)
+            {
+                _noteRunLengthAtStart[i] = 0;
+                _noteRunStartForCell[i] = -1;
+            }
+
             if (flat == null || flat.Length != _step.RowCount * _step.ColCount)
             {
                 _step.ClearAll();
@@ -477,11 +698,21 @@ namespace KMusic.UI
 
             _step.ImportValuesFlat(flat, fireEvent: false);
             _step.RefreshAll();
+
+            for (int i = 0; i < flat.Length; i++)
+            {
+                if (flat[i] > 0)
+                {
+                    _noteRunLengthAtStart[i] = 1;
+                    _noteRunStartForCell[i] = i;
+                }
+            }
         }
 
         public void RebuildSynthSequenceNow()
         {
             if (helmSequencer == null) return;
+            FinalizeGesture();
             RebuildHelmSequenceFromGrid();
             helmSequencer.enabled = false;
             helmSequencer.enabled = true;

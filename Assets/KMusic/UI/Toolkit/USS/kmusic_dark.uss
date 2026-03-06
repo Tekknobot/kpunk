@@ -104,6 +104,19 @@
   -unity-font-style: bold;
 }
 
+
+.km-pillbtn--danger {
+  background-color: #7F2228;
+}
+
+.km-pillbtn--danger:hover {
+  border-color: #FF8A90;
+}
+
+.km-pillbtn--danger > .unity-text-element {
+  color: #FFF2F2;
+}
+
 .km-tabs {
   height: 56px;
   margin-top: 18px;
@@ -982,4 +995,177 @@ unity-text-align: middle-center;
 #ChainEnabledToggle.unity-toggle .unity-toggle__label
 {
     font-size: 18px;
+}
+
+/* --- Project browser polish --- */
+.km-project-modal {
+  justify-content: center;
+  align-items: center;
+}
+
+.km-project-card {
+  border-width: 2px;
+  border-color: rgba(106, 228, 255, 0.14);
+  background-color: rgba(15, 18, 24, 0.98);
+}
+
+.km-project-title {
+  font-size: 36px;
+  -unity-font-style: bold;
+  color: var(--text);
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+}
+
+.km-project-toolbar {
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.km-project-toolbar-btn {
+  flex-grow: 1;
+  width: auto;
+}
+
+.km-project-toolbar-btn--secondary {
+  background-color: #252B39;
+}
+
+.km-project-scroll {
+  background-color: rgba(0, 0, 0, 0.12);
+  border-radius: 18px;
+  padding: 6px;
+}
+
+.km-project-scroll .unity-scroll-view__content-container {
+  padding-right: 4px;
+}
+
+.km-project-row {
+  border-width: 1px;
+  border-color: rgba(255,255,255,0.04);
+  background-color: #171B24;
+}
+
+.km-project-row--current {
+  border-width: 2px;
+  border-color: rgba(106, 228, 255, 0.75);
+  background-color: #1A2230;
+}
+
+.km-project-row-header {
+  margin-bottom: 6px;
+}
+
+.km-project-slot {
+  font-size: 28px;
+  -unity-font-style: bold;
+  color: var(--text);
+}
+
+.km-project-state {
+  min-height: 28px;
+  color: #D7DEEA;
+  font-size: 14px;
+  -unity-font-style: bold;
+  background-color: #2A3141;
+  border-top-left-radius: 999px;
+  border-top-right-radius: 999px;
+  border-bottom-left-radius: 999px;
+  border-bottom-right-radius: 999px;
+  padding-left: 12px;
+  padding-right: 12px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  unity-text-align: middle-center;
+}
+
+.km-project-state--current {
+  color: #05131A;
+  background-color: var(--accent);
+}
+
+.km-project-state--empty {
+  color: var(--muted);
+  background-color: #202531;
+}
+
+.km-project-name {
+  color: var(--muted);
+  font-size: 18px;
+  margin-top: 2px;
+  margin-bottom: 4px;
+}
+
+.km-project-actions {
+  gap: 10px;
+}
+
+.km-project-action-btn {
+  flex-grow: 1;
+  width: auto;
+}
+
+.km-project-action-btn--secondary {
+  background-color: #2A3141;
+}
+
+.km-project-rename-row {
+  gap: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.km-project-rename-field {
+  min-height: 54px;
+  width: 100px
+  background-color: #0F1320;
+  border-width: 2px;
+  border-color: #2B3142;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
+  color: var(--text);
+  padding-left: 14px;
+  padding-right: 14px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 22px;
+}
+
+.km-project-rename-field:hover {
+  border-color: #42516C;
+}
+
+.km-project-rename-field:focus {
+  border-color: var(--accent);
+}
+
+.km-project-rename-field .unity-base-text-field__input,
+.km-project-rename-field .unity-text-input {
+  color: var(--text);
+  background-color: transparent;
+  font-size: 22px;
+  -unity-font-style: bold;
+}
+
+.km-project-rename-field .unity-text-element {
+  color: var(--text);
+}
+
+.km-project-rename-btn {
+  width: 160px;
+  background-color: #22304A;
+}
+
+.km-project-rename-btn:hover {
+  border-color: var(--accent);
+  background-color: #2B3C5D;
+}
+
+.km-project-rename-btn > .unity-text-element {
+  color: var(--text);
+  font-size: 22px;
+  -unity-font-style: bold;
 }

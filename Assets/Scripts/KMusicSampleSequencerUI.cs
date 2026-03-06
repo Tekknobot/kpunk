@@ -141,9 +141,18 @@ public class KMusicSampleSequencerUI : MonoBehaviour
     private void CacheChopButtons(VisualElement root)
     {
         if (root == null) return;
+
+        // There are two chop pickers in the shared UXML now:
+        // one on the Player page and one on the Drums | Chops page.
+        // We must scope this lookup to PageSampler so this tab wires its own picker,
+        // otherwise root.Q(...) grabs the first matching button from PagePlayer.
+        var samplerPage = root.Q<VisualElement>("PageSampler");
+        var scope = samplerPage ?? root;
+
         for (int i = 0; i < 16; i++)
         {
-            var b = root.Q<Button>($"Chop{(i + 1):00}");
+            chopBtns[i] = null;
+            var b = scope.Q<Button>($"Chop{(i + 1):00}");
             if (b != null) chopBtns[i] = b;
         }
     }

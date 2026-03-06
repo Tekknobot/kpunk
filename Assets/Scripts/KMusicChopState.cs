@@ -87,14 +87,17 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             public string resourcesPath;      // e.g. "Tracks/01 My Song"
             public float[] sliceStart01;      // length 16
             public float[] sliceEnd01;        // length 16
+            public float[] markerPositions01; // explicit user markers, allows 17th marker to close chop 16
         }
 
         public static void SaveApplied(string resourcesPath, List<float> userMarkers01)
         {
             if (string.IsNullOrEmpty(resourcesPath)) return;
 
-            // Only use real user markers
-            var boundaries = new List<float>();
+            // Markers represent chop START points.
+            // So if the first user marker is at 0.245, chop 01 starts at 0.245
+            // instead of implicitly creating a 0.000 -> 0.245 chop.
+            var markers = new List<float>();
 
             if (userMarkers01 != null)
             {
@@ -102,42 +105,33 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
                 {
                     float t = Mathf.Clamp01(userMarkers01[i]);
 
-                    // ignore edges (implicit boundaries)
+                    // ignore edges (0 and 1 are not user chops)
                     if (t <= 0.0001f || t >= 0.9999f)
                         continue;
 
-                    boundaries.Add(t);
+                    markers.Add(t);
                 }
             }
 
-            boundaries.Sort();
+            markers.Sort();
 
-            boundaries.Add(1f);
-            boundaries.Sort();
-
-            // Build up to 16 slices.
+            // Build up to 16 playable slices from marker[i] -> marker[i+1] / end-of-file.
+            // Allow a 17th marker so chop 16 can end before the full sample tail.
             var starts = new float[16];
             var ends = new float[16];
 
-            int sliceCount = Mathf.Max(0, boundaries.Count - 1);
+            int playableCount = Mathf.Min(16, markers.Count);
             for (int i = 0; i < 16; i++)
             {
-                if (i >= sliceCount)
+                if (i >= playableCount)
                 {
                     starts[i] = 0f;
                     ends[i] = 0f;
                     continue;
                 }
 
-                float s = boundaries[i];
-                float e = boundaries[i + 1];
-
-                // If we ran out of real slices, just make the remainder silent (0..0).
-                if (i >= sliceCount)
-                {
-                    s = 0f;
-                    e = 0f;
-                }
+                float s = markers[i];
+                float e = (i + 1 < markers.Count) ? markers[i + 1] : 1f;
 
                 starts[i] = s;
                 ends[i] = Mathf.Max(s, e);
@@ -147,7 +141,8 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             {
                 resourcesPath = resourcesPath,
                 sliceStart01 = starts,
-                sliceEnd01 = ends
+                sliceEnd01 = ends,
+                markerPositions01 = markers.ToArray()
             };
 
             ProjectPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));
@@ -210,11 +205,28 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             if (sliceEnd01 != null)
                 Array.Copy(sliceEnd01, ends, Mathf.Min(16, sliceEnd01.Length));
 
+            var markers = new List<float>();
+            for (int i = 0; i < starts.Length; i++)
+            {
+                float s = starts[i];
+                float e = ends[i];
+                if (s > 0.0001f && e > s)
+                    markers.Add(Mathf.Clamp01(s));
+            }
+            if (ends.Length >= 16)
+            {
+                float finalEnd = ends[15];
+                float finalStart = starts[15];
+                if (finalEnd > finalStart + 0.0001f && finalEnd < 0.9999f)
+                    markers.Add(Mathf.Clamp01(finalEnd));
+            }
+
             var save = new ChopSave
             {
                 resourcesPath = resourcesPath,
                 sliceStart01 = starts,
-                sliceEnd01 = ends
+                sliceEnd01 = ends,
+                markerPositions01 = markers.ToArray()
             };
 
             ProjectPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));

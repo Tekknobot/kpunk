@@ -45,11 +45,13 @@ public class KMusicSamplerPaintUI : MonoBehaviour
         if (!doc) return;
 
         var root = doc.rootVisualElement;
+        var samplerPage = root != null ? root.Q<VisualElement>("PageSampler") : null;
+        var scope = samplerPage ?? root;
 
         sequencer = FindObjectOfType<KMusicDrumSequencer>();
 
-        sampleGrid = root.Q<StepGrid>("SampleStepGrid");
-        drumGrid   = root.Q<StepGrid>("DrumStepGrid");
+        sampleGrid = scope.Q<StepGrid>("SampleStepGrid");
+        drumGrid   = scope.Q<StepGrid>("DrumStepGrid");
 
         if (sampleGrid == null) Debug.LogError("SampleStepGrid not found");
         if (drumGrid == null)   Debug.LogError("DrumStepGrid not found");
@@ -59,17 +61,17 @@ public class KMusicSamplerPaintUI : MonoBehaviour
 
         // Chop buttons
         for (int i = 0; i < 16; i++)
-            chopBtns[i] = root.Q<Button>($"Chop{(i+1):00}");
+            chopBtns[i] = scope.Q<Button>($"Chop{(i+1):00}");
 
         // Drum buttons
-        drumBtns[0] = root.Q<Button>("DrumKick");
-        drumBtns[1] = root.Q<Button>("DrumSnare");
-        drumBtns[2] = root.Q<Button>("DrumClap");
-        drumBtns[3] = root.Q<Button>("DrumHatC");
-        drumBtns[4] = root.Q<Button>("DrumHatO");
-        drumBtns[5] = root.Q<Button>("DrumRim");
-        drumBtns[6] = root.Q<Button>("DrumPerc");
-        drumBtns[7] = root.Q<Button>("DrumCrash");
+        drumBtns[0] = scope.Q<Button>("DrumKick");
+        drumBtns[1] = scope.Q<Button>("DrumSnare");
+        drumBtns[2] = scope.Q<Button>("DrumClap");
+        drumBtns[3] = scope.Q<Button>("DrumHatC");
+        drumBtns[4] = scope.Q<Button>("DrumHatO");
+        drumBtns[5] = scope.Q<Button>("DrumRim");
+        drumBtns[6] = scope.Q<Button>("DrumPerc");
+        drumBtns[7] = scope.Q<Button>("DrumCrash");
 
         // init drum memory
         for (int d = 0; d < 8; d++)

@@ -167,16 +167,29 @@ namespace KMusic
             _bus.OnChanged -= OnBusChanged;
             _bus.OnChanged += OnBusChanged;
 
-            // IMPORTANT: mirror Helm -> UI/bus immediately so the UI starts at the synth's real state.
-            if (!_pulledOnce)
-            {
-                PullHelmToBus();      // only initial sync so UI matches synth on boot
-                _pulledOnce = true;
-            }
+            ApplyAllFromBus();
+            _pulledOnce = true;
 
             _lastSent.Clear();
 
             Debug.Log($"[KMusicHelmSynthBinder] Bound OK. helm={helm.name} bus={(_bus != null)}");
+        }
+
+        private void ApplyAllFromBus()
+        {
+            if (_bus == null || helm == null) return;
+
+            _lastSent.Clear();
+
+            foreach (var kvp in Map)
+            {
+                string id = kvp.Key;
+
+                if (!_bus.TryGet(id, out _))
+                    continue;
+
+                ApplyOne(id);
+            }
         }
 
         /// <summary>
