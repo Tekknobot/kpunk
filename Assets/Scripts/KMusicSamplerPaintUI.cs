@@ -7,6 +7,7 @@ public class KMusicSamplerPaintUI : MonoBehaviour
     [SerializeField] private UIDocument doc;
 
     private KMusicDrumSequencer sequencer;
+    private KMusicChainUI chainUI;
 
     private StepGrid sampleGrid;
     private StepGrid drumGrid;
@@ -49,6 +50,7 @@ public class KMusicSamplerPaintUI : MonoBehaviour
         var scope = samplerPage ?? root;
 
         sequencer = FindObjectOfType<KMusicDrumSequencer>();
+        chainUI = FindObjectOfType<KMusicChainUI>();
 
         sampleGrid = scope.Q<StepGrid>("SampleStepGrid");
         drumGrid   = scope.Q<StepGrid>("DrumStepGrid");
@@ -202,7 +204,17 @@ public class KMusicSamplerPaintUI : MonoBehaviour
     {
         if(sampleGrid!=null)
         {
-            sampleGrid.OnCellValueChanged += (r,c,v)=> samplePattern[r,c]=v;
+            sampleGrid.OnCellValueChanged += (r,c,v)=>
+            {
+                samplePattern[r,c]=v;
+                if (sequencer != null)
+                {
+                    int step = r * 8 + c;
+                    sequencer.SetSampleStep(step, v);
+                }
+                if (chainUI == null) chainUI = FindObjectOfType<KMusicChainUI>();
+                chainUI?.NotifyLiveEdited();
+            };
 
             sampleGrid.OnCellClicked += (r,c)=>{
                 int v=sampleGrid.GetValue(r,c);
@@ -226,6 +238,9 @@ public class KMusicSamplerPaintUI : MonoBehaviour
                     sequencer.SetStepLane(step, lane, true);
                 else
                     sequencer.SetStepLane(step, lane, false);
+
+                if (chainUI == null) chainUI = FindObjectOfType<KMusicChainUI>();
+                chainUI?.NotifyLiveEdited();
             };
         }
     }

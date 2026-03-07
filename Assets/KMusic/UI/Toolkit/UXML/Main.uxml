@@ -128,14 +128,15 @@
                 <km:KnobElement label="Atk" paramId="amp.atk" />
                 <km:KnobElement label="Dec" paramId="amp.dec" />
                 <km:KnobElement label="Sus" paramId="amp.sus" />
+                <km:KnobElement label="Rel" paramId="amp.rel2" />
               </ui:VisualElement>
 
-              <!-- SHORT SYNTH FADERS -->
-              <ui:VisualElement class="km-fader-row">
-                <km:FaderElement class="km-synth-fader" label="Atk" paramId="amp.atk2" />
-                <km:FaderElement class="km-synth-fader" label="Dec" paramId="amp.dec2" />
-                <km:FaderElement class="km-synth-fader" label="Sus" paramId="amp.sus2" />
-                <km:FaderElement class="km-synth-fader" label="Rel" paramId="amp.rel2" />
+              <ui:Label class="km-subtitle" text="DIST" style="margin-top:14px;"/>
+
+              <ui:VisualElement class="km-macro-row">
+                <km:KnobElement label="Type" paramId="fx.dist.type" />
+                <km:KnobElement label="Drive" paramId="fx.dist.drive" />
+                <km:KnobElement label="Mix" paramId="fx.dist.mix" />
               </ui:VisualElement>
             </ui:VisualElement>
 

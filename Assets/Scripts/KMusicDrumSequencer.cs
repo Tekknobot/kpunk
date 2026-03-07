@@ -57,6 +57,7 @@ public class KMusicDrumSequencer : MonoBehaviour
     private readonly bool[] _drumMute = new bool[8];
 
     private bool _didLoadState = false;
+    private KMusicChainUI _chainUI;
 
     [Header("Unity AudioMixer (optional)")]
     [Tooltip("If assigned, each drum AudioSource will be routed into these mixer groups so you can push above 0 dB and see meters in the mixer.")]
@@ -905,6 +906,13 @@ private string _appliedResourcesPath = null;
         }
     } 
 
+    private void NotifyChainLiveEdited()
+    {
+        if (!_allowSaving) return;
+        if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+        _chainUI?.NotifyLiveEdited();
+    }
+
     // ---------------- END SAVE/LOAD (PATCHED) ----------------
     private void OnApplicationPause(bool pause)
     {
@@ -932,6 +940,12 @@ private string _appliedResourcesPath = null;
 
         if (on) _stepMask[step] |= bit;
         else    _stepMask[step] &= (byte)~bit;
+
+        if (_allowSaving)
+        {
+            SaveDrumState();
+            NotifyChainLiveEdited();
+        }
     }
 
     private void LoadKits()
@@ -1151,6 +1165,7 @@ private string _appliedResourcesPath = null;
             TriggerDrumNow(_activeDrumId);
 
         SaveDrumState();
+        NotifyChainLiveEdited();
 
         if (verbose)
             Debug.Log($"[DRUM GRID] r={r} c={c} step={step} active={_activeDrumId} v={v} shown={shown} mask=0x{_stepMask[step]:X2}");
@@ -1214,6 +1229,12 @@ private string _appliedResourcesPath = null;
     {
         if (stepIndex < 0 || stepIndex >= steps) return;
         _sampleChopByStep[stepIndex] = Mathf.Clamp(chopId, 0, 16);
+
+        if (_allowSaving)
+        {
+            SaveDrumState();
+            NotifyChainLiveEdited();
+        }
     }
 
     private void EnsureSamplePatternLoaded()

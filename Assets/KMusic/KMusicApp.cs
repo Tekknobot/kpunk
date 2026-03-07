@@ -246,6 +246,12 @@ namespace KMusic
             _bus.Add(new Parameter("fx.rev.fb",   0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("fx.rev.damp", 0f, 100f, 0f, unit: "%"));
 
+            // DISTORTION
+            _bus.Add(new Parameter("fx.dist.on",    0f, 1f, 0f));
+            _bus.Add(new Parameter("fx.dist.type",  0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("fx.dist.drive", 0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("fx.dist.mix",   0f, 100f, 0f, unit: "%"));            
+
             // -----------------
             // FILTER
             // -----------------

@@ -97,6 +97,12 @@ namespace KMusic
             { "fx.rev.mix",  Param.kReverbDryWet },
             { "fx.rev.fb",   Param.kReverbFeedback },
             { "fx.rev.damp", Param.kReverbDamping },
+
+            // FX: DISTORTION
+            { "fx.dist.on",    Param.kDistortionOn },
+            { "fx.dist.type",  Param.kDistortionType },
+            { "fx.dist.drive", Param.kDistortionDrive },
+            { "fx.dist.mix",   Param.kDistortionMix },            
         };
 
         private void OnEnable()
@@ -250,12 +256,29 @@ namespace KMusic
                 return;
 
             float t = Mathf.Clamp01(GetBusNormalizedSafe(id));
+
+            if (id == "fx.dist.type")
+                t = SnapDistType(t);          
+            
             if (!ShouldSend(id, t)) return;
 
             if (logApply)
                 Debug.Log($"[APPLY] {id} -> {param} = {t:0.000}");
 
             helm.SetParameterPercent(param, t);
+        }
+
+        private float SnapDistType(float t)
+        {
+            // Adjust this count to match Helm's real distortion type count.
+            const int typeCount = 4;
+
+            if (typeCount <= 1) return 0f;
+
+            int index = Mathf.RoundToInt(t * (typeCount - 1));
+            index = Mathf.Clamp(index, 0, typeCount - 1);
+
+            return index / (float)(typeCount - 1);
         }
 
         private bool ShouldSend(string id, float t)
