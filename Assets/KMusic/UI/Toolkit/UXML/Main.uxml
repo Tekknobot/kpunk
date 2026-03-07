@@ -62,6 +62,7 @@
                 <km:KnobElement label="Vol" paramId="osc1.vol" />
                 <km:KnobElement label="Tune" paramId="osc1.tune" />
                 <km:KnobElement label="Trans" paramId="osc1.trans" />
+                <km:KnobElement label="Wave" paramId="osc1.wave" />
               </ui:VisualElement>
               <ui:VisualElement class="km-macro-row">
                 <km:KnobElement label="Uni" paramId="osc1.uni" />
@@ -76,6 +77,7 @@
                 <km:KnobElement label="Vol" paramId="osc2.vol" />
                 <km:KnobElement label="Tune" paramId="osc2.tune" />
                 <km:KnobElement label="Trans" paramId="osc2.trans" />
+                <km:KnobElement label="Wave" paramId="osc2.wave" />
               </ui:VisualElement>
               <ui:VisualElement class="km-macro-row">
                 <km:KnobElement label="Uni" paramId="osc2.uni" />
@@ -83,23 +85,22 @@
                 <km:KnobElement label="Harm" paramId="osc2.harm" />
               </ui:VisualElement>
             </ui:VisualElement>
-
-            <ui:VisualElement class="km-subcard">
-              <ui:Label class="km-subtitle" text="SUB/NOISE"/>
-              <ui:VisualElement class="km-macro-row">
-                <km:KnobElement label="SubVol" paramId="sub.vol" />
-                <km:KnobElement label="SubOct" paramId="sub.oct" />
-                <km:KnobElement label="Noise" paramId="noise.vol" />
-              </ui:VisualElement>
-              <ui:VisualElement class="km-macro-row">
-                <km:KnobElement label="XMod" paramId="synth.xmod" />
-                <km:KnobElement label="KeyTrk" paramId="filter.keytrk" />
-                <km:KnobElement label="Vel" paramId="synth.vel" />
-              </ui:VisualElement>
-            </ui:VisualElement>
-
           </ui:VisualElement>
         </ui:VisualElement>
+
+      <ui:VisualElement name="CardSub" class="km-card km-modules-card">
+          <ui:VisualElement class="km-subcard">
+            <ui:Label class="km-subtitle" text="SUB/NOISE"/>
+            <ui:VisualElement class="km-macro-row">
+              <km:KnobElement label="SubVol" paramId="sub.vol" />
+              <km:KnobElement label="SubOct" paramId="sub.oct" />
+              <km:KnobElement label="Noise" paramId="noise.vol" />
+              <km:KnobElement label="XMod" paramId="synth.xmod" />
+              <km:KnobElement label="KeyTrk" paramId="filter.keytrk" />
+              <km:KnobElement label="Vel" paramId="synth.vel" />
+            </ui:VisualElement>
+          </ui:VisualElement>
+      </ui:VisualElement>
 
         <!-- FILTER + AMP -->
         <ui:VisualElement name="CardFilter" class="km-card km-modules-card">

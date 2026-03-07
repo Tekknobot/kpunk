@@ -47,6 +47,7 @@ namespace KMusic
             { "osc1.uni",    Param.kOsc1UnisonVoices },
             { "osc1.detune", Param.kOsc1UnisonDetune },
             { "osc1.harm",   Param.kOsc1UnisonHarmonize },
+            { "osc1.wave",   Param.kOsc1Waveform },
 
             // OSC2
             { "osc2.vol",    Param.kOsc2Volume },
@@ -55,6 +56,7 @@ namespace KMusic
             { "osc2.uni",    Param.kOsc2UnisonVoices },
             { "osc2.detune", Param.kOsc2UnisonDetune },
             { "osc2.harm",   Param.kOsc2UnisonHarmonize },
+            { "osc2.wave",   Param.kOsc2Waveform },
 
             // SUB / NOISE / MISC
             { "sub.vol",       Param.kSubVolume },
@@ -103,6 +105,29 @@ namespace KMusic
             { "fx.dist.type",  Param.kDistortionType },
             { "fx.dist.drive", Param.kDistortionDrive },
             { "fx.dist.mix",   Param.kDistortionMix },            
+        };
+
+        private static readonly string[] WaveNames =
+        {
+            "SIN",
+            "TRI",
+            "SAW",
+            "SQR",
+            "PWM",
+            "NOI",
+            "S&H",
+            "STEP",
+            "FORM",
+            "HARM",
+            "META"
+        };
+
+        private static readonly string[] DistNames =
+        {
+            "SOFT",
+            "HARD",
+            "CLIP",
+            "FOLD"
         };
 
         private void OnEnable()
@@ -241,9 +266,29 @@ namespace KMusic
             if (_suppressBusEvents) return;
 
             float n = GetBusNormalizedSafe(id);
+            float snapped = n;
+
+            if (id == "osc1.wave" || id == "osc2.wave")
+                snapped = SnapWaveform(n);
+            else if (id == "fx.dist.type")
+                snapped = SnapDistType(n);
+
+            // Push snapped enum-like values back into the bus so UI reflects the step.
+            if (!Mathf.Approximately(snapped, n))
+            {
+                _suppressBusEvents = true;
+                try
+                {
+                    TrySetBusNormalized(_bus, id, snapped);
+                }
+                finally
+                {
+                    _suppressBusEvents = false;
+                }
+            }
 
             if (logBusChanges)
-                Debug.Log($"[BUS] {id} -> norm={n:0.000}");
+                Debug.Log($"[BUS] {id} -> norm={snapped:0.000}");
 
             ApplyOne(id);
         }
@@ -257,15 +302,24 @@ namespace KMusic
 
             float t = Mathf.Clamp01(GetBusNormalizedSafe(id));
 
-            if (id == "fx.dist.type")
-                t = SnapDistType(t);          
-            
             if (!ShouldSend(id, t)) return;
 
             if (logApply)
                 Debug.Log($"[APPLY] {id} -> {param} = {t:0.000}");
 
             helm.SetParameterPercent(param, t);
+        }
+
+        private float SnapWaveform(float t)
+        {
+            // Adjust if Helm uses a different waveform count.
+            const int waveCount = 11;
+
+            if (waveCount <= 1) return 0f;
+
+            int index = Mathf.RoundToInt(Mathf.Clamp01(t) * (waveCount - 1));
+            index = Mathf.Clamp(index, 0, waveCount - 1);
+            return index / (float)(waveCount - 1);
         }
 
         private float SnapDistType(float t)
@@ -371,5 +425,5 @@ namespace KMusic
             PullHelmToBus();
             _lastSent.Clear();
         }        
-    }
+    }    
 }

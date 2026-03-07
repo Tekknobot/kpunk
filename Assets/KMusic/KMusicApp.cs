@@ -229,6 +229,9 @@ namespace KMusic
             _bus.Add(new Parameter("osc2.detune", 0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("osc2.harm",   0f, 100f, 0f, unit: "%"));
 
+            _bus.Add(new Parameter("osc1.wave", 0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("osc2.wave", 0f, 100f, 0f, unit: "%"));
+
             // SUB / NOISE / MISC
             _bus.Add(new Parameter("sub.vol",       0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("sub.oct",       0f, 100f, 0f, unit: "%"));

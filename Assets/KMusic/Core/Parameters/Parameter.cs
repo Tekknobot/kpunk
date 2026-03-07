@@ -51,9 +51,38 @@ namespace KMusic.Core
                 }
             }
         }
-
+        
         public string Format()
         {
+            // Enum-like display names for synth selector params.
+            if (!string.IsNullOrEmpty(Id))
+            {
+                if (Id == "osc1.wave" || Id == "osc2.wave")
+                {
+                    string[] waveNames =
+                    {
+                        "SIN", "TRI", "SAW", "SQR", "PWM",
+                        "NOI", "S&H", "STEP", "FORM", "HARM", "META"
+                    };
+
+                    int index = Mathf.RoundToInt(Normalized * (waveNames.Length - 1));
+                    index = Mathf.Clamp(index, 0, waveNames.Length - 1);
+                    return waveNames[index];
+                }
+
+                if (Id == "fx.dist.type")
+                {
+                    string[] distNames =
+                    {
+                        "SOFT", "HARD", "CLIP", "FOLD"
+                    };
+
+                    int index = Mathf.RoundToInt(Normalized * (distNames.Length - 1));
+                    index = Mathf.Clamp(index, 0, distNames.Length - 1);
+                    return distNames[index];
+                }
+            }
+
             // Special-case: drum mixer faders are stored as 0..1 in the bus,
             // but we want to *display* mixer-style dB (-80..+6) like a real mixer.
             // This keeps the rest of the app (which expects 0..1) intact.
@@ -61,16 +90,11 @@ namespace KMusic.Core
             {
                 float t01 = Mathf.Clamp01(Value);
 
-                // Match the same taper you use when driving the Unity AudioMixer.
-                // 0.00 -> -80 dB (silent)
-                // 0.80 -> 0 dB (unity)
-                // 1.00 -> +6 dB
                 const float unityAt = 0.80f;
                 float db;
 
                 if (t01 <= 0.0001f)
                 {
-                    // -inf reads nicer than a hard floor.
                     return "-\u221E dB";
                 }
 
@@ -94,10 +118,11 @@ namespace KMusic.Core
             if (Unit == "%") return $"{Mathf.RoundToInt(Value)}%";
             if (Unit == "hz")
             {
-                if (Value >= 1000f) return $"{(Value/1000f):0.0} kHz";
+                if (Value >= 1000f) return $"{(Value / 1000f):0.0} kHz";
                 return $"{Mathf.RoundToInt(Value)} Hz";
             }
+
             return $"{Value:0.##}{(string.IsNullOrEmpty(Unit) ? "" : " " + Unit)}";
-        }
+        }    
     }
 }

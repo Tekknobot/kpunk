@@ -174,7 +174,12 @@
 
 /* OSC block */
 #CardOsc {
-  height: 520px;         /* adjust */
+  height: 620px;         /* adjust */
+}
+
+/* SUB block */
+#CardSub {
+  height: 340px;         /* adjust */
 }
 
 /* FILTER + AMP block */
@@ -419,7 +424,7 @@ unity-text-align: middle-center;
 
 /* ensure content clears the bottom tabs */
 #Pages {
-  padding-bottom: 80px;   /* space for tab bar */
+  padding-bottom: 18px;   /* space for tab bar */
 }
 
 #PageSynth {
