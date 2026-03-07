@@ -44,6 +44,9 @@ namespace KMusic.UI
 
         // CHAIN support: suppress writes while importing patterns
         private bool _allowSaving = true;
+        private int[] _cachedSeqStepsFlat;
+        private bool _hasCachedSeqSteps;
+        private bool _preferCachedOnNextBind;
 
         // valueId -> label/color
         private readonly Dictionary<int, string> _labelByValue = new();
@@ -167,7 +170,12 @@ namespace KMusic.UI
                 int v0 = _piano.GetCellValueId(0, 0);
                 _step.SetPaintValue(v0);
 
-                LoadStepGrid();
+                if (_preferCachedOnNextBind && _hasCachedSeqSteps && _cachedSeqStepsFlat != null)
+                    ApplySeqStepsFlat(_cachedSeqStepsFlat);
+                else
+                    LoadStepGrid();
+
+                _preferCachedOnNextBind = false;
                 RebuildHelmSequenceFromGrid();
                 helmSequencer.enabled = false;
                 helmSequencer.enabled = true;
@@ -599,7 +607,37 @@ namespace KMusic.UI
         {
             if (!_allowSaving) return;
             if (_step == null) return;
-            KMusic.KMusicSaveState.SaveIntArray(PrefKey_SeqStepGrid, _step.ExportValuesFlat());
+
+            var flat = _step.ExportValuesFlat();
+            CacheSeqFlat(flat);
+            PersistSeqFlat(flat);
+        }
+
+        private int ExpectedSeqFlatLength()
+        {
+            return _step != null ? _step.RowCount * _step.ColCount : 16;
+        }
+
+        private void CacheSeqFlat(int[] flat)
+        {
+            int len = ExpectedSeqFlatLength();
+            if (len <= 0) len = 16;
+
+            if (flat == null || flat.Length != len)
+            {
+                _cachedSeqStepsFlat = new int[len];
+                _hasCachedSeqSteps = true;
+                return;
+            }
+
+            _cachedSeqStepsFlat = (int[])flat.Clone();
+            _hasCachedSeqSteps = true;
+        }
+
+        private void PersistSeqFlat(int[] flat)
+        {
+            if (flat == null) return;
+            KMusic.KMusicSaveState.SaveIntArray(PrefKey_SeqStepGrid, flat);
         }
 
         private void LoadStepGrid()
@@ -608,6 +646,8 @@ namespace KMusic.UI
 
             var v = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SeqStepGrid, _step.RowCount * _step.ColCount);
             if (v == null) return;
+
+            CacheSeqFlat(v);
 
             EnsureRunArrays();
 
@@ -673,12 +713,27 @@ namespace KMusic.UI
 
         public int[] CaptureSeqStepsFlat()
         {
-            if (_step == null) return null;
-            return _step.ExportValuesFlat();
+            if (_step != null)
+            {
+                var flat = _step.ExportValuesFlat();
+                CacheSeqFlat(flat);
+                return flat;
+            }
+
+            if (_hasCachedSeqSteps && _cachedSeqStepsFlat != null)
+                return (int[])_cachedSeqStepsFlat.Clone();
+
+            return null;
         }
 
         public void ApplySeqStepsFlat(int[] flat)
         {
+            CacheSeqFlat(flat);
+            _preferCachedOnNextBind = true;
+
+            if (flat != null && flat.Length == ExpectedSeqFlatLength())
+                PersistSeqFlat(flat);
+
             if (_step == null) return;
 
             EnsureRunArrays();

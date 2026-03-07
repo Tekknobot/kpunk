@@ -33,6 +33,9 @@ public class KMusicSampleSequencerUI : MonoBehaviour
 
     // CHAIN support: suppress writes while importing patterns
     private bool _allowSaving = true;
+    private int[] _cachedSampleStepsFlat;
+    private bool _hasCachedSampleSteps;
+    private bool _preferCachedOnNextBind;
 
     private void Awake()
     {
@@ -78,11 +81,24 @@ public class KMusicSampleSequencerUI : MonoBehaviour
             TryEnableValueTint(sampleGrid, true, GetChopColor);
 
             // LOAD AFTER everything is wired
-            var saved = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SampleStepGrid, sampleGrid.RowCount * sampleGrid.ColCount);
-            if (saved != null)
-                sampleGrid.ImportValuesFlat(saved, fireEvent: false);
+            int[] toApply = null;
+            if (_preferCachedOnNextBind && _hasCachedSampleSteps)
+                toApply = (int[])_cachedSampleStepsFlat.Clone();
             else
+                toApply = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SampleStepGrid, sampleGrid.RowCount * sampleGrid.ColCount);
+
+            if (toApply != null)
+            {
+                CacheFlat(toApply);
+                sampleGrid.ImportValuesFlat(toApply, fireEvent: false);
+            }
+            else
+            {
                 sampleGrid.ClearAll();
+                CacheFlat(null);
+            }
+
+            _preferCachedOnNextBind = false;
 
             ForceGridRefresh(sampleGrid);
             SelectChop(activeChop);
@@ -109,7 +125,39 @@ public class KMusicSampleSequencerUI : MonoBehaviour
     {
         if (!_allowSaving) return;
         if (sampleGrid == null) return;
-        KMusic.KMusicSaveState.SaveIntArray(PrefKey_SampleStepGrid, sampleGrid.ExportValuesFlat());
+
+        var flat = sampleGrid.ExportValuesFlat();
+        CacheFlat(flat);
+        PersistFlat(flat);
+    }
+
+    private int ExpectedFlatLength()
+    {
+        if (sampleGrid != null)
+            return sampleGrid.RowCount * sampleGrid.ColCount;
+        return samplePattern.GetLength(0) * samplePattern.GetLength(1);
+    }
+
+    private void CacheFlat(int[] flat)
+    {
+        int len = ExpectedFlatLength();
+        if (len <= 0) len = 16;
+
+        if (flat == null || flat.Length != len)
+        {
+            _cachedSampleStepsFlat = new int[len];
+            _hasCachedSampleSteps = true;
+            return;
+        }
+
+        _cachedSampleStepsFlat = (int[])flat.Clone();
+        _hasCachedSampleSteps = true;
+    }
+
+    private void PersistFlat(int[] flat)
+    {
+        if (flat == null) return;
+        KMusic.KMusicSaveState.SaveIntArray(PrefKey_SampleStepGrid, flat);
     }
 
     // ----------------------------
@@ -120,12 +168,27 @@ public class KMusicSampleSequencerUI : MonoBehaviour
 
     public int[] CaptureSampleStepsFlat()
     {
-        if (sampleGrid == null) return null;
-        return sampleGrid.ExportValuesFlat();
+        if (sampleGrid != null)
+        {
+            var flat = sampleGrid.ExportValuesFlat();
+            CacheFlat(flat);
+            return flat;
+        }
+
+        if (_hasCachedSampleSteps && _cachedSampleStepsFlat != null)
+            return (int[])_cachedSampleStepsFlat.Clone();
+
+        return null;
     }
 
     public void ApplySampleStepsFlat(int[] flat)
     {
+        CacheFlat(flat);
+        _preferCachedOnNextBind = true;
+
+        if (flat != null && flat.Length == ExpectedFlatLength())
+            PersistFlat(flat);
+
         if (sampleGrid == null) return;
         if (flat == null || flat.Length != sampleGrid.RowCount * sampleGrid.ColCount)
         {

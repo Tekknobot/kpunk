@@ -754,8 +754,42 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 _player.RefreshAppliedMarkersFromState();
             }
 
+            int selectedPatternId = 0;
             if (_chainUi != null)
+            {
                 _chainUi.ReloadFromSaved();
+                selectedPatternId = _chainUi.ResolveSelectedPatternId();
+            }
+            else if (data.chain != null && data.chain.slots != null)
+            {
+                int cursor = Mathf.Clamp(data.chain.cursor, 0, data.chain.slots.Length - 1);
+                if (cursor >= 0 && cursor < data.chain.slots.Length && data.chain.slots[cursor] >= 0)
+                    selectedPatternId = data.chain.slots[cursor];
+                else
+                {
+                    for (int i = 0; i < data.chain.slots.Length; i++)
+                    {
+                        if (data.chain.slots[i] >= 0)
+                        {
+                            selectedPatternId = data.chain.slots[i];
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // The project file stores the current live sampler/keys state separately from the
+            // pattern bank. Re-seed the selected/current pattern with the just-loaded live state
+            // so the first chain handoff inside the same app session does not snap back to an
+            // older blank pattern entry.
+            PatternBank.Save(selectedPatternId, new PatternData
+            {
+                drumMask = _drums != null ? _drums.CaptureDrumMask() : null,
+                sampleSteps = _samplerUi != null
+                    ? _samplerUi.CaptureSampleStepsFlat()
+                    : (_drums != null ? _drums.CaptureSampleStepsFlat() : null),
+                seqSteps = _keys != null ? _keys.CaptureSeqStepsFlat() : null
+            });
         }
         finally
         {

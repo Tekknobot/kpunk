@@ -81,10 +81,40 @@ public class KMusicChainUI : MonoBehaviour
         {
             PatternBank.EnsureDefaultPatternExists();
             _chain = ChainState.LoadOrCreate();
-            _selectedPatternId = Mathf.Clamp(_selectedPatternId, 0, 999);
+            _playBar = 0;
+            _lastAppliedPattern = int.MinValue;
+            _selectedPatternId = ResolveSelectedPatternId();
             RefreshAllUI();
         }
         catch { }
+    }
+
+    public int ResolveSelectedPatternId()
+    {
+        PatternBank.EnsureDefaultPatternExists();
+
+        if (_chain != null)
+        {
+            int cursor = Mathf.Clamp(_chain.cursor, 0, 63);
+
+            if (_chain.slots != null && cursor < _chain.slots.Length)
+            {
+                int pid = _chain.slots[cursor];
+                if (pid >= 0)
+                    return pid;
+            }
+
+            if (_chain.slots != null)
+            {
+                for (int i = 0; i < _chain.slots.Length; i++)
+                {
+                    if (_chain.slots[i] >= 0)
+                        return _chain.slots[i];
+                }
+            }
+        }
+
+        return 0;
     }
 
     private void OnDisable()
@@ -295,14 +325,33 @@ public class KMusicChainUI : MonoBehaviour
     public void NotifyLiveEdited()
     {
         if (_suppressAutoSave) return;
-        if (_selectedPatternId < 0) return;
+
+        int targetPatternId = GetActiveEditPatternId();
+        if (targetPatternId < 0) return;
 
         try
         {
             var snap = CaptureLiveToPattern();
-            PatternBank.Save(_selectedPatternId, snap);
+            PatternBank.Save(targetPatternId, snap);
+
+            // Keep the chain editor pointed at the live pattern being authored.
+            if (_selectedPatternId != targetPatternId)
+            {
+                _selectedPatternId = targetPatternId;
+                RefreshPatternUI();
+                RefreshBarsUI();
+            }
         }
         catch { }
+    }
+
+
+    private int GetActiveEditPatternId()
+    {
+        if (_chain != null && _chain.enabled && _drums != null && _drums.IsPlaying && _lastAppliedPattern >= 0)
+            return _lastAppliedPattern;
+
+        return _selectedPatternId;
     }
 
     private void RefreshAllUI()
@@ -459,6 +508,7 @@ public class KMusicChainUI : MonoBehaviour
 
     private void LoadPatternToLive(int patternId)
     {
+        _selectedPatternId = patternId;
         var p = PatternBank.Load(patternId);
 
         // suppress saving while importing
@@ -513,6 +563,11 @@ public class KMusicChainUI : MonoBehaviour
         if (pid != _lastAppliedPattern)
         {
             LoadPatternToLive(pid);
+        }
+        else if (_selectedPatternId != pid)
+        {
+            _selectedPatternId = pid;
+            RefreshPatternUI();
         }
 
         // UI: highlight
