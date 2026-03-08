@@ -264,9 +264,8 @@ private void Awake()
         if (_btnAuto8 != null) _btnAuto8.clicked += () => AutoChop(8);
         if (_btnAuto16 != null) _btnAuto16.clicked += () => AutoChop(16);
 
-        // ✅ Your request:
-        // Add button ALWAYS drops a marker at the current timestamp/playhead.
-        if (_btnAddMode != null) _btnAddMode.clicked += OnAddMarkerButton;
+        // Fire on press-down so it works immediately on mobile too.
+        WirePointerDownButton(_btnAddMode, OnAddMarkerButton, "km-add-btn--pointerdown");
 
         // Del button: set delete mode (and also delete nearest at current timestamp, consistent with mobile)
         if (_btnDelMode != null) _btnDelMode.clicked += OnDeleteMarkerButton;
@@ -979,10 +978,20 @@ private void Awake()
             if (btn == null) continue;
 
             _chopPickerButtons.Add(btn);
-            btn.clicked += () => SelectMarkerFromChopPicker(chopNumber - 1);
+            WirePointerDownButton(btn, () => SelectMarkerFromChopPicker(chopNumber - 1), $"km-chop-picker-{chopNumber:00}--pointerdown");
         }
 
         RefreshChopPickerUI();
+    }
+
+
+    private void WirePointerDownButton(Button btn, Action action, string wiredClass)
+    {
+        if (btn == null || action == null) return;
+        if (btn.ClassListContains(wiredClass)) return;
+
+        btn.AddToClassList(wiredClass);
+        btn.RegisterCallback<PointerDownEvent>(_ => action(), TrickleDown.TrickleDown);
     }
 
     private void SelectMarkerFromChopPicker(int markerIndex)

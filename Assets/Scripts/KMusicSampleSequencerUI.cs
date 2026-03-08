@@ -228,22 +228,17 @@ public class KMusicSampleSequencerUI : MonoBehaviour
             var btn = chopBtns[i];
             if (btn == null) continue;
 
-            // Avoid duplicate subscriptions if OnEnable runs again:
-            btn.clicked -= () => { }; // no-op; can't remove anonymous reliably
-
-            // Instead: use a captured local and guard with a classlist marker.
-            // If the button already has our marker, don’t rewire.
             const string wiredClass = "km-chop-btn--wired";
             if (btn.ClassListContains(wiredClass))
                 continue;
 
             btn.AddToClassList(wiredClass);
-            btn.clicked += () =>
+            btn.RegisterCallback<PointerDownEvent>(_ =>
             {
                 if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
-                _sequencer?.AuditionChop(chopId);   // ✅ audition immediately
+                _sequencer?.AuditionChop(chopId);
                 SelectChop(chopId);
-            };
+            }, TrickleDown.TrickleDown);
         }
     }
 
