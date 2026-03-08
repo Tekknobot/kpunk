@@ -1174,3 +1174,128 @@ unity-text-align: middle-center;
   font-size: 22px;
   -unity-font-style: bold;
 }
+
+
+/* --- Sample / Track Browser --- */
+.km-track-modal {
+  background-color: rgba(0, 0, 0, 0.78);
+  padding-left: 14px;
+  padding-right: 14px;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.km-track-card {
+  max-width: 1200px;
+  min-height: 620px;
+  padding: 18px;
+  border-color: rgba(106, 228, 255, 0.16);
+}
+
+.km-track-header {
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.km-track-title {
+  margin-bottom: 0;
+  font-size: 32px;
+  color: var(--text);
+}
+
+.km-track-close {
+  min-width: 150px;
+  height: 56px;
+  flex-grow: 0;
+}
+
+.km-track-search {
+  min-height: 62px;
+  margin-bottom: 10px;
+  width: auto;
+  color: var(--text);
+  background-color: #0F1320;
+  border-color: #2B3142;
+}
+
+.km-track-search .unity-base-text-field__input,
+.km-track-search .unity-text-input,
+.km-track-search .unity-text-element {
+  color: var(--text);
+  background-color: transparent;
+  font-size: 24px;
+  -unity-font-style: bold;
+}
+
+.km-track-count {
+  color: var(--muted);
+  font-size: 18px;
+  -unity-font-style: bold;
+  margin-bottom: 10px;
+}
+
+.km-track-scroll {
+  flex-grow: 1;
+  min-height: 240px;
+  background-color: rgba(0, 0, 0, 0.14);
+  border-radius: 18px;
+  padding: 8px;
+}
+
+.km-track-scroll .unity-scroll-view__content-container {
+  padding-right: 4px;
+}
+
+.km-track-row {
+  min-height: 86px;
+  margin-bottom: 10px;
+  padding-left: 16px;
+  padding-right: 16px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+
+  border-width: 2px;
+  border-color: rgba(255,255,255,0.05);
+  border-radius: 18px;
+  background-color: #171B24;
+
+  unity-text-align: middle-left;
+  white-space: normal;
+}
+
+.km-track-row:hover {
+  border-color: rgba(106, 228, 255, 0.7);
+  background-color: #1A2230;
+}
+
+.km-track-row--current {
+  border-color: rgba(106, 228, 255, 0.9);
+  background-color: #1D2738;
+}
+
+.km-track-row-title {
+  color: var(--text);
+  font-size: 24px;
+  -unity-font-style: bold;
+  white-space: normal;
+}
+
+.km-track-row-subtitle {
+  margin-top: 4px;
+  color: #D7DEEA;
+  font-size: 18px;
+  white-space: normal;
+}
+
+.km-track-empty {
+  color: var(--muted);
+  font-size: 22px;
+  -unity-font-style: bold;
+  unity-text-align: middle-center;
+  margin-top: 18px;
+}

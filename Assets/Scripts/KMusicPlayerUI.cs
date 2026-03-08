@@ -34,6 +34,11 @@ public class KMusicPlayerUI : MonoBehaviour
     private WaveformView _wave;
     private Button _btnSend;
 
+    private VisualElement _trackBrowserOverlay;
+    private TextField _trackBrowserSearch;
+    private ScrollView _trackBrowserList;
+    private Label _trackBrowserCountLabel;
+
     private bool _chopArmed = false;
 
     private Button _btnAuto4, _btnAuto8, _btnAuto16;
@@ -254,7 +259,7 @@ private void Awake()
         if (_btnStop != null) _btnStop.clicked += OnStopClicked;
         if (_btnPrev != null) _btnPrev.clicked += CyclePrevTrack;
         if (_btnNext != null) _btnNext.clicked += CycleNextTrack;
-        if (_btnLoad != null) _btnLoad.clicked += CycleNextTrack;
+        if (_btnLoad != null) _btnLoad.clicked += OpenTrackBrowser;
 
         if (_btnChop != null) _btnChop.clicked += ToggleChop;
         if (_btnApply != null) _btnApply.clicked += ApplyChops;
@@ -282,6 +287,9 @@ private void Awake()
         SetMarkerMode(true);
         SetSnapState(_snapEnabled);
         UpdateMarkerNavigatorUI();
+
+        BuildTrackBrowserOverlay(page);
+        RefreshTrackBrowserList();
 
         _root.schedule.Execute(UpdatePlayheadUI).Every(33);
 
@@ -326,6 +334,8 @@ private void Awake()
                     RefreshClipList();
                     if (_clips.Length > 0) LoadClipByIndex(0);
                 }
+
+                RefreshTrackBrowserList();
             }, deviceTrackLimit);
 
             return;
@@ -349,6 +359,8 @@ private void Awake()
             LoadClipByIndex(idx);
         }
         else if (_clips.Length == 0) UpdateTrackTitle("NO TRACKS");
+
+        RefreshTrackBrowserList();
     }
 
     private void RestoreMarkersFromAppliedState()
@@ -532,6 +544,7 @@ private void Awake()
         RestoreMarkersFromAppliedState();
         UpdateTimeLabels(0f, _clip.length);
         UpdateTrackTitle(_clip.name);
+        RefreshTrackBrowserList();
     }
 
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -596,8 +609,213 @@ private void Awake()
         _wave.SetPlayhead01(0f);
         RestoreMarkersFromAppliedState();
         UpdateTimeLabels(0f, _clip.length);
+        RefreshTrackBrowserList();
     }
 #endif
+
+    private sealed class TrackBrowserItem
+    {
+        public string Title;
+        public string Subtitle;
+        public string SearchText;
+        public bool IsCurrent;
+        public Action OnPick;
+    }
+
+    private void OpenTrackBrowser()
+    {
+        if (_trackBrowserOverlay == null)
+            return;
+
+        RefreshTrackBrowserList();
+        _trackBrowserOverlay.style.display = DisplayStyle.Flex;
+        _trackBrowserSearch?.Focus();
+    }
+
+    private void CloseTrackBrowser()
+    {
+        if (_trackBrowserOverlay == null)
+            return;
+
+        _trackBrowserOverlay.style.display = DisplayStyle.None;
+    }
+
+    private void BuildTrackBrowserOverlay(VisualElement page)
+    {
+        if (page == null || _trackBrowserOverlay != null)
+            return;
+
+        _trackBrowserOverlay = new VisualElement();
+        _trackBrowserOverlay.name = "TrackBrowserOverlay";
+        _trackBrowserOverlay.AddToClassList("km-project-modal");
+        _trackBrowserOverlay.AddToClassList("km-track-modal");
+        _trackBrowserOverlay.style.position = Position.Absolute;
+        _trackBrowserOverlay.style.left = 0;
+        _trackBrowserOverlay.style.top = 0;
+        _trackBrowserOverlay.style.right = 0;
+        _trackBrowserOverlay.style.bottom = 0;
+        _trackBrowserOverlay.style.display = DisplayStyle.None;
+
+        var card = new VisualElement();
+        card.name = "TrackBrowserCard";
+        card.AddToClassList("km-card");
+        card.AddToClassList("km-project-card");
+        card.AddToClassList("km-track-card");
+        card.style.flexGrow = 1f;
+        card.style.maxHeight = Length.Percent(92);
+
+        var header = new VisualElement();
+        header.AddToClassList("km-track-header");
+
+        var title = new Label("LOAD SAMPLE");
+        title.AddToClassList("km-project-title");
+        title.AddToClassList("km-track-title");
+        title.style.flexGrow = 1f;
+
+        var closeBtn = new Button(CloseTrackBrowser) { text = "CLOSE" };
+        closeBtn.AddToClassList("km-pillbtn");
+        closeBtn.AddToClassList("km-project-toolbar-btn");
+        closeBtn.AddToClassList("km-track-close");
+
+        header.Add(title);
+        header.Add(closeBtn);
+
+        _trackBrowserSearch = new TextField();
+        _trackBrowserSearch.name = "TrackSearchField";
+        _trackBrowserSearch.label = "";
+        _trackBrowserSearch.value = "";
+        _trackBrowserSearch.AddToClassList("km-project-rename-field");
+        _trackBrowserSearch.AddToClassList("km-track-search");
+        _trackBrowserSearch.RegisterValueChangedCallback(_ => RefreshTrackBrowserList());
+
+        _trackBrowserCountLabel = new Label("0 items");
+        _trackBrowserCountLabel.AddToClassList("km-track-count");
+
+        _trackBrowserList = new ScrollView();
+        _trackBrowserList.name = "TrackScroll";
+        _trackBrowserList.AddToClassList("km-project-scroll");
+        _trackBrowserList.AddToClassList("km-track-scroll");
+        _trackBrowserList.style.flexGrow = 1f;
+        _trackBrowserList.style.minHeight = 220;
+
+        card.Add(header);
+        card.Add(_trackBrowserSearch);
+        card.Add(_trackBrowserCountLabel);
+        card.Add(_trackBrowserList);
+        _trackBrowserOverlay.Add(card);
+        page.Add(_trackBrowserOverlay);
+    }
+
+    private void RefreshTrackBrowserList()
+    {
+        if (_trackBrowserList == null)
+            return;
+
+        _trackBrowserList.Clear();
+
+        string query = (_trackBrowserSearch?.value ?? string.Empty).Trim();
+        var items = BuildTrackBrowserItems();
+        int shown = 0;
+
+        for (int i = 0; i < items.Count; i++)
+        {
+            var item = items[i];
+            if (!string.IsNullOrEmpty(query) && (item.SearchText == null || item.SearchText.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0))
+                continue;
+
+            shown++;
+
+            var row = new Button(() =>
+            {
+                item.OnPick?.Invoke();
+                CloseTrackBrowser();
+            });
+            row.AddToClassList("km-track-row");
+            if (item.IsCurrent)
+                row.AddToClassList("km-track-row--current");
+
+            var title = new Label(item.IsCurrent ? "● " + item.Title : item.Title);
+            title.AddToClassList("km-track-row-title");
+
+            var subtitle = new Label(item.Subtitle ?? string.Empty);
+            subtitle.AddToClassList("km-track-row-subtitle");
+
+            row.Add(title);
+            if (!string.IsNullOrEmpty(item.Subtitle))
+                row.Add(subtitle);
+            _trackBrowserList.Add(row);
+        }
+
+        if (_trackBrowserCountLabel != null)
+            _trackBrowserCountLabel.text = shown + " / " + items.Count + " items";
+
+        if (shown == 0)
+        {
+            var empty = new Label("No samples found.");
+            empty.AddToClassList("km-track-empty");
+            _trackBrowserList.Add(empty);
+        }
+    }
+
+    private List<TrackBrowserItem> BuildTrackBrowserItems()
+    {
+        var items = new List<TrackBrowserItem>();
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (useDeviceMusicLibraryOnAndroid && _deviceReady)
+        {
+            if (_deviceTracks != null)
+            {
+                for (int i = 0; i < _deviceTracks.Length; i++)
+                {
+                    var track = _deviceTracks[i];
+                    if (track == null)
+                        continue;
+
+                    int idx = i;
+                    string title = string.IsNullOrEmpty(track.title) ? "Track " + (i + 1) : track.title;
+                    string artist = string.IsNullOrEmpty(track.artist) ? "Unknown artist" : track.artist;
+                    string album = string.IsNullOrEmpty(track.album) ? "" : (" • " + track.album);
+                    string subtitle = artist + album;
+                    items.Add(new TrackBrowserItem
+                    {
+                        Title = title,
+                        Subtitle = subtitle,
+                        SearchText = (title + " " + artist + " " + track.album + " " + track.uri),
+                        IsCurrent = idx == _deviceTrackIndex,
+                        OnPick = () => LoadDeviceTrackByIndex(idx)
+                    });
+                }
+            }
+            return items;
+        }
+#endif
+
+        RefreshClipList();
+        if (_clips != null)
+        {
+            for (int i = 0; i < _clips.Length; i++)
+            {
+                var clip = _clips[i];
+                if (clip == null)
+                    continue;
+
+                int idx = i;
+                string title = clip.name;
+                string subtitle = resourcesFolder + "/" + clip.name;
+                items.Add(new TrackBrowserItem
+                {
+                    Title = title,
+                    Subtitle = subtitle,
+                    SearchText = title + " " + subtitle,
+                    IsCurrent = idx == _clipIndex,
+                    OnPick = () => LoadClipByIndex(idx)
+                });
+            }
+        }
+
+        return items;
+    }
 
     private void OnPlayClicked()
     {
