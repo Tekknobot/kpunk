@@ -380,8 +380,6 @@ namespace KMusic.UI
                 Add(_wrap);
 
                 // Recompute sizes whenever USS/viewport changes our height.
-                UnregisterCallback<GeometryChangedEvent>(OnGeom);
-                RegisterCallback<GeometryChangedEvent>(OnGeom);
             }
             else
             {
@@ -416,6 +414,12 @@ namespace KMusic.UI
                 Add(_hHolder);
             }
 
+            // Recompute layout whenever USS/viewport/visibility changes our size.
+            // This is especially important for controls that start on hidden tabs
+            // (e.g. synth master / tempo horizontal faders).
+            UnregisterCallback<GeometryChangedEvent>(OnGeom);
+            RegisterCallback<GeometryChangedEvent>(OnGeom);
+
             RegisterCallback<PointerDownEvent>(OnDown);
             RegisterCallback<PointerMoveEvent>(OnMove);
             RegisterCallback<PointerUpEvent>(OnUp);
@@ -423,7 +427,14 @@ namespace KMusic.UI
 
         private void OnGeom(GeometryChangedEvent e)
         {
-            if (Horizontal) return;
+            if (Horizontal)
+            {
+                if (_bus != null && !string.IsNullOrEmpty(ParamId))
+                    LayoutFromT(_bus.GetNormalized(ParamId));
+                else
+                    LayoutFromT(0f);
+                return;
+            }
 
             // Total element height (from USS or default)
             float totalH = resolvedStyle.height;
@@ -457,6 +468,9 @@ namespace KMusic.UI
 
         public void Bind(ParameterBus bus)
         {
+            if (_bus != null)
+                _bus.OnChanged -= OnParamChanged;
+
             _bus = bus;
             if (_bus != null)
                 _bus.OnChanged += OnParamChanged;

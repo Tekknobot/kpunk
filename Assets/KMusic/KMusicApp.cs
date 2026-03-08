@@ -86,7 +86,8 @@ namespace KMusic
                 id.StartsWith("sampler.") ||
                 id.StartsWith("mutes.") ||
                 id == "tempo" ||
-                id == "sample.master"
+                id == "sample.master" ||
+                id == "master.vol"
             );
         }
 
@@ -166,7 +167,8 @@ namespace KMusic
             id.StartsWith("sampler.") ||
             id.StartsWith("mutes.") ||
             id == "tempo" ||
-            id == "sample.master"
+            id == "sample.master" ||
+            id == "master.vol"
         );
 
         // Unhook event handler (prevents duplicate notifications later)
@@ -186,7 +188,8 @@ namespace KMusic
             id.StartsWith("sampler.") ||
             id.StartsWith("mutes.") ||
             id == "tempo" ||
-            id == "sample.master"
+            id == "sample.master" ||
+            id == "master.vol"
         );
     }
 
@@ -198,7 +201,8 @@ namespace KMusic
             id.StartsWith("sampler.") ||
             id.StartsWith("mutes.") ||
             id == "tempo" ||
-            id == "sample.master"
+            id == "sample.master" ||
+            id == "master.vol"
         );
     }
 

@@ -1452,12 +1452,35 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         double now = AudioSettings.dspTime;
         double windowEnd = now + lookaheadSeconds;
 
-        // ✅ if tempo changed, apply immediately by re-anchoring next step
-        // (prevents “must stop/play”)
+        // ✅ Live BPM changes should keep already-playing audio/tails alive and
+        // only retime the transport phase + future step scheduling.
         if (Math.Abs(stepDurLive - _stepDur) > 0.000001)
         {
+            double oldStepDur = _stepDur;
+            if (oldStepDur <= 0.000001)
+                oldStepDur = stepDurLive;
+
+            // Preserve the current musical phase so the playhead does not jump
+            // and future steps continue from the current position instead of
+            // restarting a full step from "now".
+            double stepPos = 0.0;
+            if (now >= _playStartDspTime)
+                stepPos = (now - _playStartDspTime) / oldStepDur;
+
+            // Which absolute step number is the next unscheduled one?
+            long nextStepNumber = 0;
+            if (_nextStepDspTime > _playStartDspTime)
+                nextStepNumber = Math.Max(0L, (long)Math.Round((_nextStepDspTime - _playStartDspTime) / oldStepDur));
+            else
+                nextStepNumber = Math.Max(0L, (long)Math.Ceiling(stepPos));
+
             _stepDur = stepDurLive;
-            _nextStepDspTime = now + _stepDur;
+            _playStartDspTime = now - (stepPos * _stepDur);
+            _nextStepDspTime = _playStartDspTime + (nextStepNumber * _stepDur);
+
+            // Safety: keep the next unscheduled step in the future.
+            if (_nextStepDspTime < now)
+                _nextStepDspTime = now + Math.Min(_stepDur, lookaheadSeconds);
         }
 
         // Use the actual step duration we’re scheduling with
