@@ -51,6 +51,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private VisualElement _presetBrowser;
     private ScrollView _presetBrowserList;
 
+    private readonly List<BusPair> _pendingSynthBusRestore = new();
+
     private void Awake()
     {
         if (!doc) doc = GetComponent<UIDocument>();
@@ -574,6 +576,63 @@ public sealed class KMusicProjectManager : MonoBehaviour
     [Serializable] private class PlayerState { public string lastTrackId; }
     [Serializable] private class ChopState { public string resourcesPath; public float[] sliceStart01; public float[] sliceEnd01; }
 
+    private static bool IsSynthBusId(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return false;
+
+        return id.StartsWith("osc1.", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("osc2.", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("sub.", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("noise.", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("synth.", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("filter.", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("amp.", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("mod.", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("fx.", StringComparison.OrdinalIgnoreCase)
+            || id.Equals("master.vol", StringComparison.OrdinalIgnoreCase)
+            || id.Equals("master.porta", StringComparison.OrdinalIgnoreCase)
+            || id.Equals("master.poly", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ApplyBusPairs(List<BusPair> pairs)
+    {
+        if (_app == null || _app.Bus == null || pairs == null || pairs.Count == 0)
+            return;
+
+        for (int i = 0; i < pairs.Count; i++)
+        {
+            var it = pairs[i];
+            if (it == null || string.IsNullOrEmpty(it.id)) continue;
+            _app.Bus.SetValue(it.id, it.v);
+        }
+    }
+
+    private void OnProjectPresetApplied(int _, string __)
+    {
+        if (_helm != null)
+            _helm.PresetApplied -= OnProjectPresetApplied;
+
+        if (!isActiveAndEnabled)
+        {
+            ApplyBusPairs(_pendingSynthBusRestore);
+            _pendingSynthBusRestore.Clear();
+            return;
+        }
+
+        StartCoroutine(ApplyPendingSynthBusAfterPresetCoroutine());
+    }
+
+    private System.Collections.IEnumerator ApplyPendingSynthBusAfterPresetCoroutine()
+    {
+        // Give Helm/binder one more beat before reapplying the project's saved synth overrides.
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        yield return null;
+
+        ApplyBusPairs(_pendingSynthBusRestore);
+        _pendingSynthBusRestore.Clear();
+    }
+
     public void SaveProject(int slot)
     {
         EnsureProjectsDir();
@@ -696,14 +755,26 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 _player.RefreshAppliedMarkersFromState();
             }
 
+            _pendingSynthBusRestore.Clear();
+            if (_helm != null)
+                _helm.PresetApplied -= OnProjectPresetApplied;
+
             if (_app != null && _app.Bus != null && data.bus != null)
             {
+                var nonSynthBus = new List<BusPair>();
+
                 for (int i = 0; i < data.bus.Count; i++)
                 {
                     var it = data.bus[i];
                     if (it == null || string.IsNullOrEmpty(it.id)) continue;
-                    _app.Bus.SetValue(it.id, it.v);
+
+                    if (IsSynthBusId(it.id))
+                        _pendingSynthBusRestore.Add(it);
+                    else
+                        nonSynthBus.Add(it);
                 }
+
+                ApplyBusPairs(nonSynthBus);
             }
 
             if (data.patterns != null)
@@ -741,7 +812,17 @@ public sealed class KMusicProjectManager : MonoBehaviour
             }
 
             if (_helm != null && data.synth != null)
+            {
+                if (_pendingSynthBusRestore.Count > 0)
+                    _helm.PresetApplied += OnProjectPresetApplied;
+
                 _helm.ApplyPresetChoice(data.synth.presetIndex, data.synth.presetRelPath);
+            }
+            else
+            {
+                ApplyBusPairs(_pendingSynthBusRestore);
+                _pendingSynthBusRestore.Clear();
+            }
 
             if (data.chops != null && !string.IsNullOrEmpty(data.chops.resourcesPath))
                 KMusicChopState.SetAppliedRaw(data.chops.resourcesPath, data.chops.sliceStart01, data.chops.sliceEnd01);

@@ -460,7 +460,6 @@
             <ui:Label class="km-subtitle" text="BARS"/>
               <ui:VisualElement class="km-row" style="align-items:center;">
                 <ui:Button name="ChainClearButton" class="km-pillbtn km-pillbtn--chain" text="CLEAR" />
-                <ui:Button name="ChainLen2Button" class="km-pillbtn km-pillbtn--chain" text="2" />
                 <ui:Button name="ChainLen4Button" class="km-pillbtn km-pillbtn--chain" text="4" />
                 <ui:Button name="ChainLen8Button" class="km-pillbtn km-pillbtn--chain" text="8" />
                 <ui:Button name="ChainLen16Button" class="km-pillbtn km-pillbtn--chain" text="16" />

@@ -43,6 +43,8 @@ namespace KMusic
         // Optional (we try to call RequestPullFromHelm via reflection if you add it later)
         private KMusicHelmSynthBinder _binder;
 
+        public event Action<int, string> PresetApplied;
+
         private class PresetEntry
         {
             public string relPath;   // relative to HelmPresets/
@@ -346,12 +348,19 @@ namespace KMusic
             _runtimePatch.patchData = fmt;
             helm.LoadPatch(_runtimePatch);
 
+            // Let Helm finish internal patch application before we mirror values back into the bus.
+            yield return null;
+            yield return null;
+
             // Optional: if binder exposes RequestPullFromHelm(), call it so UI syncs to loaded patch.
             if (_binder != null)
             {
                 var mi = _binder.GetType().GetMethod("RequestPullFromHelm");
                 if (mi != null) mi.Invoke(_binder, null);
             }
+
+            // Fire after the patch has had a couple of frames to settle and the bus has been synced.
+            PresetApplied?.Invoke(_index, relPath);
         }
 
         // ---- StreamingAssets reader (UnityWebRequest on Android, direct file IO elsewhere) ----
