@@ -698,12 +698,12 @@
 
     <!-- Tabs -->
     <ui:VisualElement class="km-tabs">
-      <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="DRUMS | CHOPS"/></ui:VisualElement>
+      <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="MAIN"/></ui:VisualElement>
       <ui:VisualElement name="TabSeq" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="KEYS"/></ui:VisualElement>
       <ui:VisualElement name="TabSynth" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH"/></ui:VisualElement>
-      <ui:VisualElement name="TabPad" class="km-tab"><ui:Label class="km-tab-label" text="PAD"/></ui:VisualElement>
+      <ui:VisualElement name="TabPad" class="km-tab"><ui:Label class="km-tab-label" text="CHORDS"/></ui:VisualElement>
       <ui:VisualElement name="TabSynth2" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH II"/></ui:VisualElement>
-      <ui:VisualElement name="TabPlayer" class="km-tab"><ui:Label class="km-tab-label" text="PLAYER"/></ui:VisualElement>      
+      <ui:VisualElement name="TabPlayer" class="km-tab"><ui:Label class="km-tab-label" text="SAMPLER"/></ui:VisualElement>      
       <ui:VisualElement name="TabFx" class="km-tab"><ui:Label class="km-tab-label" text="CHAIN"/></ui:VisualElement>
     </ui:VisualElement>
 
