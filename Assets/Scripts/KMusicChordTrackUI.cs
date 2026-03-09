@@ -18,6 +18,7 @@ namespace KMusic
         [SerializeField] private UIDocument doc;
         [SerializeField] private HelmSequencer helmSequencer;
         [SerializeField] private HelmController helm;
+        [SerializeField] private string padSynthRootName = "PadSynth";
         [SerializeField, Range(0.1f, 1.0f)] private float gateSixteenths = 0.92f;
         [SerializeField] private string pianoRollName = "PadPianoRoll";
         [SerializeField] private string stepGridName = "PadStepGrid";
@@ -32,6 +33,7 @@ namespace KMusic
         private int[] _cachedFlat;
         private bool _preferCachedOnNextBind;
         private bool _sequenceBuilt;
+        private int _lastPlayhead = -1;
 
         private enum ChordMode
         {
@@ -52,20 +54,20 @@ namespace KMusic
         {
             if (!doc) doc = GetComponent<UIDocument>();
             _doc = doc;
-            _helm = helm != null ? helm : FindObjectOfType<HelmController>();
+            ResolvePadSynthRefs();
             _drums = FindObjectOfType<KMusicDrumSequencer>();
 
-            if (helmSequencer == null)
-            {
-                var go = new GameObject("KMusicChordSequencer");
-                helmSequencer = go.AddComponent<HelmSequencer>();
-            }
+            EnsureIndependentPadChannel();
 
-            int ch = _helm != null ? _helm.channel : 0;
-            helmSequencer.channel = ch;
-            helmSequencer.length = 16;
-            helmSequencer.loop = true;
-            helmSequencer.division = Sequencer.Division.kSixteenth;
+            if (_helm != null && helmSequencer != null)
+            {
+                int ch = GetControllerChannel(_helm);
+                helmSequencer.channel = ch;
+                helmSequencer.length = 16;
+                helmSequencer.loop = true;
+                helmSequencer.division = Sequencer.Division.kSixteenth;
+                TryAssignHelmController(helmSequencer, _helm);
+            }
 
             _mode = (ChordMode)Mathf.Clamp(ProjectPrefs.GetInt(PrefKey_PadChordType, 0), 0, 3);
 
@@ -109,6 +111,8 @@ namespace KMusic
 
                 _preferCachedOnNextBind = false;
                 RefreshChordButtons();
+                _step.SetPlayheadStep(-1);
+                _lastPlayhead = -1;
                 RebuildSequenceNow();
             }).Every(120);
         }
@@ -116,6 +120,18 @@ namespace KMusic
         private void Update()
         {
             if (_drums == null) _drums = FindObjectOfType<KMusicDrumSequencer>();
+            if (_helm == null || helmSequencer == null) ResolvePadSynthRefs();
+
+            if (_step != null && _drums != null)
+            {
+                int playhead = _drums.IsPlaying ? _drums.CurrentStepIndex : -1;
+                if (playhead != _lastPlayhead)
+                {
+                    _step.SetPlayheadStep(playhead);
+                    _lastPlayhead = playhead;
+                }
+            }
+
             if (_drums == null || helmSequencer == null) return;
 
             if (_drums.IsPlaying)
@@ -135,6 +151,8 @@ namespace KMusic
         private void OnDisable()
         {
             SaveGrid();
+            if (_step != null) _step.SetPlayheadStep(-1);
+            _lastPlayhead = -1;
             _rebindLoop?.Pause();
             UnbindGrid();
         }
@@ -208,7 +226,8 @@ namespace KMusic
 
         private void AuditionChord(int valueId)
         {
-            if (_helm == null) _helm = FindObjectOfType<HelmController>();
+            if (_helm == null) ResolvePadSynthRefs();
+            EnsureIndependentPadChannel();
             if (_helm == null) return;
             var notes = BuildChordFromValueId(valueId);
             for (int i = 0; i < notes.Length; i++)
@@ -334,6 +353,181 @@ namespace KMusic
 
             helmSequencer.enabled = false;
             helmSequencer.enabled = true;
+        }
+
+
+
+        private void ResolvePadSynthRefs()
+        {
+            GameObject root = FindSceneObjectByName(padSynthRootName);
+            if (root == null)
+                return;
+
+            var rootSeq = root.GetComponentInChildren<HelmSequencer>(true);
+            var rootHelm = FindLinkedController(rootSeq) ?? root.GetComponentInChildren<HelmController>(true);
+
+            if (rootSeq != null)
+                helmSequencer = rootSeq;
+            if (rootHelm != null)
+                helm = rootHelm;
+
+            _helm = helm;
+
+            EnsureIndependentPadChannel();
+
+            if (_helm != null && helmSequencer != null)
+            {
+                helmSequencer.channel = GetControllerChannel(_helm);
+                helmSequencer.length = 16;
+                helmSequencer.loop = true;
+                helmSequencer.division = Sequencer.Division.kSixteenth;
+                TryAssignHelmController(helmSequencer, _helm);
+            }
+        }
+
+        private static HelmController FindLinkedController(HelmSequencer seq)
+        {
+            if (seq == null) return null;
+            var field = seq.GetType().GetField("helmController", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (field != null && field.FieldType == typeof(HelmController))
+                return field.GetValue(seq) as HelmController;
+            return null;
+        }
+
+        private void EnsureIndependentPadChannel()
+        {
+            if (_helm == null) return;
+
+            var excludedRoot = FindSceneObjectByName(padSynthRootName);
+            var mainHelm = FindFirstSceneComponentOutsideRoot<HelmController>(excludedRoot);
+            if (mainHelm == null || ReferenceEquals(mainHelm, _helm)) return;
+
+            int padChannel = GetControllerChannel(_helm);
+            int mainChannel = GetControllerChannel(mainHelm);
+            if (padChannel != mainChannel) return;
+
+            int newChannel = FindUnusedChannel(mainChannel, _helm);
+            if (newChannel == padChannel) return;
+
+            SetControllerChannel(_helm, newChannel);
+            if (helmSequencer != null)
+                helmSequencer.channel = newChannel;
+
+            Debug.Log($"[KMusicChordTrackUI] PadSynth channel was shared with main synth ({mainChannel}). Reassigned PadSynth to channel {newChannel}.");
+        }
+
+        private static int FindUnusedChannel(int avoidChannel, HelmController current)
+        {
+#if UNITY_2023_1_OR_NEWER
+            var all = FindObjectsByType<HelmController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var all = Resources.FindObjectsOfTypeAll<HelmController>();
+#endif
+            var used = new System.Collections.Generic.HashSet<int>();
+            foreach (var h in all)
+            {
+                if (h == null || !h.gameObject.scene.IsValid()) continue;
+                if (ReferenceEquals(h, current)) continue;
+                used.Add(GetControllerChannel(h));
+            }
+
+            for (int ch = 0; ch < 16; ch++)
+            {
+                if (ch == avoidChannel) continue;
+                if (!used.Contains(ch)) return ch;
+            }
+
+            int fallback = (avoidChannel + 1) % 16;
+            if (fallback == avoidChannel) fallback = (fallback + 1) % 16;
+            return fallback;
+        }
+
+        private static int GetControllerChannel(HelmController target)
+        {
+            if (target == null) return 0;
+            var type = target.GetType();
+            var prop = type.GetProperty("channel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (prop != null && prop.PropertyType == typeof(int) && prop.CanRead)
+                return (int)prop.GetValue(target, null);
+            var field = type.GetField("channel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (field != null && field.FieldType == typeof(int))
+                return (int)field.GetValue(target);
+            return 0;
+        }
+
+        private static void SetControllerChannel(HelmController target, int channel)
+        {
+            if (target == null) return;
+            var type = target.GetType();
+            var prop = type.GetProperty("channel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (prop != null && prop.PropertyType == typeof(int) && prop.CanWrite)
+            {
+                prop.SetValue(target, channel, null);
+                return;
+            }
+            var field = type.GetField("channel", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (field != null && field.FieldType == typeof(int))
+                field.SetValue(target, channel);
+        }
+
+        private static void TryAssignHelmController(HelmSequencer seq, HelmController target)
+        {
+            if (seq == null || target == null) return;
+            var field = seq.GetType().GetField("helmController", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (field != null && field.FieldType == typeof(HelmController))
+                field.SetValue(seq, target);
+        }
+
+        private static T FindFirstSceneComponentOutsideRoot<T>(GameObject excludedRoot) where T : Component
+        {
+#if UNITY_2023_1_OR_NEWER
+            var all = FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var all = Resources.FindObjectsOfTypeAll<T>();
+#endif
+            foreach (var c in all)
+            {
+                if (c == null || !c.gameObject.scene.IsValid()) continue;
+                if (IsInHierarchy(c.gameObject, excludedRoot)) continue;
+                return c;
+            }
+            return null;
+        }
+
+        private static bool IsInHierarchy(GameObject go, GameObject root)
+        {
+            if (go == null || root == null) return false;
+            var tr = go.transform;
+            while (tr != null)
+            {
+                if (tr.gameObject == root) return true;
+                tr = tr.parent;
+            }
+            return false;
+        }
+
+        private static GameObject FindSceneObjectByName(string targetName)
+        {
+            if (string.IsNullOrWhiteSpace(targetName)) return null;
+
+#if UNITY_2023_1_OR_NEWER
+            var all = FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var all = Resources.FindObjectsOfTypeAll<Transform>();
+#endif
+            GameObject partial = null;
+            foreach (var tr in all)
+            {
+                if (tr == null || !tr.gameObject.scene.IsValid()) continue;
+
+                if (string.Equals(tr.name, targetName, StringComparison.OrdinalIgnoreCase))
+                    return tr.gameObject;
+
+                if (partial == null && tr.name.IndexOf(targetName, StringComparison.OrdinalIgnoreCase) >= 0)
+                    partial = tr.gameObject;
+            }
+
+            return partial;
         }
 
         private static string ChordModeText(ChordMode mode)

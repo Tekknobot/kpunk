@@ -14,6 +14,7 @@ namespace KMusic
     {
         [Header("Refs (auto-find if null)")]
         [SerializeField] private HelmController helm;
+        [SerializeField] private string excludedRootName = "PadSynth";
 
         [Header("Spam guard")]
         [SerializeField] private float epsilon = 0.0005f;
@@ -159,24 +160,11 @@ namespace KMusic
 
         private IEnumerator BindWhenReady()
         {
-            // 1) Prefer the HelmController that the HelmSequencer is actually using.
-            if (helm == null)
-            {
-                var seq = FindObjectOfType<HelmSequencer>();
-                if (seq != null)
-                {
-                    var field = seq.GetType().GetField("helmController", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (field != null && field.FieldType == typeof(HelmController))
-                        helm = field.GetValue(seq) as HelmController;
-                }
-            }
-
-            // 2) Fallback: any HelmController in scene
-            if (helm == null) helm = FindObjectOfType<HelmController>();
+            ResolveMainSynthHelm();
 
             if (helm == null)
             {
-                Debug.LogWarning("[KMusicHelmSynthBinder] No HelmController found in scene.");
+                Debug.LogWarning("[KMusicHelmSynthBinder] No main HelmController found outside PadSynth.");
                 yield break;
             }
 
@@ -214,6 +202,78 @@ namespace KMusic
             _lastSent.Clear();
 
             Debug.Log($"[KMusicHelmSynthBinder] Bound OK. helm={helm.name} bus={(_bus != null)}");
+        }
+
+
+        private void ResolveMainSynthHelm()
+        {
+            var excludedRoot = FindSceneObjectByName(excludedRootName);
+
+            if (helm != null && !IsInHierarchy(helm.gameObject, excludedRoot))
+                return;
+
+            HelmSequencer seq = FindFirstSceneComponentOutsideRoot<HelmSequencer>(excludedRoot);
+            HelmController linked = FindLinkedController(seq);
+            helm = linked != null && !IsInHierarchy(linked.gameObject, excludedRoot)
+                ? linked
+                : FindFirstSceneComponentOutsideRoot<HelmController>(excludedRoot);
+        }
+
+        private static HelmController FindLinkedController(HelmSequencer seq)
+        {
+            if (seq == null) return null;
+            var field = seq.GetType().GetField("helmController", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (field != null && field.FieldType == typeof(HelmController))
+                return field.GetValue(seq) as HelmController;
+            return null;
+        }
+
+        private static T FindFirstSceneComponentOutsideRoot<T>(GameObject excludedRoot) where T : Component
+        {
+#if UNITY_2023_1_OR_NEWER
+            var all = FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var all = Resources.FindObjectsOfTypeAll<T>();
+#endif
+            foreach (var c in all)
+            {
+                if (c == null || !c.gameObject.scene.IsValid()) continue;
+                if (IsInHierarchy(c.gameObject, excludedRoot)) continue;
+                return c;
+            }
+            return null;
+        }
+
+        private static bool IsInHierarchy(GameObject go, GameObject root)
+        {
+            if (go == null || root == null) return false;
+            var tr = go.transform;
+            while (tr != null)
+            {
+                if (tr.gameObject == root) return true;
+                tr = tr.parent;
+            }
+            return false;
+        }
+
+        private static GameObject FindSceneObjectByName(string targetName)
+        {
+            if (string.IsNullOrWhiteSpace(targetName)) return null;
+#if UNITY_2023_1_OR_NEWER
+            var all = FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var all = Resources.FindObjectsOfTypeAll<Transform>();
+#endif
+            GameObject partial = null;
+            foreach (var tr in all)
+            {
+                if (tr == null || !tr.gameObject.scene.IsValid()) continue;
+                if (string.Equals(tr.name, targetName, System.StringComparison.OrdinalIgnoreCase))
+                    return tr.gameObject;
+                if (partial == null && tr.name.IndexOf(targetName, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    partial = tr.gameObject;
+            }
+            return partial;
         }
 
         private void ApplyAllFromBus()
@@ -559,6 +619,8 @@ namespace KMusic
 
         public void RequestPullFromHelm()
         {
+            ResolveMainSynthHelm();
+            if (helm == null) return;
             PullHelmToBus();
             _lastSent.Clear();
         }        

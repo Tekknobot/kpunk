@@ -1493,3 +1493,94 @@ unity-text-align: middle-center;
   color: white;
   unity-text-align: middle-center;
 }
+
+/* =========================
+   SYNTH + SYNTH II MATCHED LAYOUT
+   ========================= */
+
+#PageSynth,
+#PageSynth2 {
+  flex-grow: 1;
+  min-height: 0;
+  width: 100%;
+  align-self: stretch;
+}
+
+/* top/master card */
+#CardMaster,
+#CardMaster2 {
+  height: 200px;
+}
+
+/* osc block */
+#CardOsc,
+#CardOsc2 {
+  height: 620px;
+  overflow: hidden;
+}
+
+/* sub block */
+#CardSub,
+#CardSub2 {
+  height: 340px;
+}
+
+/* filter + amp */
+#CardFilter,
+#CardFilter2 {
+  height: 740px;
+  overflow: hidden;
+}
+
+/* mod + fx */
+#CardMod,
+#CardMod2 {
+  height: 740px;
+  overflow: hidden;
+}
+
+/* force all major synth cards to stretch the same */
+#PageSynth .km-card,
+#PageSynth2 .km-card,
+#PageSynth .km-subcard,
+#PageSynth2 .km-subcard {
+  width: 100%;
+  align-self: stretch;
+}
+
+/* same row behavior on both pages */
+#PageSynth .km-row,
+#PageSynth2 .km-row {
+  flex-direction: row;
+  align-items: stretch;
+}
+
+/* same control column behavior on both pages */
+#PageSynth .km-controls,
+#PageSynth2 .km-controls {
+  flex-grow: 1;
+  flex-direction: column;
+}
+
+/* same fader sizing on both pages */
+#PageSynth .km-synth-fader,
+#PageSynth2 .km-synth-fader {
+  height: 140px;
+  width: 28px;
+}
+
+#PageSynth .km-synth-fader .unity-slider,
+#PageSynth2 .km-synth-fader .unity-slider {
+  height: 100%;
+  flex-grow: 1;
+}
+
+#PageSynth .km-synth-fader .unity-slider__track,
+#PageSynth2 .km-synth-fader .unity-slider__track {
+  height: 100%;
+}
+
+#PageSynth .km-synth-fader > *,
+#PageSynth2 .km-synth-fader > * {
+  height: 100%;
+}

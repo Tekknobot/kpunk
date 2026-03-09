@@ -380,6 +380,7 @@ MonoBehaviour:
   helmSequencer: {fileID: 0}
   helmChannelOverride: -1
   gateSixteenths: 0.9
+  excludedRootName: PadSynth
   pianoRollName: SeqPianoRoll
   stepGridName: StepGrid
   verboseLogs: 1
@@ -491,7 +492,7 @@ AudioSource:
   m_Enabled: 1
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 24300002, guid: 09156e7a2a9be2540871dda397a09286, type: 2}
-  m_audioClip: {fileID: 983456944}
+  m_audioClip: {fileID: 1385026040}
   m_PlayOnAwake: 1
   m_Volume: 1
   m_Pitch: 1
@@ -748,6 +749,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   helm: {fileID: 0}
+  excludedRootName: PadSynth
   epsilon: 0.0005
   logBusChanges: 1
   logApply: 1
@@ -766,6 +768,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   doc: {fileID: 0}
   helm: {fileID: 0}
+  excludedRootName: PadSynth
   presetsRootFolder: HelmPresets
   indexFileName: presets_index.txt
   patchPrevBtnName: PatchPrevButton
@@ -978,7 +981,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!83 &983456944
+--- !u!83 &1385026040
 AudioClip:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}

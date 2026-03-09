@@ -14,12 +14,12 @@ public class KMusicTabsUI : MonoBehaviour
     private Coroutine _co;
 
     // Tabs in UXML:
-    // TabSampler, TabSeq, TabPad, TabPlayer, TabSynth, TabFx
-    private VisualElement tabSeq, tabSynth, tabSampler, tabPad, tabPlayer, tabFx;
+    // TabSampler, TabSeq, TabPad, TabPlayer, TabSynth, TabSynth2, TabFx
+    private VisualElement tabSeq, tabSynth, tabSynth2, tabSampler, tabPad, tabPlayer, tabFx;
 
     // Pages in UXML:
-    // PageSeq, PageSynth, PagePad, PageSampler, PagePlayer, PageFx
-    private VisualElement pageSeq, pageSynth, pagePad, pageSampler, pagePlayer, pageFx;
+    // PageSeq, PageSynth, PageSynth2, PagePad, PageSampler, PagePlayer, PageFx
+    private VisualElement pageSeq, pageSynth, pageSynth2, pagePad, pageSampler, pagePlayer, pageFx;
 
     private bool _isSetup = false;
 
@@ -27,7 +27,7 @@ public class KMusicTabsUI : MonoBehaviour
     private bool _boundSeq, _boundSynth, _boundPad, _boundSampler, _boundPlayer, _boundFx;
 
     // Which tab opens on launch
-    [SerializeField] private string defaultTab = "sampler"; // "sampler","seq","pad","synth","player","fx"
+    [SerializeField] private string defaultTab = "sampler"; // "sampler","seq","pad","synth","synth2","player","fx"
 
     private void Awake()
     {
@@ -37,6 +37,9 @@ public class KMusicTabsUI : MonoBehaviour
 
     private void OnEnable()
     {
+        if (GetComponent<KMusicPadSynthRuntime>() == null)
+            gameObject.AddComponent<KMusicPadSynthRuntime>();
+
         if (_co != null) StopCoroutine(_co);
         _co = StartCoroutine(SetupThenBind());
     }
@@ -82,6 +85,7 @@ public class KMusicTabsUI : MonoBehaviour
         // Tabs
         tabSeq     = root.Q<VisualElement>("TabSeq");
         tabSynth   = root.Q<VisualElement>("TabSynth");
+        tabSynth2  = root.Q<VisualElement>("TabSynth2");
         tabSampler = root.Q<VisualElement>("TabSampler");
         tabPad     = root.Q<VisualElement>("TabPad");
         tabPlayer  = root.Q<VisualElement>("TabPlayer");
@@ -90,6 +94,7 @@ public class KMusicTabsUI : MonoBehaviour
         // Pages
         pageSeq     = root.Q<VisualElement>("PageSeq");
         pageSynth   = root.Q<VisualElement>("PageSynth");
+        pageSynth2  = root.Q<VisualElement>("PageSynth2");
         pagePad     = root.Q<VisualElement>("PagePad");
         pageSampler = root.Q<VisualElement>("PageSampler");
         pagePlayer  = root.Q<VisualElement>("PagePlayer");
@@ -97,6 +102,7 @@ public class KMusicTabsUI : MonoBehaviour
 
         LogMissing("TabSeq", tabSeq);
         LogMissing("TabSynth", tabSynth);
+        LogMissing("TabSynth2", tabSynth2);
         LogMissing("TabSampler", tabSampler);
         LogMissing("TabPad", tabPad);
         LogMissing("TabPlayer", tabPlayer);
@@ -104,6 +110,7 @@ public class KMusicTabsUI : MonoBehaviour
 
         LogMissing("PageSeq", pageSeq);
         LogMissing("PageSynth", pageSynth);
+        LogMissing("PageSynth2", pageSynth2);
         LogMissing("PagePad", pagePad);
         LogMissing("PageSampler", pageSampler);
         LogMissing("PagePlayer", pagePlayer);
@@ -115,6 +122,7 @@ public class KMusicTabsUI : MonoBehaviour
 
         RegisterTab(tabSeq,     () => Show("seq"));
         RegisterTab(tabSynth,   () => Show("synth"));
+        RegisterTab(tabSynth2,  () => Show("synth2"));
         RegisterTab(tabPad,     () => Show("pad"));
         RegisterTab(tabSampler, () => Show("sampler"));
 
@@ -166,6 +174,7 @@ public class KMusicTabsUI : MonoBehaviour
 
         if (pageSeq != null && pageSeq.resolvedStyle.display != DisplayStyle.None) BindAll(pageSeq, _bus);
         if (pageSynth != null && pageSynth.resolvedStyle.display != DisplayStyle.None) BindAll(pageSynth, _bus);
+        // PageSynth2 is driven by KMusicPadSynthRuntime with its own local bus.
         if (pagePad != null && pagePad.resolvedStyle.display != DisplayStyle.None) BindAll(pagePad, _bus);
         if (pageSampler != null && pageSampler.resolvedStyle.display != DisplayStyle.None) BindAll(pageSampler, _bus);
         if (pagePlayer != null && pagePlayer.resolvedStyle.display != DisplayStyle.None) BindAll(pagePlayer, _bus);
@@ -194,6 +203,7 @@ public class KMusicTabsUI : MonoBehaviour
 
         SetVisible(pageSeq, which == "seq");
         SetVisible(pageSynth, which == "synth");
+        SetVisible(pageSynth2, which == "synth2");
         SetVisible(pagePad, which == "pad");
         SetVisible(pageSampler, which == "sampler");
         SetVisible(pagePlayer, which == "player");
@@ -201,6 +211,7 @@ public class KMusicTabsUI : MonoBehaviour
 
         SetActive(tabSeq, which == "seq");
         SetActive(tabSynth, which == "synth");
+        SetActive(tabSynth2, which == "synth2");
         SetActive(tabPad, which == "pad");
         SetActive(tabSampler, which == "sampler");
         SetActive(tabPlayer, which == "player");

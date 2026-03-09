@@ -19,6 +19,7 @@ namespace KMusic.UI
         [SerializeField] private HelmSequencer helmSequencer;   // assign or auto-find
         [SerializeField] private int helmChannelOverride = -1;  // -1 = use HelmController.channel
         [SerializeField, Range(0.1f, 1.0f)] private float gateSixteenths = 0.90f;
+        [SerializeField] private string excludedRootName = "PadSynth";
         private const string PrefKey_SeqStepGrid = "kmusic.seq.stepgrid";
 
         [Header("UXML element names")]
@@ -82,6 +83,9 @@ namespace KMusic.UI
             if (_drumSeq == null)
                 _drumSeq = FindObjectOfType<KMusicDrumSequencer>();
 
+            if (_helm == null || helmSequencer == null)
+                ResolveMainSynthRefs();
+
             if (_drumSeq == null || helmSequencer == null)
                 return;
 
@@ -102,24 +106,10 @@ namespace KMusic.UI
         private void OnEnable()
         {
             _doc = GetComponent<UIDocument>();
-            _helm = FindObjectOfType<HelmController>();
             _drumSeq = FindObjectOfType<KMusicDrumSequencer>();
             _chainUI = FindObjectOfType<KMusicChainUI>();
 
-            if (helmSequencer == null)
-                helmSequencer = FindObjectOfType<HelmSequencer>();
-
-            if (helmSequencer == null)
-            {
-                var go = new GameObject("KMusicHelmSequencer");
-                helmSequencer = go.AddComponent<HelmSequencer>();
-            }
-
-            int ch = (helmChannelOverride >= 0) ? helmChannelOverride : (_helm != null ? _helm.channel : 0);
-            helmSequencer.channel = ch;
-            helmSequencer.length = 16;
-            helmSequencer.loop = true;
-            helmSequencer.division = Sequencer.Division.kSixteenth;
+            ResolveMainSynthRefs();
 
             if (_doc == null) return;
 
@@ -477,7 +467,7 @@ namespace KMusic.UI
             CacheValue(valueId, label, _piano.GetCellColor(r, c));
             _step.SetPaintValue(valueId);
 
-            if (_helm == null) _helm = FindObjectOfType<HelmController>();
+            if (_helm == null) ResolveMainSynthRefs();
             Debug.Log($"[PianoRollPainter] PICK r={r} c={c} label={label} valueId={valueId} helm={(_helm != null)}");
 
             TryAuditionSynthNote(r, c);
@@ -516,7 +506,7 @@ namespace KMusic.UI
         private void PlayHelmValueId(int valueId, float velocity, float length)
         {
             if (_helm == null)
-                _helm = FindObjectOfType<HelmController>();
+                ResolveMainSynthRefs();
 
             if (_helm == null) return;
 
@@ -536,7 +526,7 @@ namespace KMusic.UI
 
         private void AuditionValueId(int valueId, int pianoRowHint = -1, int pianoColHint = -1)
         {
-            if (_helm == null) _helm = FindObjectOfType<HelmController>();
+            if (_helm == null) ResolveMainSynthRefs();
             if (_helm == null) return;
 
             string lbl = _labelByValue.TryGetValue(valueId, out var s) ? s : null;
@@ -563,17 +553,18 @@ namespace KMusic.UI
         {
             if (_piano == null) return;
 
-            var h = helm != null ? helm : FindObjectOfType<HelmController>();
+            if (_helm == null) ResolveMainSynthRefs();
+            var h = _helm;
             if (h == null)
             {
-                Debug.LogWarning("[PianoRollPainter] HelmController NOT FOUND - add one to the scene or assign it in inspector.");
+                Debug.LogWarning("[PianoRollPainter] Main HelmController not found outside PadSynth.");
                 return;
             }
 
             int valueId = _piano.GetCellValueId(r, c);
             int midi = Mathf.Clamp(60 + (valueId - 1), 0, 127);
 
-            Debug.Log($"[PianoRollPainter] HELM NoteOn midi={midi} valueId={valueId} channel={h.channel}");
+            Debug.Log($"[PianoRollPainter] MAIN HELM NoteOn midi={midi} valueId={valueId} channel={h.channel}");
             h.NoteOn(midi, 1.0f, 0.18f);
         }
 
@@ -601,6 +592,100 @@ namespace KMusic.UI
 
             int octave = (row < 3) ? 5 : 4;
             return (octave + 1) * 12 + semitone;
+        }
+
+        private void ResolveMainSynthRefs()
+        {
+            var excludedRoot = FindSceneObjectByName(excludedRootName);
+
+            bool seqInvalid = helmSequencer == null || IsInHierarchy(helmSequencer.gameObject, excludedRoot);
+            if (seqInvalid)
+                helmSequencer = FindFirstSceneComponentOutsideRoot<HelmSequencer>(excludedRoot);
+
+            HelmController linked = FindLinkedController(helmSequencer);
+            bool helmInvalid = helm == null || IsInHierarchy(helm.gameObject, excludedRoot);
+            if (linked != null && !IsInHierarchy(linked.gameObject, excludedRoot))
+                helm = linked;
+            else if (helmInvalid)
+                helm = FindFirstSceneComponentOutsideRoot<HelmController>(excludedRoot);
+
+            _helm = (helm != null && !IsInHierarchy(helm.gameObject, excludedRoot)) ? helm : null;
+
+            if (_helm != null && helmSequencer != null)
+            {
+                int ch = (helmChannelOverride >= 0) ? helmChannelOverride : _helm.channel;
+                helmSequencer.channel = ch;
+                helmSequencer.length = 16;
+                helmSequencer.loop = true;
+                helmSequencer.division = Sequencer.Division.kSixteenth;
+                TryAssignHelmController(helmSequencer, _helm);
+            }
+        }
+
+        private static HelmController FindLinkedController(HelmSequencer seq)
+        {
+            if (seq == null) return null;
+            var field = seq.GetType().GetField("helmController", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (field != null && field.FieldType == typeof(HelmController))
+                return field.GetValue(seq) as HelmController;
+            return null;
+        }
+
+        private static void TryAssignHelmController(HelmSequencer seq, HelmController target)
+        {
+            if (seq == null || target == null) return;
+            var field = seq.GetType().GetField("helmController", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+            if (field != null && field.FieldType == typeof(HelmController))
+                field.SetValue(seq, target);
+        }
+
+        private static T FindFirstSceneComponentOutsideRoot<T>(GameObject excludedRoot) where T : Component
+        {
+#if UNITY_2023_1_OR_NEWER
+            var all = FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var all = Resources.FindObjectsOfTypeAll<T>();
+#endif
+            foreach (var c in all)
+            {
+                if (c == null || !c.gameObject.scene.IsValid()) continue;
+                if (IsInHierarchy(c.gameObject, excludedRoot)) continue;
+                return c;
+            }
+            return null;
+        }
+
+        private static bool IsInHierarchy(GameObject go, GameObject root)
+        {
+            if (go == null || root == null) return false;
+            var tr = go.transform;
+            while (tr != null)
+            {
+                if (tr.gameObject == root) return true;
+                tr = tr.parent;
+            }
+            return false;
+        }
+
+        private static GameObject FindSceneObjectByName(string targetName)
+        {
+            if (string.IsNullOrWhiteSpace(targetName)) return null;
+
+#if UNITY_2023_1_OR_NEWER
+            var all = FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var all = Resources.FindObjectsOfTypeAll<Transform>();
+#endif
+            GameObject partial = null;
+            foreach (var tr in all)
+            {
+                if (tr == null || !tr.gameObject.scene.IsValid()) continue;
+                if (string.Equals(tr.name, targetName, StringComparison.OrdinalIgnoreCase))
+                    return tr.gameObject;
+                if (partial == null && tr.name.IndexOf(targetName, StringComparison.OrdinalIgnoreCase) >= 0)
+                    partial = tr.gameObject;
+            }
+            return partial;
         }
 
         private void SaveStepGrid()
