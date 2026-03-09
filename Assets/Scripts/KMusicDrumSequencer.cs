@@ -1065,7 +1065,7 @@ private string _appliedResourcesPath = null;
             return;
 
         b.AddToClassList(wiredClass);
-        b.clicked += () => SelectDrum(drumId);
+        b.RegisterCallback<PointerDownEvent>(_ => SelectDrum(drumId), TrickleDown.TrickleDown);
     }
 
     private void SelectDrum(int drumId)

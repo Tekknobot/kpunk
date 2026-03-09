@@ -128,7 +128,7 @@ namespace KMusic
                 topInsetUI = topInsetPx * (refRes.y / Mathf.Max(1f, Screen.height));
             }
 
-            float baseTop = 64f;
+            float baseTop = 0f;
             root.style.paddingTop = baseTop + topInsetUI;
 
             if (darkTheme != null && !root.styleSheets.Contains(darkTheme))
@@ -245,10 +245,12 @@ namespace KMusic
             _bus.Add(new Parameter("synth.vel",     0f, 100f, 0f, unit: "%"));
 
             // FX
+            _bus.Add(new Parameter("fx.delay.on",   0f, 1f, 0f));
             _bus.Add(new Parameter("fx.delay.mix",  0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("fx.delay.fb",   0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("fx.delay.time", 0f, 100f, 0f, unit: "%"));
 
+            _bus.Add(new Parameter("fx.rev.on",   0f, 1f, 0f));
             _bus.Add(new Parameter("fx.rev.mix",  0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("fx.rev.fb",   0f, 100f, 0f, unit: "%"));
             _bus.Add(new Parameter("fx.rev.damp", 0f, 100f, 0f, unit: "%"));

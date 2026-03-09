@@ -20,7 +20,7 @@
   --gap-3: 18px;
   --gap-4: 24px;
 
-  --font: 18px;
+  --font: 24px;
 }
 
 /* --- Global text scale --- */
@@ -38,7 +38,7 @@
   padding-left: 20px;
   padding-right: 20px;
   padding-top: 0px;
-  padding-bottom: 48px;
+  padding-bottom: 60px;
 
   flex-direction: column;
 
@@ -83,38 +83,90 @@
 }
 
 .km-pillbtn {
-  height: 54px;
-  width: 92px;
+  height: 58px;
+  min-width: 104px;
   margin-left: 12px;
-  border-radius: 16px;
-  background-color: #596381;
+  padding-left: 16px;
+  padding-right: 16px;
+
+  border-radius: 18px;
   border-width: 2px;
-  border-color: var(--border);
+  border-color: #2D3446;
+
+  background-color: #2A3141;
+
   justify-content: center;
   align-items: center;
+
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.22);
 }
 
 .km-pillbtn:hover {
   border-color: var(--accent);
+  background-color: #34405A;
 }
 
-.km-pillbtn > .unity-text-element {
-  color: var(--text);
-  font-size: 24px;
+.km-pillbtn:active {
+  background-color: #3A4866;
+  border-color: var(--accent);
+  translate: 0 1px;
+}
+
+.km-pillbtn {
+  height: 58px;
+  min-width: 104px;
+  padding-left: 16px;
+  padding-right: 16px;
+
+  border-radius: 18px;
+  border-width: 2px;
+  border-color: #2D3446;
+  background-color: #2A3141;
+
+  justify-content: center;
+  align-items: center;
+
+  color: white;
+  font-size: 22px;
   -unity-font-style: bold;
 }
 
+.km-pillbtn .unity-text-element,
+.km-pillbtn > .unity-button__text {
+  color: white;
+}
 
+/* optional selected / armed state */
+.km-pillbtn.is-on,
+.km-pillbtn--active {
+  background-color: #203044;
+  border-color: var(--accent);
+}
+
+.km-pillbtn.is-on > .unity-text-element,
+.km-pillbtn--active > .unity-text-element {
+  color: white;
+}
+
+/* danger variant */
 .km-pillbtn--danger {
-  background-color: #7F2228;
+  background-color: #3A1E25;
+  border-color: #6A2A35;
 }
 
 .km-pillbtn--danger:hover {
+  background-color: #4A222B;
   border-color: #FF8A90;
 }
 
+.km-pillbtn--danger:active {
+  background-color: #5A2832;
+  border-color: #FF8A90;
+  translate: 0 1px;
+}
+
 .km-pillbtn--danger > .unity-text-element {
-  color: #FFF2F2;
+  color: #FFF4F4;
 }
 
 .km-tabs {
@@ -267,27 +319,63 @@
    ---------------------------- */
 
 .km-pillbtn--chain {
-width: 144px;
-height: 72px;
-margin-left: 12px;
-border-radius: 20px;
-background-color: #626c8b;
-border-width: 2px;
-border-color: var(--border);
-justify-content: center;
-align-items: center;
+  width: 144px;
+  height: 72px;
+
+  margin-left: 12px;
+  padding-left: 16px;
+  padding-right: 16px;
+
+  border-radius: 20px;
+  border-width: 2px;
+  border-color: #2D3446;
+
+  background-color: #2A3141;
+
+  justify-content: center;
+  align-items: center;
+
+  color: white;
+  font-size: 24px;
+  -unity-font-style: bold;
+
+  box-shadow: 0 3px 0 rgba(0,0,0,0.22);
 }
 
-.km-pillbtn--chain > .unity-text-element {
-font-size: 24px;
--unity-font-style: bold;
-color: var(--text);
+.km-pillbtn--chain:hover {
+  border-color: var(--accent);
+  background-color: #34405A;
+}
+
+.km-pillbtn--chain:active {
+  background-color: #3A4866;
+  border-color: var(--accent);
+  translate: 0 1px;
 }
 
 .km-chain-pattern {
-color: var(--text);
-font-size: 34px;
--unity-font-style: bold;
+  color: #F3F6FB;
+  font-size: 34px;
+  -unity-font-style: bold;
+
+  background-color: #1C1F28;
+  border-width: 2px;
+  border-color: var(--border);
+  border-radius: 16px;
+
+  padding-left: 14px;
+  padding-right: 14px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+
+  unity-text-align: middle-center;
+}
+
+.km-pillbtn--chain .unity-text-element {
+  color: white;
+  font-size: 24px;
+  -unity-font-style: bold;
+  unity-text-align: middle-center;
 }
 
 .km-muted {
@@ -970,36 +1058,49 @@ unity-text-align: middle-center;
     background-position: center;
 }
 
+/* container */
 #ChainEnabledToggle.unity-toggle.unity-base-field
 {
     min-height: 52px;
     padding-left: 10px;
     padding-right: 10px;
 
+    align-items: center;
+
     font-size: 18px;
     -unity-font-style: bold;
-
-    align-items: center;
 }
 
-/* checkbox container */
+/* toggle box */
 #ChainEnabledToggle.unity-toggle .unity-toggle__input
 {
     width: 48px;
     height: 48px;
+
+    border-radius: 10px;
+    border-width: 2px;
+    border-color: var(--border);
+
+    background-color: #4d566e;
 }
 
-/* checkmark */
+/* remove the checkmark */
 #ChainEnabledToggle.unity-toggle .unity-toggle__checkmark
 {
-    width: 36px;
-    height: 36px;
+    display: none;
 }
 
 /* label text */
 #ChainEnabledToggle.unity-toggle .unity-toggle__label
 {
     font-size: 18px;
+    color: white;
+}
+
+#ChainEnabledToggle.unity-toggle:checked .unity-toggle__input
+{
+    background-color: var(--accent);
+    border-color: var(--accent);
 }
 
 /* --- Project browser polish --- */
@@ -1298,4 +1399,53 @@ unity-text-align: middle-center;
   -unity-font-style: bold;
   unity-text-align: middle-center;
   margin-top: 18px;
+}
+
+
+/* --- Synth FX toggles --- */
+.km-fx-header-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  margin-bottom: 6px;
+}
+
+.km-fx-mini-title {
+  color: var(--muted);
+  font-size: 22px;
+  -unity-font-style: bold;
+}
+
+.km-fx-toggle {
+  min-width: 80px;
+  height: 60px;
+  padding-left: 18px;
+  padding-right: 18px;
+  border-radius: 8px;
+  border-width: 2px;
+  border-color: #2C3344;
+  background-color: #161B24;
+  justify-content: center;
+  align-items: center;
+}
+
+.km-fx-toggle > .unity-text-element {
+  color: var(--muted);
+  font-size: 20px;
+  -unity-font-style: bold;
+  unity-text-align: middle-center;
+}
+
+.km-fx-toggle:hover {
+  border-color: var(--accent);
+}
+
+.km-fx-toggle.is-on {
+  background-color: #203044;
+  border-color: var(--accent);
+}
+
+.km-fx-toggle.is-on > .unity-text-element {
+  color: var(--text);
 }

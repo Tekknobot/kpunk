@@ -132,7 +132,10 @@
                 <km:KnobElement label="Rel" paramId="amp.rel2" />
               </ui:VisualElement>
 
-              <ui:Label class="km-subtitle" text="DIST" style="margin-top:14px;"/>
+              <ui:VisualElement class="km-fx-header-row" style="margin-top:14px;">
+                <ui:Label class="km-subtitle" text="DIST"/>
+                <ui:Button name="DistToggleButton" class="km-fx-toggle" text="OFF" />
+              </ui:VisualElement>
 
               <ui:VisualElement class="km-macro-row">
                 <km:KnobElement label="Type" paramId="fx.dist.type" />
@@ -167,10 +170,19 @@
 
             <ui:VisualElement class="km-subcard">
               <ui:Label class="km-subtitle" text="FX"/>
+
+              <ui:VisualElement class="km-fx-header-row">
+                <ui:Label class="km-fx-mini-title" text="DELAY"/>
+                <ui:Button name="DelayToggleButton" class="km-fx-toggle" text="OFF" />
+              </ui:VisualElement>
               <ui:VisualElement class="km-macro-row">
                 <km:KnobElement label="DlyMix" paramId="fx.delay.mix" />
                 <km:KnobElement label="DlyFb"  paramId="fx.delay.fb" />
                 <km:KnobElement label="DlyTm"  paramId="fx.delay.time" />
+              </ui:VisualElement>
+              <ui:VisualElement class="km-fx-header-row">
+                <ui:Label class="km-fx-mini-title" text="REVERB"/>
+                <ui:Button name="ReverbToggleButton" class="km-fx-toggle" text="OFF" />
               </ui:VisualElement>
               <ui:VisualElement class="km-macro-row">
                 <km:KnobElement label="RevMix" paramId="fx.rev.mix" />
@@ -244,36 +256,31 @@
                       <km:KnobElement name="SampleMasterVol" label="CHOP VOL" paramId="sample.master" style="width:90px; height:90px;" />
                   </ui:VisualElement> 
               </ui:VisualElement>
-
-            <!-- Chop Picker (2 rows x 8) -->
-            <ui:VisualElement class="km-card">
-              <ui:Label class="km-subtitle" text="CHOP PICKER"/>
-
-              <ui:VisualElement class="km-chop-strip">
-
-                <ui:Button name="Chop01" class="km-chop-btn" text="01"/>
-                <ui:Button name="Chop02" class="km-chop-btn" text="02"/>
-                <ui:Button name="Chop03" class="km-chop-btn" text="03"/>
-                <ui:Button name="Chop04" class="km-chop-btn" text="04"/>
-                <ui:Button name="Chop05" class="km-chop-btn" text="05"/>
-                <ui:Button name="Chop06" class="km-chop-btn" text="06"/>
-                <ui:Button name="Chop07" class="km-chop-btn" text="07"/>
-                <ui:Button name="Chop08" class="km-chop-btn" text="08"/>
-
-                <ui:Button name="Chop09" class="km-chop-btn" text="09"/>
-                <ui:Button name="Chop10" class="km-chop-btn" text="10"/>
-                <ui:Button name="Chop11" class="km-chop-btn" text="11"/>
-                <ui:Button name="Chop12" class="km-chop-btn" text="12"/>
-                <ui:Button name="Chop13" class="km-chop-btn" text="13"/>
-                <ui:Button name="Chop14" class="km-chop-btn" text="14"/>
-                <ui:Button name="Chop15" class="km-chop-btn" text="15"/>
-                <ui:Button name="Chop16" class="km-chop-btn" text="16"/>
-
-              </ui:VisualElement>
-            </ui:VisualElement>
-
         </ui:VisualElement>
+        <!-- Chop Picker (2 rows x 8) -->
+        <ui:VisualElement class="km-card">
+          <ui:Label class="km-subtitle" text="CHOP PICKER"/>
+          <ui:VisualElement class="km-chop-strip">
+            <ui:Button name="Chop01" class="km-chop-btn" text="01"/>
+            <ui:Button name="Chop02" class="km-chop-btn" text="02"/>
+            <ui:Button name="Chop03" class="km-chop-btn" text="03"/>
+            <ui:Button name="Chop04" class="km-chop-btn" text="04"/>
+            <ui:Button name="Chop05" class="km-chop-btn" text="05"/>
+            <ui:Button name="Chop06" class="km-chop-btn" text="06"/>
+            <ui:Button name="Chop07" class="km-chop-btn" text="07"/>
+            <ui:Button name="Chop08" class="km-chop-btn" text="08"/>
 
+            <ui:Button name="Chop09" class="km-chop-btn" text="09"/>
+            <ui:Button name="Chop10" class="km-chop-btn" text="10"/>
+            <ui:Button name="Chop11" class="km-chop-btn" text="11"/>
+            <ui:Button name="Chop12" class="km-chop-btn" text="12"/>
+            <ui:Button name="Chop13" class="km-chop-btn" text="13"/>
+            <ui:Button name="Chop14" class="km-chop-btn" text="14"/>
+            <ui:Button name="Chop15" class="km-chop-btn" text="15"/>
+            <ui:Button name="Chop16" class="km-chop-btn" text="16"/>
+
+          </ui:VisualElement>
+        </ui:VisualElement>        
       </ui:VisualElement>
 
       <!-- SAMPLER -->
@@ -430,9 +437,9 @@
 
         <!-- Pattern controls -->
         <ui:VisualElement class="km-card">
-          <ui:VisualElement class="km-row" style="align-items:center; justify-content:space-between;">
+          <ui:VisualElement class="km-row" style="align-items:center;">
             <ui:Label class="km-subtitle" text="CHAIN"/>
-            <ui:Toggle name="ChainEnabledToggle" text="Song Mode" />
+            <ui:Toggle name="ChainEnabledToggle" text=" " />
           </ui:VisualElement>
 
           <ui:VisualElement class="km-row" style="margin-top:12px; align-items:center;">
@@ -448,7 +455,7 @@
 
           <ui:VisualElement class="km-row" style="margin-top:12px; align-items:center;">
             <ui:Button name="ChainPlaceHereButton" class="km-pillbtn km-pillbtn--chain" text="PLACE" />
-            <ui:Button name="ChainDupNextButton" class="km-pillbtn km-pillbtn--chain" text="DUP+NEXT" style="width:140px;" />
+            <ui:Button name="ChainDupNextButton" class="km-pillbtn km-pillbtn--chain" text="DUP+NEXT" style="width:180px;" />
             <ui:Label name="ChainStatusLabel" class="km-muted" text="" style="margin-left:12px;" />
           </ui:VisualElement>
 

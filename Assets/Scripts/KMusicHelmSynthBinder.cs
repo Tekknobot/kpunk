@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using UnityEngine.UIElements;
 using AudioHelm;
 using KMusic.Core;
 
@@ -31,6 +32,11 @@ namespace KMusic
         private readonly Dictionary<string, float> _lastSent = new Dictionary<string, float>();
 
         private bool _pulledOnce = false;
+
+        private UIDocument _doc;
+        private Button _distToggleButton;
+        private Button _delayToggleButton;
+        private Button _reverbToggleButton;
 
         // Central mapping (Bus id -> Helm Param)
         private static readonly Dictionary<string, Param> Map = new Dictionary<string, Param>
@@ -144,6 +150,8 @@ namespace KMusic
             if (_bus != null)
                 _bus.OnChanged -= OnBusChanged;
 
+            UnwireToggleButtons();
+
             _bus = null;
             _lastSent.Clear();
             _suppressBusEvents = false;
@@ -198,6 +206,8 @@ namespace KMusic
             _bus.OnChanged -= OnBusChanged;
             _bus.OnChanged += OnBusChanged;
 
+            WireToggleButtons();
+            RefreshToggleButtons();
             ApplyAllFromBus();
             _pulledOnce = true;
 
@@ -291,23 +301,150 @@ namespace KMusic
                 Debug.Log($"[BUS] {id} -> norm={snapped:0.000}");
 
             ApplyOne(id);
+            RefreshToggleButtons();
         }
 
         private void ApplyOne(string id)
         {
-            if (_bus == null || helm == null) return;
+            if (_bus == null || helm == null || string.IsNullOrEmpty(id)) return;
+
+            if (id == "fx.delay.on" || id == "fx.delay.mix")
+            {
+                ApplyPseudoBypass("fx.delay.mix", Param.kDelayDryWet, IsEffectEnabled("fx.delay.on"));
+                return;
+            }
+
+            if (id == "fx.rev.on" || id == "fx.rev.mix")
+            {
+                ApplyPseudoBypass("fx.rev.mix", Param.kReverbDryWet, IsEffectEnabled("fx.rev.on"));
+                return;
+            }
+
+            if (id == "fx.dist.on")
+            {
+                ApplyMappedParameter("fx.dist.on", Param.kDistortionOn, GetBusNormalizedSafe("fx.dist.on"));
+                ApplyPseudoBypass("fx.dist.mix", Param.kDistortionMix, IsEffectEnabled("fx.dist.on"));
+                return;
+            }
+
+            if (id == "fx.dist.mix")
+            {
+                ApplyPseudoBypass("fx.dist.mix", Param.kDistortionMix, IsEffectEnabled("fx.dist.on"));
+                return;
+            }
 
             if (!Map.TryGetValue(id, out var param))
                 return;
 
-            float t = Mathf.Clamp01(GetBusNormalizedSafe(id));
+            ApplyMappedParameter(id, param, Mathf.Clamp01(GetBusNormalizedSafe(id)));
+        }
 
+        private void ApplyMappedParameter(string id, Param param, float t)
+        {
+            t = Mathf.Clamp01(t);
             if (!ShouldSend(id, t)) return;
 
             if (logApply)
                 Debug.Log($"[APPLY] {id} -> {param} = {t:0.000}");
 
             helm.SetParameterPercent(param, t);
+        }
+
+        private void ApplyPseudoBypass(string sendId, Param param, bool enabled)
+        {
+            float t = enabled ? Mathf.Clamp01(GetBusNormalizedSafe(sendId)) : 0f;
+            ApplyMappedParameter(sendId, param, t);
+        }
+
+        private bool IsEffectEnabled(string id)
+        {
+            return GetBusNormalizedSafe(id) >= 0.5f;
+        }
+
+
+        private void WireToggleButtons()
+        {
+            UnwireToggleButtons();
+
+            if (_doc == null)
+                _doc = FindObjectOfType<UIDocument>();
+
+            var root = _doc != null ? _doc.rootVisualElement : null;
+            if (root == null)
+                return;
+
+            _distToggleButton = root.Q<Button>("DistToggleButton");
+            _delayToggleButton = root.Q<Button>("DelayToggleButton");
+            _reverbToggleButton = root.Q<Button>("ReverbToggleButton");
+
+            RegisterToggleButton(_distToggleButton, "fx.dist.on");
+            RegisterToggleButton(_delayToggleButton, "fx.delay.on");
+            RegisterToggleButton(_reverbToggleButton, "fx.rev.on");
+        }
+
+        private void UnwireToggleButtons()
+        {
+            UnregisterToggleButton(_distToggleButton, "fx.dist.on");
+            UnregisterToggleButton(_delayToggleButton, "fx.delay.on");
+            UnregisterToggleButton(_reverbToggleButton, "fx.rev.on");
+
+            _distToggleButton = null;
+            _delayToggleButton = null;
+            _reverbToggleButton = null;
+        }
+
+        private void RegisterToggleButton(Button button, string paramId)
+        {
+            if (button == null || string.IsNullOrEmpty(paramId))
+                return;
+
+            button.userData = paramId;
+            button.RegisterCallback<PointerDownEvent>(OnEffectTogglePointerDown, TrickleDown.TrickleDown);
+        }
+
+        private void UnregisterToggleButton(Button button, string paramId)
+        {
+            if (button == null)
+                return;
+
+            if (button.userData is string current && current == paramId)
+                button.userData = null;
+
+            button.UnregisterCallback<PointerDownEvent>(OnEffectTogglePointerDown, TrickleDown.TrickleDown);
+        }
+
+        private void OnEffectTogglePointerDown(PointerDownEvent evt)
+        {
+            if (_bus == null)
+                return;
+
+            if (evt.currentTarget is not Button button)
+                return;
+
+            if (button.userData is not string paramId || string.IsNullOrEmpty(paramId))
+                return;
+
+            float next = IsEffectEnabled(paramId) ? 0f : 1f;
+            _bus.SetNormalized(paramId, next);
+            RefreshToggleButtons();
+            evt.StopPropagation();
+        }
+
+        private void RefreshToggleButtons()
+        {
+            RefreshToggleButton(_distToggleButton, IsEffectEnabled("fx.dist.on"));
+            RefreshToggleButton(_delayToggleButton, IsEffectEnabled("fx.delay.on"));
+            RefreshToggleButton(_reverbToggleButton, IsEffectEnabled("fx.rev.on"));
+        }
+
+        private void RefreshToggleButton(Button button, bool isOn)
+        {
+            if (button == null)
+                return;
+
+            button.text = isOn ? "ON" : "OFF";
+            if (isOn) button.AddToClassList("is-on");
+            else button.RemoveFromClassList("is-on");
         }
 
         private float SnapWaveform(float t)
