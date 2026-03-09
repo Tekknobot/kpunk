@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_09
+  m_EditorClassIdentifier: 
+  kitName: KIT-808
+  kick: {fileID: 8300000, guid: 7dd52c9923233b54b92a0b8fb9d4c8ce, type: 3}
+  snare: {fileID: 8300000, guid: 71e22f69fe5f6614e9daea972e9faf60, type: 3}
+  clap: {fileID: 8300000, guid: 6b380c931b8185b4db505fe71a6a3aed, type: 3}
+  hatClosed: {fileID: 8300000, guid: 6f4e3e98179bcd644a4db428322da74b, type: 3}
+  hatOpen: {fileID: 8300000, guid: b0e49456f7849ba4ca67d2d47b4f416d, type: 3}
+  ride: {fileID: 8300000, guid: 76041c21281c61a469651ad83f8fb0f1, type: 3}
+  rim: {fileID: 8300000, guid: b7ba24e0a435fa141b1fa9be6d915f35, type: 3}
+  crash: {fileID: 8300000, guid: 5308ce238a56a2a44a386fae7e292c57, type: 3}
