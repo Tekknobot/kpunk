@@ -41,6 +41,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private KMusicDrumSequencer _drums;
     private KMusicSampleSequencerUI _samplerUi;
     private KMusic.UI.KMusicPianoRollStepPainter _keys;
+    private KMusic.KMusicChordTrackUI _pad;
     private KMusicHelmPresetPickerUI _helm;
     private KMusicPlayerUI _player;
     private KMusicChainUI _chainUi;
@@ -79,6 +80,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_drums == null) _drums = FindObjectOfType<KMusicDrumSequencer>();
         if (_samplerUi == null) _samplerUi = FindObjectOfType<KMusicSampleSequencerUI>();
         if (_keys == null) _keys = FindObjectOfType<KMusic.UI.KMusicPianoRollStepPainter>();
+        if (_pad == null) _pad = FindObjectOfType<KMusic.KMusicChordTrackUI>();
         if (_helm == null) _helm = FindObjectOfType<KMusicHelmPresetPickerUI>();
         if (_player == null) _player = FindObjectOfType<KMusicPlayerUI>();
         if (_chainUi == null) _chainUi = FindObjectOfType<KMusicChainUI>();
@@ -551,6 +553,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         public DrumState drums = new();
         public SampleState sampler = new();
         public SeqState seq = new();
+        public PadState pad = new();
         public SynthState synth = new();
         public PlayerState player = new();
         public ChopState chops = new();
@@ -572,6 +575,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
     [Serializable] private class SampleState { public int[] stepGrid; }
     [Serializable] private class SeqState { public int[] stepGrid; }
+    [Serializable] private class PadState { public int[] stepGrid; public int chordMode; }
     [Serializable] private class SynthState { public string presetRelPath; public int presetIndex; }
     [Serializable] private class PlayerState { public string lastTrackId; }
     [Serializable] private class ChopState { public string resourcesPath; public float[] sliceStart01; public float[] sliceEnd01; }
@@ -668,6 +672,12 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_keys != null)
             data.seq.stepGrid = _keys.CaptureSeqStepsFlat();
 
+        if (_pad != null)
+        {
+            data.pad.stepGrid = _pad.CapturePadStepsFlat();
+            data.pad.chordMode = _pad.CaptureChordMode();
+        }
+
         if (_helm != null)
         {
             data.synth.presetRelPath = _helm.CurrentPresetRelPath;
@@ -726,6 +736,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_drums != null) _drums.SetAllowSaving(false);
         if (_samplerUi != null) _samplerUi.SetAllowSaving(false);
         if (_keys != null) _keys.SetAllowSaving(false);
+        if (_pad != null) _pad.SetAllowSaving(false);
 
         try
         {
@@ -745,6 +756,12 @@ public sealed class KMusicProjectManager : MonoBehaviour
             {
                 _keys.ApplySeqStepsFlat(null);
                 _keys.RebuildSynthSequenceNow();
+            }
+
+            if (_pad != null)
+            {
+                _pad.ApplyPadStepsFlat(null);
+                _pad.RebuildSequenceNow();
             }
 
             KMusicChopState.ClearApplied();
@@ -809,6 +826,13 @@ public sealed class KMusicProjectManager : MonoBehaviour
             {
                 _keys.ApplySeqStepsFlat(data.seq.stepGrid);
                 _keys.RebuildSynthSequenceNow();
+            }
+
+            if (_pad != null && data.pad != null)
+            {
+                _pad.ApplyPadStepsFlat(data.pad.stepGrid);
+                _pad.ApplyChordMode(data.pad.chordMode);
+                _pad.RebuildSequenceNow();
             }
 
             if (_helm != null && data.synth != null)
@@ -877,6 +901,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (_drums != null) _drums.SetAllowSaving(true);
             if (_samplerUi != null) _samplerUi.SetAllowSaving(true);
             if (_keys != null) _keys.SetAllowSaving(true);
+            if (_pad != null) _pad.SetAllowSaving(true);
         }
     }
 
@@ -896,6 +921,13 @@ public sealed class KMusicProjectManager : MonoBehaviour
         {
             _keys.ApplySeqStepsFlat(null);
             _keys.RebuildSynthSequenceNow();
+        }
+
+        if (_pad != null)
+        {
+            _pad.ApplyPadStepsFlat(null);
+            _pad.ApplyChordMode(0);
+            _pad.RebuildSequenceNow();
         }
 
         PatternBank.ResetAll();

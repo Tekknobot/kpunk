@@ -1449,3 +1449,47 @@ unity-text-align: middle-center;
 .km-fx-toggle.is-on > .unity-text-element {
   color: var(--text);
 }
+
+
+/* --- PAD / CHORD TRACK --- */
+.km-pad-chip-row {
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.km-pad-chip {
+  min-width: 120px;
+  height: 60px;
+  margin-left: 0;
+  margin-right: 12px;
+  border-radius: 18px;
+  background-color: #1C1F28;
+  border-color: #2D3446;
+}
+
+.km-pad-chip .unity-text-element,
+.km-pad-chip > .unity-button__text {
+  color: white;
+  font-size: 22px;
+  -unity-font-style: bold;
+}
+
+.km-pad-chip.km-chip--active {
+  background-color: #203044;
+  border-color: var(--accent);
+}
+
+.km-pad-mode {
+  min-width: 92px;
+  height: 48px;
+  padding-left: 12px;
+  padding-right: 12px;
+  border-radius: 14px;
+  border-width: 2px;
+  border-color: var(--border);
+  background-color: #1C1F28;
+  color: white;
+  unity-text-align: middle-center;
+}

@@ -75,6 +75,10 @@ namespace KMusic
             if (GetComponent<global::KMusicChainUI>() == null)
                 gameObject.AddComponent<global::KMusicChainUI>();
 
+            // PAD / CHORD track prototype
+            if (GetComponent<global::KMusic.KMusicChordTrackUI>() == null)
+                gameObject.AddComponent<global::KMusic.KMusicChordTrackUI>();
+
             // Ensure project save/load manager exists (topbar NEW/LOAD)
             if (GetComponent<global::KMusicProjectManager>() == null)
                 gameObject.AddComponent<global::KMusicProjectManager>();

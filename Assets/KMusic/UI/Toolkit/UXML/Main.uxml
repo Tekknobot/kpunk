@@ -283,6 +283,38 @@
         </ui:VisualElement>        
       </ui:VisualElement>
 
+
+      <!-- PAD / CHORD TRACK -->
+      <ui:VisualElement name="PagePad" style="display:none; flex-direction:column;">
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items:center; justify-content:space-between;">
+            <ui:Label class="km-subtitle" text="PAD / CHORDS" />
+            <ui:Label name="PadChordModeLabel" class="km-presetlabel km-pad-mode" text="MAJ" />
+          </ui:VisualElement>
+
+          <ui:VisualElement class="km-pad-chip-row">
+            <ui:Button name="PadChordMajButton" class="km-pillbtn km-pad-chip km-chip--active" text="MAJ" />
+            <ui:Button name="PadChordMinButton" class="km-pillbtn km-pad-chip" text="MIN" />
+            <ui:Button name="PadChord7Button" class="km-pillbtn km-pad-chip" text="7TH" />
+            <ui:Button name="PadChordSusButton" class="km-pillbtn km-pad-chip" text="SUS2" />
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="CHORD ROOT PICKER"/>
+          </ui:VisualElement>
+          <KMusic.UI.PianoRollGrid name="PadPianoRoll" rows="6" cols="8" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="PAD SEQUENCER"/>
+          </ui:VisualElement>
+          <km:StepGrid name="PadStepGrid" />
+        </ui:VisualElement>
+      </ui:VisualElement>
+
       <!-- SAMPLER -->
       <ui:VisualElement name="PageSampler" style="display:none; flex-direction:column;">
 
@@ -500,6 +532,7 @@
       <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="DRUMS | CHOPS"/></ui:VisualElement>
       <ui:VisualElement name="TabSeq" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="KEYS"/></ui:VisualElement>
       <ui:VisualElement name="TabSynth" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH"/></ui:VisualElement>
+      <ui:VisualElement name="TabPad" class="km-tab"><ui:Label class="km-tab-label" text="PAD"/></ui:VisualElement>
       <ui:VisualElement name="TabPlayer" class="km-tab"><ui:Label class="km-tab-label" text="PLAYER"/></ui:VisualElement>      
       <ui:VisualElement name="TabFx" class="km-tab"><ui:Label class="km-tab-label" text="CHAIN"/></ui:VisualElement>
     </ui:VisualElement>
