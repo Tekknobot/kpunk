@@ -1,6 +1,4 @@
-
 using System;
-using System.Collections;
 using UnityEngine;
 using UnityEngine.UIElements;
 using AudioHelm;
@@ -28,6 +26,7 @@ namespace KMusic
         private UIDocument _doc;
         private HelmController _helm;
         private KMusicDrumSequencer _drums;
+        private KMusicChainUI _chainUI;
         private IVisualElementScheduledItem _rebindLoop;
         private bool _allowSaving = true;
         private int[] _cachedFlat;
@@ -56,6 +55,7 @@ namespace KMusic
             _doc = doc;
             ResolvePadSynthRefs();
             _drums = FindObjectOfType<KMusicDrumSequencer>();
+            _chainUI = FindObjectOfType<KMusicChainUI>();
 
             EnsureIndependentPadChannel();
 
@@ -113,6 +113,7 @@ namespace KMusic
                 RefreshChordButtons();
                 _step.SetPlayheadStep(-1);
                 _lastPlayhead = -1;
+                _sequenceBuilt = false;
                 RebuildSequenceNow();
             }).Every(120);
         }
@@ -120,6 +121,7 @@ namespace KMusic
         private void Update()
         {
             if (_drums == null) _drums = FindObjectOfType<KMusicDrumSequencer>();
+            if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
             if (_helm == null || helmSequencer == null) ResolvePadSynthRefs();
 
             if (_step != null && _drums != null)
@@ -186,10 +188,19 @@ namespace KMusic
             btn.clicked += () =>
             {
                 _mode = mode;
-                ProjectPrefs.SetInt(PrefKey_PadChordType, (int)_mode);
-                ProjectPrefs.Save();
+
+                if (_allowSaving)
+                {
+                    ProjectPrefs.SetInt(PrefKey_PadChordType, (int)_mode);
+                    ProjectPrefs.Save();
+                }
+
                 RefreshChordButtons();
+                _sequenceBuilt = false;
                 RebuildSequenceNow();
+
+                if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+                _chainUI?.NotifyLiveEdited();
             };
         }
 
@@ -219,9 +230,17 @@ namespace KMusic
 
         private void OnStepChanged(int r, int c, int v)
         {
+            if (_step == null) return;
+
             CacheFlat(_step.ExportValuesFlat());
             SaveGrid();
+            _sequenceBuilt = false;
             RebuildSequenceNow();
+
+            if (_chainUI == null)
+                _chainUI = FindObjectOfType<KMusicChainUI>();
+
+            _chainUI?.NotifyLiveEdited();
         }
 
         private void AuditionChord(int valueId)
@@ -229,6 +248,7 @@ namespace KMusic
             if (_helm == null) ResolvePadSynthRefs();
             EnsureIndependentPadChannel();
             if (_helm == null) return;
+
             var notes = BuildChordFromValueId(valueId);
             for (int i = 0; i < notes.Length; i++)
                 _helm.NoteOn(notes[i], 1f, 0.24f + (i * 0.02f));
@@ -260,7 +280,7 @@ namespace KMusic
 
         private Color TintForValue(int v)
         {
-            if (v <= 0 || _piano == null) return new Color(0,0,0,0);
+            if (v <= 0 || _piano == null) return new Color(0, 0, 0, 0);
             int idx = v - 1;
             int r = idx / _piano.ColCount;
             int c = idx % _piano.ColCount;
@@ -271,6 +291,7 @@ namespace KMusic
         private void SaveGrid()
         {
             if (!_allowSaving || _step == null) return;
+
             var flat = _step.ExportValuesFlat();
             CacheFlat(flat);
             KMusicSaveState.SaveIntArray(PrefKey_PadStepGrid, flat);
@@ -312,12 +333,19 @@ namespace KMusic
             {
                 _step.ClearAll();
                 _step.RefreshAll();
+                _sequenceBuilt = false;
                 return;
             }
 
             _step.ImportValuesFlat(flat, fireEvent: false);
             _step.RefreshAll();
-            KMusicSaveState.SaveIntArray(PrefKey_PadStepGrid, flat);
+            _sequenceBuilt = false;
+
+            if (_allowSaving)
+            {
+                KMusicSaveState.SaveIntArray(PrefKey_PadStepGrid, flat);
+                ProjectPrefs.Save();
+            }
         }
 
         public int CaptureChordMode() => (int)_mode;
@@ -325,9 +353,21 @@ namespace KMusic
         public void ApplyChordMode(int mode)
         {
             _mode = (ChordMode)Mathf.Clamp(mode, 0, 3);
-            ProjectPrefs.SetInt(PrefKey_PadChordType, (int)_mode);
-            ProjectPrefs.Save();
+
+            if (_allowSaving)
+            {
+                ProjectPrefs.SetInt(PrefKey_PadChordType, (int)_mode);
+                ProjectPrefs.Save();
+            }
+
             RefreshChordButtons();
+            _sequenceBuilt = false;
+            RebuildSequenceNow();
+        }
+
+        public void RebuildPadSequenceNow()
+        {
+            _sequenceBuilt = false;
             RebuildSequenceNow();
         }
 
@@ -336,6 +376,7 @@ namespace KMusic
             if (helmSequencer == null || _step == null) return;
 
             helmSequencer.Clear();
+
             int total = _step.RowCount * _step.ColCount;
             for (int i = 0; i < total; i++)
             {
@@ -354,8 +395,6 @@ namespace KMusic
             helmSequencer.enabled = false;
             helmSequencer.enabled = true;
         }
-
-
 
         private void ResolvePadSynthRefs()
         {

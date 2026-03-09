@@ -893,7 +893,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 sampleSteps = _samplerUi != null
                     ? _samplerUi.CaptureSampleStepsFlat()
                     : (_drums != null ? _drums.CaptureSampleStepsFlat() : null),
-                seqSteps = _keys != null ? _keys.CaptureSeqStepsFlat() : null
+                seqSteps = _keys != null ? _keys.CaptureSeqStepsFlat() : null,
+                padSteps = _pad != null ? _pad.CapturePadStepsFlat() : null,
+                padChordMode = _pad != null ? _pad.CaptureChordMode() : 0
             });
         }
         finally

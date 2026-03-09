@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 using UnityEngine.UIElements;
 using KMusic.Core;
@@ -21,6 +22,7 @@ public class KMusicChainUI : MonoBehaviour
     private KMusicDrumSequencer _drums;
     private KMusicSampleSequencerUI _samplerUi;
     private KMusic.UI.KMusicPianoRollStepPainter _keys;
+    private KMusic.KMusicChordTrackUI _pad;
 
     private ChainState _chain;
     private int _selectedPatternId = 0;
@@ -67,7 +69,6 @@ public class KMusicChainUI : MonoBehaviour
         if (_drums != null)
             _drums.OnBarStart += OnBarStart;
 
-        // Default selection = pattern 0
         _selectedPatternId = 0;
         RefreshAllUI();
     }
@@ -84,9 +85,14 @@ public class KMusicChainUI : MonoBehaviour
             _playBar = 0;
             _lastAppliedPattern = int.MinValue;
             _selectedPatternId = ResolveSelectedPatternId();
+
+            FindRuntimeRefs();
             RefreshAllUI();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[CHAIN] ReloadFromSaved failed: {ex.Message}");
+        }
     }
 
     public int ResolveSelectedPatternId()
@@ -130,6 +136,22 @@ public class KMusicChainUI : MonoBehaviour
         if (_drums == null) _drums = FindObjectOfType<KMusicDrumSequencer>();
         if (_samplerUi == null) _samplerUi = FindObjectOfType<KMusicSampleSequencerUI>();
         if (_keys == null) _keys = FindObjectOfType<KMusic.UI.KMusicPianoRollStepPainter>();
+        if (_pad == null) _pad = FindObjectOfType<KMusic.KMusicChordTrackUI>();
+
+        Debug.Log($"[CHAIN] refs drums={(_drums != null)} sampler={(_samplerUi != null)} keys={(_keys != null)} pad={(_pad != null)}");
+    }
+
+    private void RefreshRuntimeRefsIfNeeded()
+    {
+        bool need =
+            _drums == null ||
+            _samplerUi == null ||
+            _keys == null ||
+            _pad == null;
+
+        if (!need) return;
+
+        FindRuntimeRefs();
     }
 
     private void WireUI()
@@ -209,12 +231,10 @@ public class KMusicChainUI : MonoBehaviour
             var b = new Button();
             b.AddToClassList("km-chain-bar");
             b.text = FormatBarText(barIndex);
-            
-            b.style.fontSize = 32; // or new StyleLength(32) if needed
+            b.style.fontSize = 32;
 
             b.clicked += () =>
             {
-                // if this click is the release after a long-press, ignore the normal click.
                 if (_longPressFired.Contains(b))
                 {
                     _longPressFired.Remove(b);
@@ -224,7 +244,6 @@ public class KMusicChainUI : MonoBehaviour
                 _chain.cursor = barIndex;
                 _chain.Save();
 
-                // tap selects bar; if it has a pattern, also select it
                 int pid = _chain.slots[barIndex];
                 if (pid >= 0)
                 {
@@ -232,12 +251,11 @@ public class KMusicChainUI : MonoBehaviour
                     LoadPatternToLive(pid);
                     SetStatus($"Loaded {PatternBank.GetName(pid)}");
                 }
+
                 RefreshBarsUI();
                 RefreshPatternUI();
             };
 
-            // Long-press delete pattern assigned to this bar.
-            // (Mobile-friendly: hold the bar cell to delete the referenced pattern.)
             b.RegisterCallback<PointerDownEvent>(_ => BeginLongPress(b, barIndex));
             b.RegisterCallback<PointerUpEvent>(_ => CancelLongPress(b));
             b.RegisterCallback<PointerLeaveEvent>(_ => CancelLongPress(b));
@@ -300,14 +318,12 @@ public class KMusicChainUI : MonoBehaviour
             return;
         }
 
-        // Clear ALL chain references to this pattern.
         for (int i = 0; i < _chain.slots.Length; i++)
             if (_chain.slots[i] == pid)
                 _chain.slots[i] = -1;
 
         _chain.Save();
 
-        // If we were editing that pattern, fall back to 0.
         if (_selectedPatternId == pid)
         {
             _selectedPatternId = 0;
@@ -326,6 +342,8 @@ public class KMusicChainUI : MonoBehaviour
     {
         if (_suppressAutoSave) return;
 
+        RefreshRuntimeRefsIfNeeded();
+
         int targetPatternId = GetActiveEditPatternId();
         if (targetPatternId < 0) return;
 
@@ -334,7 +352,8 @@ public class KMusicChainUI : MonoBehaviour
             var snap = CaptureLiveToPattern();
             PatternBank.Save(targetPatternId, snap);
 
-            // Keep the chain editor pointed at the live pattern being authored.
+            Debug.Log($"[CHAIN] NotifyLiveEdited -> saved pid={targetPatternId}");
+
             if (_selectedPatternId != targetPatternId)
             {
                 _selectedPatternId = targetPatternId;
@@ -342,9 +361,11 @@ public class KMusicChainUI : MonoBehaviour
                 RefreshBarsUI();
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[CHAIN] NotifyLiveEdited failed: {ex.Message}");
+        }
     }
-
 
     private int GetActiveEditPatternId()
     {
@@ -371,7 +392,6 @@ public class KMusicChainUI : MonoBehaviour
     {
         if (_barButtons.Count == 0) return;
 
-        // hide beyond chain length (still stored, but UI focuses)
         int len = Mathf.Clamp(_chain.length, 1, 64);
 
         for (int i = 0; i < _barButtons.Count; i++)
@@ -405,12 +425,10 @@ public class KMusicChainUI : MonoBehaviour
         return $"{barIndex + 1:00}  {p}";
     }
 
-    // ----------------------------
-    // UI actions
-    // ----------------------------
-
     private void OnNewPattern()
     {
+        RefreshRuntimeRefsIfNeeded();
+
         var snap = CaptureLiveToPattern();
         int id = PatternBank.CreateFrom(snap);
         _selectedPatternId = id;
@@ -420,6 +438,8 @@ public class KMusicChainUI : MonoBehaviour
 
     private void OnSavePattern()
     {
+        RefreshRuntimeRefsIfNeeded();
+
         var snap = CaptureLiveToPattern();
         PatternBank.Save(_selectedPatternId, snap);
         SetStatus($"Saved {PatternBank.GetName(_selectedPatternId)}");
@@ -439,12 +459,11 @@ public class KMusicChainUI : MonoBehaviour
         _chain.SetSlot(_chain.cursor, _selectedPatternId);
         _chain.Save();
         RefreshBarsUI();
-        SetStatus($"Placed {PatternBank.GetName(_selectedPatternId)} at bar {_chain.cursor + 1}" );
+        SetStatus($"Placed {PatternBank.GetName(_selectedPatternId)} at bar {_chain.cursor + 1}");
     }
 
     private void OnDupNext()
     {
-        // Duplicate current pattern, place in next bar, advance cursor, load it.
         int newId = PatternBank.Duplicate(_selectedPatternId);
         int nextBar = Mathf.Clamp(_chain.cursor + 1, 0, 63);
 
@@ -478,10 +497,6 @@ public class KMusicChainUI : MonoBehaviour
         SetStatus($"Chain length: {_chain.length} bars");
     }
 
-    // ----------------------------
-    // Pattern capture/apply (fits your existing scripts)
-    // ----------------------------
-
     private PatternData CaptureLiveToPattern()
     {
         var p = new PatternData();
@@ -495,7 +510,12 @@ public class KMusicChainUI : MonoBehaviour
         if (_keys != null)
             p.seqSteps = _keys.CaptureSeqStepsFlat();
 
-        // (optional) also prefer the sampler UI if it exists (keeps UI as source of truth)
+        if (_pad != null)
+        {
+            p.padSteps = _pad.CapturePadStepsFlat();
+            p.padChordMode = _pad.CaptureChordMode();
+        }
+
         if (_samplerUi != null)
         {
             var flat = _samplerUi.CaptureSampleStepsFlat();
@@ -508,14 +528,32 @@ public class KMusicChainUI : MonoBehaviour
 
     private void LoadPatternToLive(int patternId)
     {
+        RefreshRuntimeRefsIfNeeded();
+
         _selectedPatternId = patternId;
         var p = PatternBank.Load(patternId);
 
-        // suppress saving while importing
+        string padPreview = "null";
+        if (p != null && p.padSteps != null)
+        {
+            int take = Mathf.Min(8, p.padSteps.Length);
+            var tmp = new StringBuilder();
+            for (int i = 0; i < take; i++)
+            {
+                if (i > 0) tmp.Append(",");
+                tmp.Append(p.padSteps[i]);
+            }
+            padPreview = $"len={p.padSteps.Length} first={tmp}";
+        }
+
+        Debug.Log($"[CHAIN] LoadPatternToLive pid={patternId} padRef={(_pad != null)} padData={padPreview} chordMode={(p != null ? p.padChordMode : -999)}");
+
         _suppressAutoSave = true;
+
         if (_drums != null) _drums.SetAllowSaving(false);
         if (_samplerUi != null) _samplerUi.SetAllowSaving(false);
         if (_keys != null) _keys.SetAllowSaving(false);
+        if (_pad != null) _pad.SetAllowSaving(false);
 
         if (_drums != null)
         {
@@ -528,13 +566,28 @@ public class KMusicChainUI : MonoBehaviour
 
         if (_keys != null)
         {
+            Debug.Log($"[CHAIN] applying KEYS pid={patternId}");
             _keys.ApplySeqStepsFlat(p.seqSteps);
             _keys.RebuildSynthSequenceNow();
+        }
+
+        if (_pad != null)
+        {
+            Debug.Log($"[CHAIN] applying PAD pid={patternId}");
+            _pad.ApplyPadStepsFlat(p.padSteps);
+            _pad.ApplyChordMode(p.padChordMode);
+            _pad.RebuildPadSequenceNow();
+            Debug.Log($"[CHAIN] applied PAD pid={patternId}");
+        }
+        else
+        {
+            Debug.LogWarning($"[CHAIN] PAD REF NULL during LoadPatternToLive pid={patternId}");
         }
 
         if (_drums != null) _drums.SetAllowSaving(true);
         if (_samplerUi != null) _samplerUi.SetAllowSaving(true);
         if (_keys != null) _keys.SetAllowSaving(true);
+        if (_pad != null) _pad.SetAllowSaving(true);
 
         _suppressAutoSave = false;
 
@@ -542,24 +595,22 @@ public class KMusicChainUI : MonoBehaviour
         RefreshPatternUI();
     }
 
-    // ----------------------------
-    // Song mode switching (quantized)
-    // ----------------------------
-
     private void OnBarStart(int barCount)
     {
         if (_chain == null) return;
         if (!_chain.enabled) return;
         if (_drums == null || !_drums.IsPlaying) return;
 
+        RefreshRuntimeRefsIfNeeded();
+
         int len = Mathf.Clamp(_chain.length, 1, 64);
 
-        // barCount starts at 1 when scheduling step 0; convert to 0-based position
         _playBar = (barCount - 1) % len;
         int pid = _chain.GetSlot(_playBar);
-        if (pid < 0) pid = _selectedPatternId; // fallback: keep current
+        if (pid < 0) pid = _selectedPatternId;
 
-        // Only apply if it changes (avoids extra work)
+        Debug.Log($"[CHAIN] OnBarStart barCount={barCount} playBar={_playBar} pid={pid} lastApplied={_lastAppliedPattern}");
+
         if (pid != _lastAppliedPattern)
         {
             LoadPatternToLive(pid);
@@ -570,7 +621,6 @@ public class KMusicChainUI : MonoBehaviour
             RefreshPatternUI();
         }
 
-        // UI: highlight
         RefreshBarsUI();
     }
 }

@@ -24,6 +24,8 @@ namespace KMusic.Core
         private static string KeyDrums(int id)  => $"kmusic.pattern.{id:000}.drum.stepmask";
         private static string KeySample(int id) => $"kmusic.pattern.{id:000}.sample.stepgrid";
         private static string KeySeq(int id)    => $"kmusic.pattern.{id:000}.seq.stepgrid";
+        private static string KeyPad(int id)    => $"kmusic.pattern.{id:000}.pad.stepgrid";
+        private static string KeyPadMode(int id)=> $"kmusic.pattern.{id:000}.pad.mode";
         private static string KeyName(int id)   => $"kmusic.pattern.{id:000}.name";
 
         // ----------------------------
@@ -53,6 +55,8 @@ namespace KMusic.Core
 
             public List<IntArrayWrap> sampleSteps = new();
             public List<IntArrayWrap> seqSteps = new();
+            public List<IntArrayWrap> padSteps = new();
+            public List<int> padChordModes = new();
         }
 
         public static void EnsureDefaultPatternExists()
@@ -139,6 +143,8 @@ namespace KMusic.Core
             byte[] drums = new byte[PatternData.Steps];
             int[] sample = new int[PatternData.Steps];
             int[] seq = new int[PatternData.Steps];
+            int[] pad = new int[PatternData.Steps];
+            int padMode = Mathf.Clamp(data.padChordMode, 0, 3);
 
             if (data.drumMask != null)
                 Array.Copy(data.drumMask, drums, Math.Min(data.drumMask.Length, drums.Length));
@@ -146,10 +152,15 @@ namespace KMusic.Core
                 Array.Copy(data.sampleSteps, sample, Math.Min(data.sampleSteps.Length, sample.Length));
             if (data.seqSteps != null)
                 Array.Copy(data.seqSteps, seq, Math.Min(data.seqSteps.Length, seq.Length));
+            if (data.padSteps != null)
+                Array.Copy(data.padSteps, pad, Math.Min(data.padSteps.Length, pad.Length));
 
             KMusic.KMusicSaveState.SaveBytes(KeyDrums(id), drums);
             KMusic.KMusicSaveState.SaveIntArray(KeySample(id), sample);
             KMusic.KMusicSaveState.SaveIntArray(KeySeq(id), seq);
+            KMusic.KMusicSaveState.SaveIntArray(KeyPad(id), pad);
+            ProjectPrefs.SetInt(KeyPadMode(id), padMode);
+            ProjectPrefs.Save();
         }
 
         public static PatternData Load(int id)
@@ -159,10 +170,13 @@ namespace KMusic.Core
             var drums = KMusic.KMusicSaveState.LoadBytes(KeyDrums(id), PatternData.Steps);
             var sample = KMusic.KMusicSaveState.LoadIntArray(KeySample(id), PatternData.Steps);
             var seq = KMusic.KMusicSaveState.LoadIntArray(KeySeq(id), PatternData.Steps);
+            var pad = KMusic.KMusicSaveState.LoadIntArray(KeyPad(id), PatternData.Steps);
 
             if (drums != null) p.drumMask = drums;
             if (sample != null) p.sampleSteps = sample;
             if (seq != null) p.seqSteps = seq;
+            if (pad != null) p.padSteps = pad;
+            p.padChordMode = ProjectPrefs.GetInt(KeyPadMode(id), 0);
 
             return p;
         }
@@ -186,6 +200,8 @@ namespace KMusic.Core
                 save.drumMaskB64.Add(p.drumMask != null ? Convert.ToBase64String(p.drumMask) : "");
                 save.sampleSteps.Add(new PatternBankSave.IntArrayWrap(p.sampleSteps));
                 save.seqSteps.Add(new PatternBankSave.IntArrayWrap(p.seqSteps));
+                save.padSteps.Add(new PatternBankSave.IntArrayWrap(p.padSteps));
+                save.padChordModes.Add(p.padChordMode);
             }
 
             return save;
@@ -226,7 +242,15 @@ namespace KMusic.Core
                 if (save.seqSteps != null && i < save.seqSteps.Count && save.seqSteps[i] != null)
                     seq = save.seqSteps[i].v;
 
-                Save(id, new PatternData { drumMask = drums, sampleSteps = sample, seqSteps = seq });
+                int[] pad = null;
+                if (save.padSteps != null && i < save.padSteps.Count && save.padSteps[i] != null)
+                    pad = save.padSteps[i].v;
+
+                int padMode = 0;
+                if (save.padChordModes != null && i < save.padChordModes.Count)
+                    padMode = save.padChordModes[i];
+
+                Save(id, new PatternData { drumMask = drums, sampleSteps = sample, seqSteps = seq, padSteps = pad, padChordMode = padMode });
 
                 if (save.names != null && i < save.names.Count && !string.IsNullOrEmpty(save.names[i]))
                     ProjectPrefs.SetString(KeyName(id), save.names[i]);
@@ -249,6 +273,8 @@ namespace KMusic.Core
                     ProjectPrefs.DeleteKey(KeyDrums(id));
                     ProjectPrefs.DeleteKey(KeySample(id));
                     ProjectPrefs.DeleteKey(KeySeq(id));
+                    ProjectPrefs.DeleteKey(KeyPad(id));
+                    ProjectPrefs.DeleteKey(KeyPadMode(id));
                     ProjectPrefs.DeleteKey(KeyName(id));
                 }
 
