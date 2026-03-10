@@ -56,6 +56,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
     private void Awake()
     {
+        Screen.sleepTimeout = SleepTimeout.NeverSleep; // Screentimeout: NEVER
+
         if (!doc) doc = GetComponent<UIDocument>();
         CurrentSlot = Mathf.Clamp(ProjectPrefs.GetGlobalInt(PrefKey_CurrentSlot, 0), 0, 999);
         ProjectPrefs.SetActiveSlot(CurrentSlot);
