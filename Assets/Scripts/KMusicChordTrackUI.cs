@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
 using AudioHelm;
@@ -33,6 +34,13 @@ namespace KMusic
         private bool _preferCachedOnNextBind;
         private bool _sequenceBuilt;
         private int _lastPlayhead = -1;
+
+        // Note-length run tracking (same pattern as KMusicPianoRollStepPainter)
+        private int[] _noteRunLengthAtStart;
+        private int[] _noteRunStartForCell;
+
+        // Stroke state (no time dependency)
+        private bool _strokeActive = false;
 
         private enum ChordMode
         {
@@ -94,6 +102,8 @@ namespace KMusic
                 _step.EnableValueTint(true, TintForValue);
                 _piano.OnCellPicked += OnPianoPicked;
                 _step.OnCellValueChanged += OnStepChanged;
+                _step.OnStrokeStarted += OnStepStrokeStarted;
+                _step.OnStrokeEnded += OnStepStrokeEnded;
 
                 if (_preferCachedOnNextBind && _cachedFlat != null)
                     ApplyPadStepsFlat(_cachedFlat);
@@ -162,7 +172,12 @@ namespace KMusic
         private void UnbindGrid()
         {
             if (_piano != null) _piano.OnCellPicked -= OnPianoPicked;
-            if (_step != null) _step.OnCellValueChanged -= OnStepChanged;
+            if (_step != null)
+            {
+                _step.OnCellValueChanged -= OnStepChanged;
+                _step.OnStrokeStarted -= OnStepStrokeStarted;
+                _step.OnStrokeEnded -= OnStepStrokeEnded;
+            }
             _piano = null;
             _step = null;
         }
@@ -232,14 +247,151 @@ namespace KMusic
         {
             if (_step == null) return;
 
+            EnsureRunArrays();
+            int index = ToIndex(r, c);
+
+            if (v <= 0)
+                ClearRunAtOrContaining(index);
+            else
+                SetSingleNote(index);  // stroke end will correct multi-cell runs
+
             CacheFlat(_step.ExportValuesFlat());
-            SaveGrid();
+            // Don't rebuild here during an active stroke — wait for OnStepStrokeEnded
+            if (!_strokeActive)
+            {
+                _sequenceBuilt = false;
+                RebuildSequenceNow();
+                SaveGrid();
+
+                if (_chainUI == null)
+                    _chainUI = FindObjectOfType<KMusicChainUI>();
+                _chainUI?.NotifyLiveEdited();
+            }
+        }
+
+        // --- Run-length helpers ---
+
+        private int TotalStepCount() => _step != null ? _step.RowCount * _step.ColCount : 0;
+        private int ToIndex(int r, int c) => r * (_step != null ? _step.ColCount : 8) + c;
+
+        private void EnsureRunArrays()
+        {
+            int total = TotalStepCount();
+            if (total <= 0) return;
+            if (_noteRunLengthAtStart == null || _noteRunLengthAtStart.Length != total)
+            {
+                _noteRunLengthAtStart = new int[total];
+                _noteRunStartForCell = new int[total];
+                for (int i = 0; i < total; i++)
+                    _noteRunStartForCell[i] = -1;
+            }
+        }
+
+        private void ClearRunAtOrContaining(int index)
+        {
+            EnsureRunArrays();
+            if (_noteRunStartForCell == null) return;
+            if (index < 0 || index >= _noteRunStartForCell.Length) return;
+
+            int start = -1;
+            if (_noteRunLengthAtStart[index] > 0)
+                start = index;
+            else if (_noteRunStartForCell[index] >= 0)
+                start = _noteRunStartForCell[index];
+            if (start < 0) return;
+
+            int len = Mathf.Max(1, _noteRunLengthAtStart[start]);
+            for (int i = 0; i < len; i++)
+            {
+                int cell = start + i;
+                if (cell >= 0 && cell < _noteRunStartForCell.Length)
+                    _noteRunStartForCell[cell] = -1;
+            }
+            _noteRunLengthAtStart[start] = 0;
+        }
+
+        private void SetSingleNote(int index)
+        {
+            EnsureRunArrays();
+            ClearRunAtOrContaining(index);
+            _noteRunLengthAtStart[index] = 1;
+            _noteRunStartForCell[index] = index;
+        }
+
+        // --- Stroke handlers (no time dependency) ---
+
+        private void OnStepStrokeStarted(bool isErase)
+        {
+            _strokeActive = !isErase;
+        }
+
+        private void OnStepStrokeEnded(List<UnityEngine.Vector2Int> cells, bool isErase)
+        {
+            _strokeActive = false;
+            if (_step == null) return;
+
+            EnsureRunArrays();
+
+            if (isErase || cells == null || cells.Count == 0)
+            {
+                if (cells != null)
+                    foreach (var rc in cells)
+                        ClearRunAtOrContaining(ToIndex(rc.x, rc.y));
+                _sequenceBuilt = false;
+                RebuildSequenceNow();
+                SaveGrid();
+                return;
+            }
+
+            // Group painted cells by row; find contiguous column runs per row.
+            // Different rows are independent (chords on separate rows stay separate notes).
+            var byRow = new Dictionary<int, List<int>>();
+            foreach (var rc in cells)
+            {
+                if (!byRow.TryGetValue(rc.x, out var cols)) { cols = new List<int>(); byRow[rc.x] = cols; }
+                if (!cols.Contains(rc.y)) cols.Add(rc.y);
+            }
+
+            foreach (var kv in byRow)
+            {
+                int row = kv.Key;
+                var colsSorted = kv.Value;
+                colsSorted.Sort();
+
+                // Split into contiguous runs within this row
+                var runs = new List<List<int>>();
+                List<int> cur = null;
+                foreach (int col in colsSorted)
+                {
+                    if (cur == null || col != cur[cur.Count - 1] + 1)
+                    {
+                        cur = new List<int>();
+                        runs.Add(cur);
+                    }
+                    cur.Add(col);
+                }
+
+                foreach (var run in runs)
+                {
+                    int startIdx = ToIndex(row, run[0]);
+                    // Clear any overlap first
+                    foreach (int col in run) ClearRunAtOrContaining(ToIndex(row, col));
+
+                    _noteRunLengthAtStart[startIdx] = run.Count;
+                    for (int i = 0; i < run.Count; i++)
+                    {
+                        int cellIdx = ToIndex(row, run[i]);
+                        _noteRunStartForCell[cellIdx] = startIdx;
+                        if (i > 0) _noteRunLengthAtStart[cellIdx] = 0;
+                    }
+                }
+            }
+
             _sequenceBuilt = false;
             RebuildSequenceNow();
+            SaveGrid();
 
-            if (_chainUI == null)
-                _chainUI = FindObjectOfType<KMusicChainUI>();
-
+            if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
             _chainUI?.NotifyLiveEdited();
         }
 
@@ -333,12 +485,30 @@ namespace KMusic
             {
                 _step.ClearAll();
                 _step.RefreshAll();
+                _noteRunLengthAtStart = null;
+                _noteRunStartForCell = null;
                 _sequenceBuilt = false;
                 return;
             }
 
             _step.ImportValuesFlat(flat, fireEvent: false);
             _step.RefreshAll();
+
+            EnsureRunArrays();
+            for (int i = 0; i < _noteRunLengthAtStart.Length; i++)
+            {
+                _noteRunLengthAtStart[i] = 0;
+                _noteRunStartForCell[i] = -1;
+            }
+            for (int i = 0; i < flat.Length; i++)
+            {
+                if (flat[i] > 0)
+                {
+                    _noteRunLengthAtStart[i] = 1;
+                    _noteRunStartForCell[i] = i;
+                }
+            }
+
             _sequenceBuilt = false;
 
             if (_allowSaving)
@@ -375,6 +545,7 @@ namespace KMusic
         {
             if (helmSequencer == null || _step == null) return;
 
+            EnsureRunArrays();
             helmSequencer.Clear();
 
             int total = _step.RowCount * _step.ColCount;
@@ -385,9 +556,22 @@ namespace KMusic
                 int valueId = _step.GetValue(r, c);
                 if (valueId <= 0) continue;
 
+                // Skip continuation cells — only the run-start cell emits a note
+                if (_noteRunStartForCell != null &&
+                    _noteRunStartForCell.Length > i &&
+                    _noteRunStartForCell[i] >= 0 &&
+                    _noteRunStartForCell[i] != i)
+                    continue;
+
+                int runLen = (_noteRunLengthAtStart != null && _noteRunLengthAtStart.Length > i)
+                    ? _noteRunLengthAtStart[i] : 0;
+                if (runLen <= 0) runLen = 1;
+
                 var notes = BuildChordFromValueId(valueId);
                 float start = i;
-                float end = i + gateSixteenths;
+                float end = i + runLen - (1f - gateSixteenths);
+                if (end <= start) end = start + gateSixteenths;
+
                 for (int n = 0; n < notes.Length; n++)
                     helmSequencer.AddNote(notes[n], start, end, 0.90f);
             }

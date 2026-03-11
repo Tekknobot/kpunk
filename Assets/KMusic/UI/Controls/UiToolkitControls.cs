@@ -702,6 +702,17 @@ namespace KMusic.UI
 
         public event Action<int, int> OnCellClicked;
 
+        // Fired at the START of a pointer-down stroke (before any cells are painted).
+        // bool = isErase
+        public event Action<bool> OnStrokeStarted;
+
+        // Fired when the pointer is released / stroke ends.
+        // Carries every (r,c) cell that was painted/erased during the stroke, in order.
+        public event Action<List<Vector2Int>, bool> OnStrokeEnded;
+
+        // Cells visited during the current stroke (in paint order).
+        private readonly List<Vector2Int> _strokeCells = new List<Vector2Int>();
+
         public int RowCount => Rows;
         public int ColCount => Cols;
 
@@ -719,6 +730,7 @@ namespace KMusic.UI
         }
 
         public void SetPaintValue(int v) => _paintValue = Mathf.Clamp(v, 0, 999);
+        public int GetPaintValue() => _paintValue;
 
         public void EnableToggleEraseOnSameValue(bool on)
         {
@@ -957,12 +969,16 @@ namespace KMusic.UI
                         _capturedPointerId = e.pointerId;
                         _lastPaintR = -1;
                         _lastPaintC = -1;
+                        _strokeCells.Clear();
+
+                        OnStrokeStarted?.Invoke(_strokeErase);
 
                         // ✅ capture pointer on the GRID, not the cell (older UITK uses helper)
                         PointerCaptureHelper.CapturePointer(this, e.pointerId);
 
                         // paint immediately on down
                         ApplyPaint(rr, cc, _strokeErase);
+                        _strokeCells.Add(new Vector2Int(rr, cc));
                         _lastPaintR = rr;
                         _lastPaintC = cc;
 
@@ -1018,6 +1034,7 @@ namespace KMusic.UI
                 return;
 
             ApplyPaint(r, c, _strokeErase);
+            _strokeCells.Add(new Vector2Int(r, c));
             _lastPaintR = r;
             _lastPaintC = c;
 
@@ -1041,11 +1058,15 @@ namespace KMusic.UI
         private void OnGridPointerCaptureOut(PointerCaptureOutEvent e)
         {
             // Something else stole capture (ScrollView/panel/etc.)
+            if (_painting && _strokeCells.Count > 0)
+                OnStrokeEnded?.Invoke(new List<Vector2Int>(_strokeCells), _strokeErase);
+
             _painting = false;
             _capturedPointerId = -1;
             _strokeErase = false;
             _lastPaintR = -1;
             _lastPaintC = -1;
+            _strokeCells.Clear();
         }
 
         /// <summary>
@@ -1079,6 +1100,9 @@ namespace KMusic.UI
 
         private void EndStroke(int pointerId)
         {
+            bool wasErase = _strokeErase;
+            var cells = new List<Vector2Int>(_strokeCells);
+
             _painting = false;
 
             if (PointerCaptureHelper.HasPointerCapture(this, pointerId))
@@ -1093,6 +1117,9 @@ namespace KMusic.UI
 
             _lastPaintR = -1;
             _lastPaintC = -1;
+            _strokeCells.Clear();
+
+            OnStrokeEnded?.Invoke(cells, wasErase);
         }
     }
 

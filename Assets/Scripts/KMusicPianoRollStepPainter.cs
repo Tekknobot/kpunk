@@ -69,14 +69,13 @@ namespace KMusic.UI
         // any cell index -> owning run start, or -1
         private int[] _noteRunStartForCell;
 
-        // Gesture tracking so taps stay single notes, drags become held notes
-        private readonly List<int> _gestureCells = new();
-        private int _gestureValueId = -1;
-        private float _lastGestureTime = -999f;
-        private int _lastGestureIndex = -999;
-        private IVisualElementScheduledItem _gestureFinalizeJob;
-
-        private const float GestureGapSeconds = 0.40f;
+        // Stroke-based note-length tracking (no time dependency).
+        // Each pointer-down → pointer-up is one atomic stroke.
+        // Cells painted in the stroke are committed to run arrays only on stroke end.
+        private bool _strokeActive = false;
+        private int _strokeValueId = -1;
+        // Per-row contiguous run being built during the current stroke: row -> ordered list of column indices
+        private readonly Dictionary<int, List<int>> _strokeRunsByRow = new Dictionary<int, List<int>>();
 
         private void Update()
         {
@@ -143,6 +142,12 @@ namespace KMusic.UI
                 _step.OnCellValueChanged -= OnStepValueChanged;
                 _step.OnCellValueChanged += OnStepValueChanged;
 
+                _step.OnStrokeStarted -= OnStepStrokeStarted;
+                _step.OnStrokeStarted += OnStepStrokeStarted;
+
+                _step.OnStrokeEnded -= OnStepStrokeEnded;
+                _step.OnStrokeEnded += OnStepStrokeEnded;
+
                 _seqRebuildJob?.Pause();
                 _seqRebuildJob = _step.schedule.Execute(() =>
                 {
@@ -206,11 +211,6 @@ namespace KMusic.UI
             }
         }
 
-        private bool IsAdjacentStep(int a, int b)
-        {
-            return Mathf.Abs(a - b) == 1;
-        }
-
         private void ClearRunAtOrContaining(int index)
         {
             EnsureRunArrays();
@@ -246,79 +246,128 @@ namespace KMusic.UI
             _noteRunStartForCell[index] = index;
         }
 
-        private void SetDraggedRun(List<int> cells, int valueId)
+        // --- Stroke-based note-length logic (no time dependency) ---
+
+        private void OnStepStrokeStarted(bool isErase)
         {
-            EnsureRunArrays();
-            if (cells == null || cells.Count == 0) return;
+            // Begin a new stroke; collect which cells are touched per row.
+            _strokeActive = !isErase;
+            _strokeValueId = _step != null ? _step.GetPaintValue() : -1;
+            _strokeRunsByRow.Clear();
+        }
 
-            cells.Sort();
+        private void OnStepStrokeEnded(List<Vector2Int> cells, bool isErase)
+        {
+            _strokeActive = false;
 
-            var contiguous = new List<int>();
-            int prev = -999;
-
-            foreach (int idx in cells)
+            if (isErase || cells == null || cells.Count == 0)
             {
-                FromIndex(idx, out int r, out int c);
-                if (_step.GetValue(r, c) != valueId)
-                    continue;
-
-                if (contiguous.Count == 0 || IsAdjacentStep(idx, prev))
+                // Erase strokes: clear runs for each affected cell
+                if (cells != null)
                 {
-                    contiguous.Add(idx);
-                    prev = idx;
+                    EnsureRunArrays();
+                    foreach (var rc in cells)
+                        ClearRunAtOrContaining(ToIndex(rc.x, rc.y));
+                }
+                _strokeRunsByRow.Clear();
+                _seqDirty = true;
+                SaveStepGrid();
+                return;
+            }
+
+            EnsureRunArrays();
+
+            // Group cells by row (chords/pads on different rows stay independent).
+            // Within each row, find the contiguous column runs in the order they were painted.
+            var byRow = new Dictionary<int, List<int>>(); // row -> ordered columns
+            foreach (var rc in cells)
+            {
+                if (!byRow.TryGetValue(rc.x, out var cols))
+                {
+                    cols = new List<int>();
+                    byRow[rc.x] = cols;
+                }
+                if (!cols.Contains(rc.y))
+                    cols.Add(rc.y);
+            }
+
+            foreach (var kv in byRow)
+            {
+                int row = kv.Key;
+                var cols = kv.Value;
+                cols.Sort();
+
+                // Split into contiguous runs within this row
+                var runStart = new List<int>();
+                var runCols = new List<List<int>>();
+                List<int> cur = null;
+
+                foreach (int col in cols)
+                {
+                    if (cur == null || col != cur[cur.Count - 1] + 1)
+                    {
+                        cur = new List<int>();
+                        runStart.Add(col);
+                        runCols.Add(cur);
+                    }
+                    cur.Add(col);
+                }
+
+                // Commit each run
+                for (int ri = 0; ri < runCols.Count; ri++)
+                {
+                    var run = runCols[ri];
+                    int startIdx = ToIndex(row, run[0]);
+                    int len = run.Count;
+
+                    // Clear any pre-existing runs overlapped by this stroke
+                    foreach (int col in run)
+                        ClearRunAtOrContaining(ToIndex(row, col));
+
+                    _noteRunLengthAtStart[startIdx] = len;
+                    for (int i = 0; i < len; i++)
+                    {
+                        int cellIdx = ToIndex(row, run[i]);
+                        _noteRunStartForCell[cellIdx] = startIdx;
+                    }
+                    // Continuation cells should not have a run length of their own
+                    for (int i = 1; i < len; i++)
+                        _noteRunLengthAtStart[ToIndex(row, run[i])] = 0;
                 }
             }
 
-            if (contiguous.Count == 0) return;
+            _strokeRunsByRow.Clear();
+            _seqDirty = true;
+            SaveStepGrid();
 
-            foreach (int idx in contiguous)
-                ClearRunAtOrContaining(idx);
-
-            int start = contiguous[0];
-            int len = contiguous.Count;
-
-            _noteRunLengthAtStart[start] = len;
-            for (int i = 0; i < len; i++)
-                _noteRunStartForCell[start + i] = start;
+            if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+            _chainUI?.NotifyLiveEdited();
         }
 
-        private void FinalizeGesture()
+        private void OnStepValueChanged(int r, int c, int v)
         {
-            if (_gestureCells.Count == 0) return;
+            EnsureRunArrays();
 
-            var unique = new HashSet<int>(_gestureCells);
-            var ordered = new List<int>(unique);
-            ordered.Sort();
-
-            if (ordered.Count == 1)
-            {
-                int idx = ordered[0];
-                FromIndex(idx, out int r, out int c);
-                if (_step.GetValue(r, c) > 0)
-                    SetSingleTapNote(idx);
-            }
-            else
-            {
-                SetDraggedRun(ordered, _gestureValueId);
-            }
-
-            _gestureCells.Clear();
-            _gestureValueId = -1;
-            _lastGestureIndex = -999;
-            _lastGestureTime = -999f;
+            int index = ToIndex(r, c);
 
             _seqDirty = true;
-        }
 
-        private void RestartGestureFinalizeTimer()
-        {
-            _gestureFinalizeJob?.Pause();
-            if (_step == null) return;
-
-            _gestureFinalizeJob = _step.schedule.Execute(() =>
+            if (v <= 0)
             {
-                FinalizeGesture();
-            }).StartingIn((long)(GestureGapSeconds * 1000f));
+                // Erase: clear run metadata immediately (stroke end will also do it, but keep in sync)
+                ClearRunAtOrContaining(index);
+                SaveStepGrid();
+
+                if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+                _chainUI?.NotifyLiveEdited();
+                return;
+            }
+
+            // During an active paint stroke, register this cell as a single sixteenth for now.
+            // OnStepStrokeEnded will compute the final run lengths from the full cell list.
+            SetSingleTapNote(index);
+
+            PlayHelmValueId(v, 1.0f, 0.18f);
         }
 
         private void RebuildHelmSequenceFromGrid()
@@ -359,60 +408,9 @@ namespace KMusic.UI
 
         private void OnDisable()
         {
-            FinalizeGesture();
             SaveStepGrid();
-            _gestureFinalizeJob?.Pause();
             _rebindLoop?.Pause();
             Unbind();
-        }
-
-        private void OnStepValueChanged(int r, int c, int v)
-        {
-            EnsureRunArrays();
-
-            int index = ToIndex(r, c);
-            float now = Time.unscaledTime;
-
-            _seqDirty = true;
-
-            if (v <= 0)
-            {
-                ClearRunAtOrContaining(index);
-                SaveStepGrid();
-
-                if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
-                _chainUI?.NotifyLiveEdited();
-                return;
-            }
-
-            bool continuesGesture =
-                _gestureCells.Count > 0 &&
-                v == _gestureValueId &&
-                (now - _lastGestureTime) <= GestureGapSeconds &&
-                IsAdjacentStep(index, _lastGestureIndex);
-
-            if (!continuesGesture)
-            {
-                FinalizeGesture();
-                _gestureCells.Clear();
-                _gestureValueId = v;
-            }
-
-            if (!_gestureCells.Contains(index))
-                _gestureCells.Add(index);
-
-            _gestureValueId = v;
-            _lastGestureIndex = index;
-            _lastGestureTime = now;
-
-            RestartGestureFinalizeTimer();
-
-            SaveStepGrid();
-
-            if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
-            _chainUI?.NotifyLiveEdited();
-
-            PlayHelmValueId(v, 1.0f, 0.18f);
         }
 
         private void CacheAllPaletteValues()
@@ -442,18 +440,18 @@ namespace KMusic.UI
             {
                 _step.OnCellClicked -= OnStepClicked;
                 _step.OnCellValueChanged -= OnStepValueChanged;
+                _step.OnStrokeStarted -= OnStepStrokeStarted;
+                _step.OnStrokeEnded -= OnStepStrokeEnded;
             }
 
             _seqRebuildJob?.Pause();
             _seqRebuildJob = null;
             _seqDirty = false;
 
-            _gestureFinalizeJob?.Pause();
-            _gestureFinalizeJob = null;
-            _gestureCells.Clear();
-            _gestureValueId = -1;
-            _lastGestureIndex = -999;
-            _lastGestureTime = -999f;
+            // Reset stroke state
+            _strokeActive = false;
+            _strokeValueId = -1;
+            _strokeRunsByRow.Clear();
 
             _piano = null;
             _step = null;
@@ -852,7 +850,6 @@ namespace KMusic.UI
         public void RebuildSynthSequenceNow()
         {
             if (helmSequencer == null) return;
-            FinalizeGesture();
             RebuildHelmSequenceFromGrid();
             helmSequencer.enabled = false;
             helmSequencer.enabled = true;
