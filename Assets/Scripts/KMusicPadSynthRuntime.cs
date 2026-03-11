@@ -66,6 +66,24 @@ namespace KMusic
         private int _index;
         private HelmPatch _runtimePatch;
 
+        public event Action<int, string> PresetApplied;
+
+        public int CurrentPresetIndex => _index;
+
+        public string CurrentPresetRelPath
+        {
+            get
+            {
+                if (_all != null && _all.Count > 0 && _index >= 0 && _index < _all.Count)
+                    return _all[_index].relPath;
+
+                return ProjectPrefs.GetString(PrefKey_PadPresetRelPath, "");
+            }
+        }
+
+        private int _pendingPresetIndex = -1;
+        private string _pendingPresetRelPath = null;
+
         private class PresetEntry
         {
             public string relPath;
@@ -620,10 +638,51 @@ namespace KMusic
 
         private void SaveCurrentPresetChoice()
         {
-            if (_all.Count == 0) return;
+            if (_all == null || _all.Count == 0) return;
+
             ProjectPrefs.SetInt(PrefKey_PadPresetIndex, _index);
             ProjectPrefs.SetString(PrefKey_PadPresetRelPath, _all[_index].relPath ?? "");
             ProjectPrefs.Save();
+        }
+
+        public void ApplyPresetChoice(int index, string relPath)
+        {
+            _pendingPresetIndex = index;
+            _pendingPresetRelPath = relPath;
+
+            if (_all != null && _all.Count > 0)
+                ApplyPendingPresetNow();
+        }
+
+        private void ApplyPendingPresetNow()
+        {
+            if (_all == null || _all.Count == 0) return;
+
+            if (!string.IsNullOrEmpty(_pendingPresetRelPath))
+            {
+                for (int i = 0; i < _all.Count; i++)
+                {
+                    if (string.Equals(_all[i].relPath, _pendingPresetRelPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _index = i;
+                        _pendingPresetIndex = -1;
+                        _pendingPresetRelPath = null;
+                        UpdatePatchUI();
+                        SaveCurrentPresetChoice();
+                        StartCoroutine(LoadAndApplyPreset(_all[_index].relPath));
+                        return;
+                    }
+                }
+            }
+
+            if (_pendingPresetIndex >= 0)
+                _index = Mathf.Clamp(_pendingPresetIndex, 0, _all.Count - 1);
+
+            _pendingPresetIndex = -1;
+            _pendingPresetRelPath = null;
+            UpdatePatchUI();
+            SaveCurrentPresetChoice();
+            StartCoroutine(LoadAndApplyPreset(_all[_index].relPath));
         }
 
         private void RestorePresetChoice()
@@ -694,6 +753,12 @@ namespace KMusic
                 yield break;
             }
 
+            if (_pendingPresetIndex >= 0 || !string.IsNullOrEmpty(_pendingPresetRelPath))
+            {
+                ApplyPendingPresetNow();
+                yield break;
+            }
+
             RestorePresetChoice();
             _index = Mathf.Clamp(_index, 0, _all.Count - 1);
             UpdatePatchUI();
@@ -720,6 +785,7 @@ namespace KMusic
             yield return null;
 
             PullHelmToBus();
+            PresetApplied?.Invoke(_index, relPath);
         }
 
         private static IEnumerator ReadStreamingText(string relativePath, Action<string> onDone)

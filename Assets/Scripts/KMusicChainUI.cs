@@ -367,6 +367,33 @@ public class KMusicChainUI : MonoBehaviour
         }
     }
 
+    public void FlushLiveStateToPattern()
+    {
+        RefreshRuntimeRefsIfNeeded();
+
+        int targetPatternId = GetActiveEditPatternId();
+        if (targetPatternId < 0)
+            targetPatternId = ResolveSelectedPatternId();
+
+        if (targetPatternId < 0)
+            targetPatternId = 0;
+
+        try
+        {
+            var snap = CaptureLiveToPattern();
+            PatternBank.Save(targetPatternId, snap);
+
+            if (_selectedPatternId != targetPatternId)
+                _selectedPatternId = targetPatternId;
+
+            Debug.Log($"[CHAIN] FlushLiveStateToPattern -> saved pid={targetPatternId}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[CHAIN] FlushLiveStateToPattern failed: {ex.Message}");
+        }
+    }
+
     private int GetActiveEditPatternId()
     {
         if (_chain != null && _chain.enabled && _drums != null && _drums.IsPlaying && _lastAppliedPattern >= 0)

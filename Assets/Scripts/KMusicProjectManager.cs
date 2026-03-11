@@ -54,6 +54,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
     private readonly List<BusPair> _pendingSynthBusRestore = new();
 
+    private KMusicPadSynthRuntime _padSynthRuntime;
+
     private void Awake()
     {
         Screen.sleepTimeout = SleepTimeout.NeverSleep; // Screentimeout: NEVER
@@ -84,6 +86,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_keys == null) _keys = FindObjectOfType<KMusic.UI.KMusicPianoRollStepPainter>();
         if (_pad == null) _pad = FindObjectOfType<KMusic.KMusicChordTrackUI>();
         if (_helm == null) _helm = FindObjectOfType<KMusicHelmPresetPickerUI>();
+        if (_padSynthRuntime == null) _padSynthRuntime = FindObjectOfType<KMusicPadSynthRuntime>();
         if (_player == null) _player = FindObjectOfType<KMusicPlayerUI>();
         if (_chainUi == null) _chainUi = FindObjectOfType<KMusicChainUI>();
     }
@@ -577,7 +580,16 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
     [Serializable] private class SampleState { public int[] stepGrid; }
     [Serializable] private class SeqState { public int[] stepGrid; }
-    [Serializable] private class PadState { public int[] stepGrid; public int chordMode; }
+
+    [Serializable]
+    private class PadState
+    {
+        public int[] stepGrid;
+        public int chordMode;
+        public string presetRelPath;
+        public int presetIndex;
+    }
+
     [Serializable] private class SynthState { public string presetRelPath; public int presetIndex; }
     [Serializable] private class PlayerState { public string lastTrackId; }
     [Serializable] private class ChopState { public string resourcesPath; public float[] sliceStart01; public float[] sliceEnd01; }
@@ -644,6 +656,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
         EnsureProjectsDir();
         FindRuntimeRefs();
 
+        if (_chainUi != null)
+            _chainUi.FlushLiveStateToPattern();
+
         var data = new ProjectData
         {
             ver = ProjectVer,
@@ -680,6 +695,12 @@ public sealed class KMusicProjectManager : MonoBehaviour
             data.pad.chordMode = _pad.CaptureChordMode();
         }
 
+        if (_padSynthRuntime != null)
+        {
+            data.pad.presetRelPath = _padSynthRuntime.CurrentPresetRelPath;
+            data.pad.presetIndex = _padSynthRuntime.CurrentPresetIndex;
+        }
+
         if (_helm != null)
         {
             data.synth.presetRelPath = _helm.CurrentPresetRelPath;
@@ -709,7 +730,6 @@ public sealed class KMusicProjectManager : MonoBehaviour
             Debug.LogWarning("[Project] Save failed: " + e.Message);
         }
     }
-
     public void LoadProject(int slot, bool silent = false)
     {
         EnsureProjectsDir();
@@ -742,8 +762,6 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
         try
         {
-            // hard clear current live state first so nothing from the previous
-            // project survives if the new one has fewer active cells
             if (_drums != null)
             {
                 _drums.ApplyDrumMask(null);
@@ -837,6 +855,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 _pad.RebuildSequenceNow();
             }
 
+            if (_padSynthRuntime != null && data.pad != null)
+                _padSynthRuntime.ApplyPresetChoice(data.pad.presetIndex, data.pad.presetRelPath);
+
             if (_helm != null && data.synth != null)
             {
                 if (_pendingSynthBusRestore.Count > 0)
@@ -861,44 +882,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 _player.RefreshAppliedMarkersFromState();
             }
 
-            int selectedPatternId = 0;
             if (_chainUi != null)
-            {
                 _chainUi.ReloadFromSaved();
-                selectedPatternId = _chainUi.ResolveSelectedPatternId();
-            }
-            else if (data.chain != null && data.chain.slots != null)
-            {
-                int cursor = Mathf.Clamp(data.chain.cursor, 0, data.chain.slots.Length - 1);
-                if (cursor >= 0 && cursor < data.chain.slots.Length && data.chain.slots[cursor] >= 0)
-                    selectedPatternId = data.chain.slots[cursor];
-                else
-                {
-                    for (int i = 0; i < data.chain.slots.Length; i++)
-                    {
-                        if (data.chain.slots[i] >= 0)
-                        {
-                            selectedPatternId = data.chain.slots[i];
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // The project file stores the current live sampler/keys state separately from the
-            // pattern bank. Re-seed the selected/current pattern with the just-loaded live state
-            // so the first chain handoff inside the same app session does not snap back to an
-            // older blank pattern entry.
-            PatternBank.Save(selectedPatternId, new PatternData
-            {
-                drumMask = _drums != null ? _drums.CaptureDrumMask() : null,
-                sampleSteps = _samplerUi != null
-                    ? _samplerUi.CaptureSampleStepsFlat()
-                    : (_drums != null ? _drums.CaptureSampleStepsFlat() : null),
-                seqSteps = _keys != null ? _keys.CaptureSeqStepsFlat() : null,
-                padSteps = _pad != null ? _pad.CapturePadStepsFlat() : null,
-                padChordMode = _pad != null ? _pad.CaptureChordMode() : 0
-            });
         }
         finally
         {
@@ -907,9 +892,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (_keys != null) _keys.SetAllowSaving(true);
             if (_pad != null) _pad.SetAllowSaving(true);
         }
-    }
-
-    private void ResetToBlank()
+    }    private void ResetToBlank()
     {
         if (_drums != null)
         {
