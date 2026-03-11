@@ -109,13 +109,25 @@ namespace KMusic
                     ApplyPadStepsFlat(_cachedFlat);
                 else
                 {
-                    var loaded = KMusicSaveState.LoadIntArray(PrefKey_PadStepGrid, _step.RowCount * _step.ColCount);
-                    if (loaded != null)
-                        ApplyPadStepsFlat(loaded);
+                    int expected = _step.RowCount * _step.ColCount;
+                    var loaded = KMusicSaveState.LoadIntArray(PrefKey_PadStepGrid, expected);
+                    var runs = KMusicSaveState.LoadIntArray(PrefKey_PadStepGrid + ".runs", expected);
+
+                    if (loaded != null && loaded.Length == expected)
+                    {
+                        ApplyPadStepsFlat(loaded, runs);
+                    }
                     else
                     {
                         _step.ClearAll();
                         _step.RefreshAll();
+
+                        EnsureRunArrays();
+                        for (int i = 0; i < _noteRunLengthAtStart.Length; i++)
+                        {
+                            _noteRunLengthAtStart[i] = 0;
+                            _noteRunStartForCell[i] = -1;
+                        }
                     }
                 }
 
@@ -442,16 +454,48 @@ namespace KMusic
 
         private void SaveGrid()
         {
-            if (!_allowSaving || _step == null) return;
+            if (_step == null) return;
 
-            var flat = _step.ExportValuesFlat();
+            int[] flat = _step.ExportValuesFlat();
+            if (flat == null) return;
+
             CacheFlat(flat);
-            KMusicSaveState.SaveIntArray(PrefKey_PadStepGrid, flat);
-            ProjectPrefs.SetInt(PrefKey_PadChordType, (int)_mode);
-            ProjectPrefs.Save();
-        }
 
-        private void CacheFlat(int[] flat)
+            if (_allowSaving)
+            {
+                KMusicSaveState.SaveIntArray(PrefKey_PadStepGrid, flat);
+
+                int total = _step.RowCount * _step.ColCount;
+                int[] runStarts = new int[total];
+
+                EnsureRunArrays();
+
+                for (int i = 0; i < total; i++)
+                    runStarts[i] = (_noteRunLengthAtStart != null && i < _noteRunLengthAtStart.Length)
+                        ? _noteRunLengthAtStart[i]
+                        : 0;
+
+                KMusicSaveState.SaveIntArray(PrefKey_PadStepGrid + ".runs", runStarts);
+                ProjectPrefs.Save();
+            }
+
+            int cols = _step.ColCount;
+
+            for (int i = 0; i < flat.Length; i++)
+            {
+                if (flat[i] <= 0) continue;
+                if (_noteRunStartForCell != null && _noteRunStartForCell[i] >= 0 && _noteRunStartForCell[i] != i)
+                    continue;
+
+                int r = i / cols;
+                int c = i % cols;
+                int len = (_noteRunLengthAtStart != null && i < _noteRunLengthAtStart.Length && _noteRunLengthAtStart[i] > 0)
+                    ? _noteRunLengthAtStart[i]
+                    : 1;
+
+                Debug.Log($"[PAD SAVE] row={r} col={c} len={len} value={flat[i]}");
+            }
+        }        private void CacheFlat(int[] flat)
         {
             if (flat == null)
             {
@@ -475,6 +519,13 @@ namespace KMusic
         }
 
         public void ApplyPadStepsFlat(int[] flat)
+        {
+            int expected = (_step != null) ? (_step.RowCount * _step.ColCount) : (flat != null ? flat.Length : 0);
+            int[] runs = KMusicSaveState.LoadIntArray(PrefKey_PadStepGrid + ".runs", expected);
+            ApplyPadStepsFlat(flat, runs);
+        }
+
+        public void ApplyPadStepsFlat(int[] flat, int[] runs)
         {
             CacheFlat(flat);
             _preferCachedOnNextBind = true;
@@ -500,12 +551,51 @@ namespace KMusic
                 _noteRunLengthAtStart[i] = 0;
                 _noteRunStartForCell[i] = -1;
             }
-            for (int i = 0; i < flat.Length; i++)
+
+            int total = flat.Length;
+            int cols = _step.ColCount;
+
+            bool usedExplicitRuns = false;
+
+            if (runs != null && runs.Length == total)
             {
-                if (flat[i] > 0)
+                for (int i = 0; i < total; i++)
                 {
-                    _noteRunLengthAtStart[i] = 1;
-                    _noteRunStartForCell[i] = i;
+                    int value = flat[i];
+                    int len = runs[i];
+
+                    if (value <= 0 || len <= 0)
+                        continue;
+
+                    _noteRunLengthAtStart[i] = len;
+
+                    for (int k = 0; k < len && i + k < total; k++)
+                    {
+                        _noteRunStartForCell[i + k] = i;
+                        if (k > 0)
+                            _noteRunLengthAtStart[i + k] = 0;
+                    }
+
+                    int r = i / cols;
+                    int c = i % cols;
+                    Debug.Log($"[PAD LOAD] row={r} col={c} len={len} value={value}");
+                    usedExplicitRuns = true;
+                }
+            }
+
+            if (!usedExplicitRuns)
+            {
+                for (int i = 0; i < total; i++)
+                {
+                    if (flat[i] > 0)
+                    {
+                        _noteRunLengthAtStart[i] = 1;
+                        _noteRunStartForCell[i] = i;
+
+                        int r = i / cols;
+                        int c = i % cols;
+                        Debug.Log($"[PAD LOAD] row={r} col={c} len=1 value={flat[i]}");
+                    }
                 }
             }
 
@@ -514,10 +604,15 @@ namespace KMusic
             if (_allowSaving)
             {
                 KMusicSaveState.SaveIntArray(PrefKey_PadStepGrid, flat);
+
+                int[] runStarts = new int[total];
+                for (int i = 0; i < total; i++)
+                    runStarts[i] = _noteRunLengthAtStart[i];
+
+                KMusicSaveState.SaveIntArray(PrefKey_PadStepGrid + ".runs", runStarts);
                 ProjectPrefs.Save();
             }
         }
-
         public int CaptureChordMode() => (int)_mode;
 
         public void ApplyChordMode(int mode)

@@ -688,14 +688,51 @@ namespace KMusic.UI
 
         private void SaveStepGrid()
         {
-            if (!_allowSaving) return;
             if (_step == null) return;
 
-            var flat = _step.ExportValuesFlat();
-            CacheSeqFlat(flat);
-            PersistSeqFlat(flat);
-        }
+            int[] flat = _step.ExportValuesFlat();
+            if (flat == null) return;
 
+            CacheSeqFlat(flat);
+
+            if (_allowSaving)
+            {
+                PersistSeqFlat(flat);
+
+                int total = _step.RowCount * _step.ColCount;
+                int[] runStarts = new int[total];
+
+                EnsureRunArrays();
+
+                for (int i = 0; i < total; i++)
+                    runStarts[i] = (_noteRunLengthAtStart != null && i < _noteRunLengthAtStart.Length)
+                        ? _noteRunLengthAtStart[i]
+                        : 0;
+
+                KMusic.KMusicSaveState.SaveIntArray(PrefKey_SeqStepGrid + ".runs", runStarts);
+                ProjectPrefs.Save();
+            }
+
+            EnsureRunArrays();
+
+            int rows = _step.RowCount;
+            int cols = _step.ColCount;
+
+            for (int i = 0; i < flat.Length; i++)
+            {
+                if (flat[i] <= 0) continue;
+                if (_noteRunStartForCell != null && _noteRunStartForCell[i] >= 0 && _noteRunStartForCell[i] != i)
+                    continue;
+
+                int r = i / cols;
+                int c = i % cols;
+                int len = (_noteRunLengthAtStart != null && i < _noteRunLengthAtStart.Length && _noteRunLengthAtStart[i] > 0)
+                    ? _noteRunLengthAtStart[i]
+                    : 1;
+
+                Debug.Log($"[SEQ SAVE] row={r} col={c} len={len} value={flat[i]}");
+            }
+        }
         private int ExpectedSeqFlatLength()
         {
             return _step != null ? _step.RowCount * _step.ColCount : 16;
@@ -727,35 +764,27 @@ namespace KMusic.UI
         {
             if (_step == null) return;
 
-            var v = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SeqStepGrid, _step.RowCount * _step.ColCount);
-            if (v == null) return;
+            int expected = _step.RowCount * _step.ColCount;
+            int[] flat = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SeqStepGrid, expected);
 
-            CacheSeqFlat(v);
-
-            EnsureRunArrays();
-
-            for (int i = 0; i < _noteRunLengthAtStart.Length; i++)
+            if (flat == null || flat.Length != expected)
             {
-                _noteRunLengthAtStart[i] = 0;
-                _noteRunStartForCell[i] = -1;
-            }
+                _step.ClearAll();
+                _step.RefreshAll();
 
-            _step.ImportValuesFlat(v, fireEvent: false);
-            _step.RefreshAll();
-
-            // Default imported notes to individual taps.
-            for (int i = 0; i < v.Length; i++)
-            {
-                if (v[i] > 0)
+                EnsureRunArrays();
+                for (int i = 0; i < _noteRunLengthAtStart.Length; i++)
                 {
-                    _noteRunLengthAtStart[i] = 1;
-                    _noteRunStartForCell[i] = i;
+                    _noteRunLengthAtStart[i] = 0;
+                    _noteRunStartForCell[i] = -1;
                 }
+
+                return;
             }
 
-            Debug.Log($"LOAD {PrefKey_SeqStepGrid} hasKey={ProjectPrefs.HasKey(PrefKey_SeqStepGrid)}");
+            int[] runs = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SeqStepGrid + ".runs", expected);
+            ApplySeqStepsFlat(flat, runs);
         }
-
         private void CacheValue(int valueId, string label, Color color)
         {
             if (valueId <= 0) return;
@@ -811,11 +840,15 @@ namespace KMusic.UI
 
         public void ApplySeqStepsFlat(int[] flat)
         {
+            int expected = ExpectedSeqFlatLength();
+            int[] runs = KMusic.KMusicSaveState.LoadIntArray(PrefKey_SeqStepGrid + ".runs", expected);
+            ApplySeqStepsFlat(flat, runs);
+        }
+
+        public void ApplySeqStepsFlat(int[] flat, int[] runs)
+        {
             CacheSeqFlat(flat);
             _preferCachedOnNextBind = true;
-
-            if (flat != null && flat.Length == ExpectedSeqFlatLength())
-                PersistSeqFlat(flat);
 
             if (_step == null) return;
 
@@ -831,23 +864,74 @@ namespace KMusic.UI
             {
                 _step.ClearAll();
                 _step.RefreshAll();
+                _sequenceBuilt = false;
                 return;
             }
 
             _step.ImportValuesFlat(flat, fireEvent: false);
             _step.RefreshAll();
 
-            for (int i = 0; i < flat.Length; i++)
+            int total = flat.Length;
+            int cols = _step.ColCount;
+
+            bool usedExplicitRuns = false;
+
+            if (runs != null && runs.Length == total)
             {
-                if (flat[i] > 0)
+                for (int i = 0; i < total; i++)
                 {
-                    _noteRunLengthAtStart[i] = 1;
-                    _noteRunStartForCell[i] = i;
+                    int value = flat[i];
+                    int len = runs[i];
+
+                    if (value <= 0 || len <= 0)
+                        continue;
+
+                    _noteRunLengthAtStart[i] = len;
+
+                    for (int k = 0; k < len && i + k < total; k++)
+                    {
+                        _noteRunStartForCell[i + k] = i;
+                        if (k > 0)
+                            _noteRunLengthAtStart[i + k] = 0;
+                    }
+
+                    int r = i / cols;
+                    int c = i % cols;
+                    Debug.Log($"[SEQ LOAD] row={r} col={c} len={len} value={value}");
+                    usedExplicitRuns = true;
                 }
             }
-        }
 
-        public void RebuildSynthSequenceNow()
+            if (!usedExplicitRuns)
+            {
+                for (int i = 0; i < total; i++)
+                {
+                    if (flat[i] > 0)
+                    {
+                        _noteRunLengthAtStart[i] = 1;
+                        _noteRunStartForCell[i] = i;
+
+                        int r = i / cols;
+                        int c = i % cols;
+                        Debug.Log($"[SEQ LOAD] row={r} col={c} len=1 value={flat[i]}");
+                    }
+                }
+            }
+
+            if (_allowSaving)
+            {
+                PersistSeqFlat(flat);
+
+                int[] runStarts = new int[total];
+                for (int i = 0; i < total; i++)
+                    runStarts[i] = _noteRunLengthAtStart[i];
+
+                KMusic.KMusicSaveState.SaveIntArray(PrefKey_SeqStepGrid + ".runs", runStarts);
+                ProjectPrefs.Save();
+            }
+
+            _sequenceBuilt = false;
+        }        public void RebuildSynthSequenceNow()
         {
             if (helmSequencer == null) return;
             RebuildHelmSequenceFromGrid();
