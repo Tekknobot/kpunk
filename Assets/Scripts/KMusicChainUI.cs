@@ -84,17 +84,53 @@ public class KMusicChainUI : MonoBehaviour
             _chain = ChainState.LoadOrCreate();
             _playBar = 0;
             _lastAppliedPattern = int.MinValue;
-            _selectedPatternId = ResolveSelectedPatternId();
 
             FindRuntimeRefs();
+
+            int pid = -1;
+
+            if (_chain != null && _chain.slots != null && _chain.length > 0)
+            {
+                int bar = Mathf.Clamp(_playBar, 0, _chain.length - 1);
+                pid = _chain.GetSlot(bar);
+            }
+
+            if (pid < 0)
+                pid = ResolveSelectedPatternId();
+
+            // don't fall into blank pattern 0 unless it is truly intentional
+            if (pid <= 0)
+            {
+                int fallback = FindFirstUsedPatternInChain();
+                if (fallback > 0)
+                    pid = fallback;
+            }
+
+            _selectedPatternId = pid;
             RefreshAllUI();
+
+            if (pid >= 0)
+                LoadPatternToLive(pid);
         }
         catch (Exception ex)
         {
             Debug.LogWarning($"[CHAIN] ReloadFromSaved failed: {ex.Message}");
         }
     }
+    private int FindFirstUsedPatternInChain()
+    {
+        if (_chain == null || _chain.slots == null) return -1;
 
+        int len = Mathf.Clamp(_chain.length, 0, _chain.slots.Length);
+        for (int i = 0; i < len; i++)
+        {
+            int pid = _chain.GetSlot(i);
+            if (pid > 0)
+                return pid;
+        }
+
+        return -1;
+    }    
     public int ResolveSelectedPatternId()
     {
         PatternBank.EnsureDefaultPatternExists();
@@ -334,12 +370,25 @@ public class KMusicChainUI : MonoBehaviour
         SetStatus($"Deleted {pname}");
     }
 
+    private bool _suspendLivePatternWrites = false;
+
+    public void SetSuspendLivePatternWrites(bool value)
+    {
+        _suspendLivePatternWrites = value;
+    }
+
     /// <summary>
     /// Called by sequencers when a cell is painted/erased.
     /// Saves the currently selected pattern immediately.
     /// </summary>
     public void NotifyLiveEdited()
     {
+        if (_suspendLivePatternWrites)
+        {
+            Debug.Log("[CHAIN] NotifyLiveEdited skipped (load in progress)");
+            return;
+        }        
+
         if (_suppressAutoSave) return;
 
         RefreshRuntimeRefsIfNeeded();
@@ -369,6 +418,12 @@ public class KMusicChainUI : MonoBehaviour
 
     public void FlushLiveStateToPattern()
     {
+        if (_suspendLivePatternWrites)
+        {
+            Debug.Log("[CHAIN] FlushLiveStateToPattern skipped (load in progress)");
+            return;
+        }  
+
         RefreshRuntimeRefsIfNeeded();
 
         int targetPatternId = GetActiveEditPatternId();
@@ -557,11 +612,17 @@ public class KMusicChainUI : MonoBehaviour
     {
         RefreshRuntimeRefsIfNeeded();
 
-        _selectedPatternId = patternId;
         var p = PatternBank.Load(patternId);
+        if (p == null)
+        {
+            Debug.LogWarning($"[CHAIN] LoadPatternToLive missing pattern pid={patternId}");
+            return;
+        }
+
+        _selectedPatternId = patternId;
 
         string padPreview = "null";
-        if (p != null && p.padSteps != null)
+        if (p.padSteps != null)
         {
             int take = Mathf.Min(8, p.padSteps.Length);
             var tmp = new StringBuilder();
@@ -573,55 +634,74 @@ public class KMusicChainUI : MonoBehaviour
             padPreview = $"len={p.padSteps.Length} first={tmp}";
         }
 
-        Debug.Log($"[CHAIN] LoadPatternToLive pid={patternId} padRef={(_pad != null)} padData={padPreview} chordMode={(p != null ? p.padChordMode : -999)}");
+        Debug.Log($"[CHAIN] LoadPatternToLive pid={patternId} padRef={(_pad != null)} padData={padPreview} chordMode={p.padChordMode}");
+
+        bool prevSuppress = _suppressAutoSave;
+        bool prevSuspendWrites = _suspendLivePatternWrites;
 
         _suppressAutoSave = true;
+        _suspendLivePatternWrites = true;
 
-        if (_drums != null) _drums.SetAllowSaving(false);
-        if (_samplerUi != null) _samplerUi.SetAllowSaving(false);
-        if (_keys != null) _keys.SetAllowSaving(false);
-        if (_pad != null) _pad.SetAllowSaving(false);
-
-        if (_drums != null)
+        try
         {
-            _drums.ApplyDrumMask(p.drumMask);
-            _drums.ApplySampleStepsFlat(p.sampleSteps);
+            if (_drums != null) _drums.SetAllowSaving(false);
+            if (_samplerUi != null) _samplerUi.SetAllowSaving(false);
+            if (_keys != null) _keys.SetAllowSaving(false);
+            if (_pad != null) _pad.SetAllowSaving(false);
+
+            try
+            {
+                if (_drums != null)
+                {
+                    if (p.drumMask != null)
+                        _drums.ApplyDrumMask(p.drumMask);
+
+                    if (p.sampleSteps != null)
+                        _drums.ApplySampleStepsFlat(p.sampleSteps);
+                }
+
+                if (_samplerUi != null && p.sampleSteps != null)
+                    _samplerUi.ApplySampleStepsFlat(p.sampleSteps);
+
+                if (_keys != null)
+                {
+                    Debug.Log($"[CHAIN] applying KEYS pid={patternId}");
+                    if (p.seqSteps != null)
+                        _keys.ApplySeqStepsFlat(p.seqSteps);
+                    _keys.RebuildSynthSequenceNow();
+                }
+
+                if (_pad != null)
+                {
+                    Debug.Log($"[CHAIN] applying PAD pid={patternId}");
+                    if (p.padSteps != null)
+                        _pad.ApplyPadStepsFlat(p.padSteps);
+                    _pad.ApplyChordMode(p.padChordMode);
+                    _pad.RebuildPadSequenceNow();
+                    Debug.Log($"[CHAIN] applied PAD pid={patternId}");
+                }
+                else
+                {
+                    Debug.LogWarning($"[CHAIN] PAD REF NULL during LoadPatternToLive pid={patternId}");
+                }
+
+                _lastAppliedPattern = patternId;
+                RefreshPatternUI();
+            }
+            finally
+            {
+                if (_drums != null) _drums.SetAllowSaving(true);
+                if (_samplerUi != null) _samplerUi.SetAllowSaving(true);
+                if (_keys != null) _keys.SetAllowSaving(true);
+                if (_pad != null) _pad.SetAllowSaving(true);
+            }
         }
-
-        if (_samplerUi != null)
-            _samplerUi.ApplySampleStepsFlat(p.sampleSteps);
-
-        if (_keys != null)
+        finally
         {
-            Debug.Log($"[CHAIN] applying KEYS pid={patternId}");
-            _keys.ApplySeqStepsFlat(p.seqSteps);
-            _keys.RebuildSynthSequenceNow();
+            _suppressAutoSave = prevSuppress;
+            _suspendLivePatternWrites = prevSuspendWrites;
         }
-
-        if (_pad != null)
-        {
-            Debug.Log($"[CHAIN] applying PAD pid={patternId}");
-            _pad.ApplyPadStepsFlat(p.padSteps);
-            _pad.ApplyChordMode(p.padChordMode);
-            _pad.RebuildPadSequenceNow();
-            Debug.Log($"[CHAIN] applied PAD pid={patternId}");
-        }
-        else
-        {
-            Debug.LogWarning($"[CHAIN] PAD REF NULL during LoadPatternToLive pid={patternId}");
-        }
-
-        if (_drums != null) _drums.SetAllowSaving(true);
-        if (_samplerUi != null) _samplerUi.SetAllowSaving(true);
-        if (_keys != null) _keys.SetAllowSaving(true);
-        if (_pad != null) _pad.SetAllowSaving(true);
-
-        _suppressAutoSave = false;
-
-        _lastAppliedPattern = patternId;
-        RefreshPatternUI();
     }
-
     private void OnBarStart(int barCount)
     {
         if (_chain == null) return;

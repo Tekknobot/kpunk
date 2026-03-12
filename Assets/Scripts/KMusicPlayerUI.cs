@@ -99,11 +99,19 @@ public class KMusicPlayerUI : MonoBehaviour
 
     public void SetLastTrackId(string id)
     {
-        if (string.IsNullOrEmpty(id)) return;
+        if (string.IsNullOrEmpty(id))
+            return;
+
         SaveLastTrackId(id);
 
         try
         {
+            if (audioSource == null)
+            {
+                Debug.Log("[Player] SetLastTrackId deferred: audioSource not ready");
+                return;
+            }
+
             LoadTrackById(id);
         }
         catch (Exception e)
@@ -122,7 +130,13 @@ public class KMusicPlayerUI : MonoBehaviour
         if (string.IsNullOrEmpty(id))
             return;
 
-#if UNITY_ANDROID && !UNITY_EDITOR
+        if (audioSource == null)
+        {
+            Debug.Log("[Player] LoadTrackById aborted: audioSource not ready");
+            return;
+        }
+
+    #if UNITY_ANDROID && !UNITY_EDITOR
         if (id.StartsWith("uri:"))
         {
             string want = id.Substring(4);
@@ -139,18 +153,24 @@ public class KMusicPlayerUI : MonoBehaviour
             }
             return;
         }
-#endif
+    #endif
 
         if (id.StartsWith("res:"))
         {
             string wantPath = id.Substring(4);
             RefreshClipList();
+
             if (_clips != null && _clips.Length > 0)
             {
-                string wantName = wantPath.Contains("/") ? wantPath.Substring(wantPath.LastIndexOf('/') + 1) : wantPath;
+                string wantName = wantPath.Contains("/") 
+                    ? wantPath.Substring(wantPath.LastIndexOf('/') + 1) 
+                    : wantPath;
+
                 for (int i = 0; i < _clips.Length; i++)
                 {
-                    if (_clips[i] != null && (_clips[i].name == wantName || ($"{resourcesFolder}/" + _clips[i].name) == wantPath))
+                    if (_clips[i] != null &&
+                        (_clips[i].name == wantName ||
+                        ($"{resourcesFolder}/" + _clips[i].name) == wantPath))
                     {
                         LoadClipByIndex(i);
                         return;
@@ -159,12 +179,12 @@ public class KMusicPlayerUI : MonoBehaviour
             }
         }
     }
-
-private void Awake()
-    {
-        if (!doc) doc = GetComponent<UIDocument>();
-        EnsureDedicatedPlayerAudioSource();
-    }
+    
+    private void Awake()
+        {
+            if (!doc) doc = GetComponent<UIDocument>();
+            EnsureDedicatedPlayerAudioSource();
+        }
 
     private void EnsureDedicatedPlayerAudioSource()
     {

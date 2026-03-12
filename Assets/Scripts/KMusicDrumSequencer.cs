@@ -1439,6 +1439,11 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         if (verbose) Debug.Log("[KMusicDrumSequencer] STOP");
     }
 
+    public void StopPlayback()
+    {
+        OnStopClicked();
+    }
+
     private void Update()
     {
         if (!_playing || _sampler == null) return;

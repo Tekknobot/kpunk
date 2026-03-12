@@ -755,6 +755,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
         if (data == null) return;
 
+        if (_chainUi != null)
+            _chainUi.SetSuspendLivePatternWrites(true);
+
         if (_drums != null) _drums.SetAllowSaving(false);
         if (_samplerUi != null) _samplerUi.SetAllowSaving(false);
         if (_keys != null) _keys.SetAllowSaving(false);
@@ -762,6 +765,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
         try
         {
+            if (_drums != null && _drums.IsPlaying)
+                _drums.StopPlayback();
+
             if (_drums != null)
             {
                 _drums.ApplyDrumMask(null);
@@ -781,7 +787,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (_pad != null)
             {
                 _pad.ApplyPadStepsFlat(null);
-                _pad.RebuildSequenceNow();
+                _pad.RebuildPadSequenceNow();
             }
 
             KMusicChopState.ClearApplied();
@@ -852,7 +858,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             {
                 _pad.ApplyPadStepsFlat(data.pad.stepGrid);
                 _pad.ApplyChordMode(data.pad.chordMode);
-                _pad.RebuildSequenceNow();
+                _pad.RebuildPadSequenceNow();
             }
 
             if (_padSynthRuntime != null && data.pad != null)
@@ -887,12 +893,17 @@ public sealed class KMusicProjectManager : MonoBehaviour
         }
         finally
         {
+            if (_chainUi != null)
+                _chainUi.SetSuspendLivePatternWrites(false);
+
             if (_drums != null) _drums.SetAllowSaving(true);
             if (_samplerUi != null) _samplerUi.SetAllowSaving(true);
             if (_keys != null) _keys.SetAllowSaving(true);
             if (_pad != null) _pad.SetAllowSaving(true);
         }
-    }    private void ResetToBlank()
+    }
+
+    private void ResetToBlank()
     {
         if (_drums != null)
         {
