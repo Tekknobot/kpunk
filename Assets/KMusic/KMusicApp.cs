@@ -91,6 +91,7 @@ namespace KMusic
                 id.StartsWith("mutes.") ||
                 id == "tempo" ||
                 id == "sample.master" ||
+                id == "sample.pitch" ||
                 id == "master.vol"
             );
         }
@@ -172,6 +173,7 @@ namespace KMusic
             id.StartsWith("mutes.") ||
             id == "tempo" ||
             id == "sample.master" ||
+            id == "sample.pitch" ||
             id == "master.vol"
         );
 
@@ -193,6 +195,7 @@ namespace KMusic
             id.StartsWith("mutes.") ||
             id == "tempo" ||
             id == "sample.master" ||
+            id == "sample.pitch" ||
             id == "master.vol"
         );
     }
@@ -206,6 +209,7 @@ namespace KMusic
             id.StartsWith("mutes.") ||
             id == "tempo" ||
             id == "sample.master" ||
+            id == "sample.pitch" ||
             id == "master.vol"
         );
     }
@@ -312,6 +316,7 @@ namespace KMusic
             _bus.Add(new Parameter("drum.vol08", 0f, 1f, 0.8f));
             // Sample / Chop mixer
             _bus.Add(new Parameter("sample.master", 0f, 1f, 1f));
+            _bus.Add(new Parameter("sample.pitch", -12f, 12f, 0f, unit: "st"));
         }
     }
 }

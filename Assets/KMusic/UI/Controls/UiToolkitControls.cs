@@ -146,7 +146,11 @@ namespace KMusic.UI
             // Double click reset
             if (e.clickCount >= 2 && _bus.TryGet(ParamId, out var p))
             {
-                _bus.SetValue(ParamId, p.Default);
+                if (ParamId == "sample.pitch")
+                    _bus.SetValue(ParamId, 0f);
+                else
+                    _bus.SetValue(ParamId, p.Default);
+
                 Refresh();
             }
         }
@@ -154,10 +158,28 @@ namespace KMusic.UI
         private void OnMove(PointerMoveEvent e)
         {
             if (!_drag || _bus == null || string.IsNullOrEmpty(ParamId)) return;
+
             float dy = (_startPos.y - e.position.y);
             float speed = e.shiftKey ? 0.0008f : 0.0030f;
             float t = Mathf.Clamp01(_startT + dy * speed);
-            _bus.SetNormalized(ParamId, t);
+
+            if (_bus.TryGet(ParamId, out var p))
+            {
+                float value = Mathf.Lerp(p.Min, p.Max, t);
+
+                if (ParamId == "sample.pitch")
+                {
+                    value = Mathf.Round(value);
+                    value = Mathf.Clamp(value, -12f, 12f);
+                }
+
+                _bus.SetValue(ParamId, value);
+            }
+            else
+            {
+                _bus.SetNormalized(ParamId, t);
+            }
+
             Refresh();
         }
 
@@ -538,7 +560,11 @@ namespace KMusic.UI
 
             if (e.clickCount >= 2 && _bus.TryGet(ParamId, out var p))
             {
-                _bus.SetValue(ParamId, p.Default);
+                if (ParamId == "sample.pitch")
+                    _bus.SetValue(ParamId, 0f);
+                else
+                    _bus.SetValue(ParamId, p.Default);
+
                 Refresh();
             }
         }
@@ -546,9 +572,27 @@ namespace KMusic.UI
         private void OnMove(PointerMoveEvent e)
         {
             if (!_drag || _bus == null || string.IsNullOrEmpty(ParamId)) return;
-            float delta = Horizontal ? (e.position.x - _startPos.x) : (_startPos.y - e.position.y);
-            float speed = e.shiftKey ? 0.0008f : 0.0028f;
-            float t = Mathf.Clamp01(_startT + delta * speed);
+
+            bool useHorizontalDrag =
+                Horizontal &&
+                (ParamId == "tempo" || ParamId == "master.vol");
+
+            float speed;
+            float t;
+
+            if (useHorizontalDrag)
+            {
+                float dx = e.position.x - _startPos.x;
+                speed = e.shiftKey ? 0.0010f : 0.0040f;
+                t = Mathf.Clamp01(_startT + dx * speed);
+            }
+            else
+            {
+                float dy = _startPos.y - e.position.y;
+                speed = e.shiftKey ? 0.0008f : 0.0030f;
+                t = Mathf.Clamp01(_startT + dy * speed);
+            }
+
             _bus.SetNormalized(ParamId, t);
             Refresh();
         }

@@ -624,6 +624,8 @@ private string _appliedResourcesPath = null;
                 {
                     if (id == "sample.master")
                         ApplySampleMasterVolume();
+                    else if (id == "sample.pitch")
+                        ApplySamplePitch();
 
                     // Only drive mixer automatically if enabled
                     if (driveMixerFromBus && id != null && id.StartsWith("drum.vol", StringComparison.OrdinalIgnoreCase))
@@ -692,6 +694,39 @@ private string _appliedResourcesPath = null;
 
         return true;
     }
+
+
+    private float GetSamplePitchSemitones()
+    {
+        if (_bus != null)
+        {
+            float v = Mathf.Clamp(_bus.GetValue("sample.pitch"), -12f, 12f);
+
+            // snap strictly to whole semitones
+            return Mathf.Round(v);
+        }
+
+        return 0f;
+    }
+
+private float GetSamplePitchRate()
+{
+    return Mathf.Pow(2f, GetSamplePitchSemitones() / 12f);
+}
+
+private void ApplySamplePitch()
+{
+    float rate = GetSamplePitchRate();
+
+    for (int i = 0; i < _sampleVoicePool.Count; i++)
+    {
+        var s = _sampleVoicePool[i];
+        if (s != null) s.pitch = rate;
+    }
+
+    if (verbose)
+        Debug.Log($"[SamplePitch] bus={(_bus != null)} semitones={GetSamplePitchSemitones():0.##} rate={rate:0.###} voices={_sampleVoicePool.Count}");
+}
 
     private void ApplySampleMasterVolume()
     {
@@ -1329,6 +1364,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         }
 
         ApplySampleMasterVolume();
+        ApplySamplePitch();
     }
 
     private void ScheduleSampleChop(int chopId, double dspTime, double stepDurSeconds)
@@ -1349,11 +1385,13 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         var src = (_sampleVoicePool.Count > 0) ? _sampleVoicePool[0] : null;
         if (src == null) return;
 
+        float pitchRate = Mathf.Max(0.01f, GetSamplePitchRate());
+
         // Compute slice timing
         double sliceDur = (e01 - s01) * _appliedClip.length;
 
         // ✅ play full chop length (to next marker)
-        double dur = Math.Max(0.01, Math.Min(sliceDur, 4.0)); // cap at 4s (tweak)
+        double dur = Math.Max(0.01, Math.Min(sliceDur / pitchRate, 4.0)); // cap at 4s (tweak)
 
         // Compute start sample
         int startSample = Mathf.Clamp(
@@ -1367,6 +1405,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         src.Stop();
         src.clip = _appliedClip;
         src.loop = false;
+        src.pitch = pitchRate;
         src.timeSamples = startSample;
 
         // schedule
@@ -1741,8 +1780,9 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         var src = _sampleVoicePool.Count > 0 ? _sampleVoicePool[0] : null;
         if (src == null) return;
 
+        float pitchRate = Mathf.Max(0.01f, GetSamplePitchRate());
         double sliceDur = (e01 - s01) * _appliedClip.length;
-        float dur = (float)Math.Max(0.02, sliceDur);
+        float dur = (float)Math.Max(0.02, sliceDur / pitchRate);
 
         int startSample = Mathf.Clamp(
             (int)(s01 * _appliedClip.samples),
@@ -1757,6 +1797,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         src.Stop();
         src.clip = _appliedClip;
         src.loop = false;
+        src.pitch = pitchRate;
         src.timeSamples = startSample;
 
         // ✅ immediate start

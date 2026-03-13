@@ -84,6 +84,29 @@ namespace KMusic
         private int _pendingPresetIndex = -1;
         private string _pendingPresetRelPath = null;
 
+
+public float CaptureMasterVolume()
+{
+    if (_bus != null)
+        return Mathf.Clamp01(_bus.GetValue("master.vol"));
+
+    if (helm != null)
+        return Mathf.Clamp01(GetParameterPercentSafe(Param.kVolume));
+
+    return 0.80f;
+}
+
+public void ApplyMasterVolume(float normalized)
+{
+    float v = Mathf.Clamp01(normalized);
+
+    if (_bus != null)
+        _bus.SetValue("master.vol", v);
+
+    if (helm != null)
+        ApplyMappedParameter("master.vol", Param.kVolume, v);
+}
+
         private class PresetEntry
         {
             public string relPath;
@@ -258,6 +281,21 @@ namespace KMusic
                 _runtimePatch = go.AddComponent<HelmPatch>();
 
                 yield return LoadIndexThenAutoLoadCurrent();
+            }
+        }
+
+        private float GetParameterPercentSafe(AudioHelm.Param param)
+        {
+            if (helm == null)
+                return 0f;
+
+            try
+            {
+                return helm.GetParameterPercent(param);
+            }
+            catch
+            {
+                return 0f;
             }
         }
 

@@ -7,11 +7,7 @@ using UnityEngine.UIElements;
 using KMusic.UI;
 using KMusic;
 using KMusic.Core;
-
-#if UNITY_ANDROID && !UNITY_EDITOR
 using KMusic.Android;
-using KMusic.Core;
-#endif
 
 public class KMusicPlayerUI : MonoBehaviour
 {
@@ -66,7 +62,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private AudioClip _clip;
     private string _clipResourcesPath = null;
 
-    // ✅ Last known playhead position from scrubbing/UI.
+    // Last known playhead position from scrubbing/UI.
     // Used when dropping markers via buttons even if audio isn't playing.
     private float _scrub01 = 0f;
 
@@ -77,7 +73,6 @@ public class KMusicPlayerUI : MonoBehaviour
     private bool _deviceReady = false;
 #endif
 
-    
     private const string PrefKey_LastTrack = "kmusic.player.lastTrack.v1";
 
     private static void SaveLastTrackId(string id)
@@ -96,6 +91,35 @@ public class KMusicPlayerUI : MonoBehaviour
 
     // Project save/load hooks
     public string GetLastTrackId() => LoadLastTrackId();
+
+    private float GetCurrentSamplePitchSemitones()
+    {
+        try
+        {
+            var app = FindObjectOfType<KMusic.KMusicApp>();
+            if (app != null && app.Bus != null)
+            {
+                float v = Mathf.Clamp(app.Bus.GetValue("sample.pitch"), -12f, 12f);
+
+                // center detent
+                if (Mathf.Abs(v) < 0.35f)
+                    return 0f;
+
+                // snap to semitone
+                return Mathf.Round(v);
+            }
+        }
+        catch
+        {
+        }
+
+        return 0f;
+    }
+
+    private float GetCurrentSamplePitchRate()
+    {
+        return Mathf.Pow(2f, GetCurrentSamplePitchSemitones() / 12f);
+    }
 
     public void SetLastTrackId(string id)
     {
@@ -120,6 +144,12 @@ public class KMusicPlayerUI : MonoBehaviour
         }
     }
 
+    public void ClearLastTrackId()
+    {
+        ProjectPrefs.DeleteKey(PrefKey_LastTrack);
+        ProjectPrefs.Save();
+    }
+
     public void RefreshAppliedMarkersFromState()
     {
         RestoreMarkersFromAppliedState();
@@ -136,7 +166,7 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
         }
 
-    #if UNITY_ANDROID && !UNITY_EDITOR
+#if UNITY_ANDROID && !UNITY_EDITOR
         if (id.StartsWith("uri:"))
         {
             string want = id.Substring(4);
@@ -153,7 +183,7 @@ public class KMusicPlayerUI : MonoBehaviour
             }
             return;
         }
-    #endif
+#endif
 
         if (id.StartsWith("res:"))
         {
@@ -162,8 +192,8 @@ public class KMusicPlayerUI : MonoBehaviour
 
             if (_clips != null && _clips.Length > 0)
             {
-                string wantName = wantPath.Contains("/") 
-                    ? wantPath.Substring(wantPath.LastIndexOf('/') + 1) 
+                string wantName = wantPath.Contains("/")
+                    ? wantPath.Substring(wantPath.LastIndexOf('/') + 1)
                     : wantPath;
 
                 for (int i = 0; i < _clips.Length; i++)
@@ -179,12 +209,12 @@ public class KMusicPlayerUI : MonoBehaviour
             }
         }
     }
-    
+
     private void Awake()
-        {
-            if (!doc) doc = GetComponent<UIDocument>();
-            EnsureDedicatedPlayerAudioSource();
-        }
+    {
+        if (!doc) doc = GetComponent<UIDocument>();
+        EnsureDedicatedPlayerAudioSource();
+    }
 
     private void EnsureDedicatedPlayerAudioSource()
     {
@@ -267,14 +297,12 @@ public class KMusicPlayerUI : MonoBehaviour
             host.Add(_wave);
         }
 
-        // ✅ Touch/click interaction on waveform.
         _wave.UserPointer01 -= OnWavePointer01;
         _wave.UserPointer01 += OnWavePointer01;
         _wave.MarkerDrag01 -= OnWaveMarkerDrag01;
         _wave.MarkerDrag01 += OnWaveMarkerDrag01;
         _wave.MarkersDraggable = _chopArmed;
 
-        // Wire buttons
         if (_btnPlay != null) _btnPlay.clicked += OnPlayClicked;
         if (_btnStop != null) _btnStop.clicked += OnStopClicked;
         if (_btnPrev != null) _btnPrev.clicked += CyclePrevTrack;
@@ -289,10 +317,8 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_btnAuto8 != null) _btnAuto8.clicked += () => AutoChop(8);
         if (_btnAuto16 != null) _btnAuto16.clicked += () => AutoChop(16);
 
-        // Fire on press-down so it works immediately on mobile too.
         WirePointerDownButton(_btnAddMode, OnAddMarkerButton, "km-add-btn--pointerdown");
 
-        // Del button: set delete mode (and also delete nearest at current timestamp, consistent with mobile)
         if (_btnDelMode != null) _btnDelMode.clicked += OnDeleteMarkerButton;
 
         if (_btnSnap != null) _btnSnap.clicked += () => ToggleSnap();
@@ -339,7 +365,11 @@ public class KMusicPlayerUI : MonoBehaviour
                         string want = last.Substring(4);
                         for (int i = 0; i < _deviceTracks.Length; i++)
                         {
-                            if (_deviceTracks[i] != null && _deviceTracks[i].uri == want) { idx = i; break; }
+                            if (_deviceTracks[i] != null && _deviceTracks[i].uri == want)
+                            {
+                                idx = i;
+                                break;
+                            }
                         }
                     }
                     LoadDeviceTrackByIndex(idx);
@@ -369,7 +399,6 @@ public class KMusicPlayerUI : MonoBehaviour
             if (!string.IsNullOrEmpty(last) && last.StartsWith("res:"))
             {
                 string wantPath = last.Substring(4);
-                // wantPath is like "Tracks/MySong"
                 string wantName = wantPath.Contains("/") ? wantPath.Substring(wantPath.LastIndexOf('/') + 1) : wantPath;
                 for (int i = 0; i < _clips.Length; i++)
                 {
@@ -448,7 +477,6 @@ public class KMusicPlayerUI : MonoBehaviour
         }
         else if (sliceEnd01 != null)
         {
-            // Legacy fallback for older save format where markers were restored from slice ends.
             for (int i = 0; i < 16 && i < sliceEnd01.Length; i++)
             {
                 float s = (sliceStart01 != null && i < sliceStart01.Length) ? sliceStart01[i] : 0f;
@@ -512,6 +540,7 @@ public class KMusicPlayerUI : MonoBehaviour
 #endif
         RefreshClipList();
         if (_clips.Length == 0) return;
+
         int prevRes = (_clipIndex <= 0) ? (_clips.Length - 1) : (_clipIndex - 1);
         LoadClipByIndex(prevRes);
     }
@@ -529,6 +558,7 @@ public class KMusicPlayerUI : MonoBehaviour
 #endif
         RefreshClipList();
         if (_clips.Length == 0) return;
+
         int nextRes = (_clipIndex + 1) % _clips.Length;
         LoadClipByIndex(nextRes);
     }
@@ -545,7 +575,6 @@ public class KMusicPlayerUI : MonoBehaviour
         _clip = _clips[_clipIndex];
         _clipResourcesPath = _clip != null ? ($"{resourcesFolder}/" + _clip.name) : null;
 
-        // Save last track + cache clip for chop application.
         if (!string.IsNullOrEmpty(_clipResourcesPath))
         {
             SaveLastTrackId("res:" + _clipResourcesPath);
@@ -630,6 +659,7 @@ public class KMusicPlayerUI : MonoBehaviour
         RestoreMarkersFromAppliedState();
         UpdateTimeLabels(0f, _clip.length);
         RefreshTrackBrowserList();
+        _loadDeviceCoroutine = null;
     }
 #endif
 
@@ -823,6 +853,7 @@ public class KMusicPlayerUI : MonoBehaviour
                 int idx = i;
                 string title = clip.name;
                 string subtitle = resourcesFolder + "/" + clip.name;
+
                 items.Add(new TrackBrowserItem
                 {
                     Title = title,
@@ -840,14 +871,21 @@ public class KMusicPlayerUI : MonoBehaviour
     private void OnPlayClicked()
     {
         if (_clip == null || audioSource == null) return;
+
         audioSource.Stop();
         audioSource.clip = _clip;
+        audioSource.loop = false;
+        audioSource.pitch = Mathf.Max(0.01f, GetCurrentSamplePitchRate());
         audioSource.Play();
     }
 
     private void OnStopClicked()
     {
-        if (audioSource != null) audioSource.Stop();
+        if (audioSource != null)
+        {
+            audioSource.Stop();
+            audioSource.pitch = 1f;
+        }
     }
 
     private void ToggleChop()
@@ -864,16 +902,12 @@ public class KMusicPlayerUI : MonoBehaviour
         UpdateTrackTitle(_chopArmed ? "CHOP MODE" : (_clip != null ? _clip.name : "TRACK"));
     }
 
-    // ----------------------------
-    // Waveform interaction (touch + mouse)
-    // ----------------------------
     private void OnWavePointer01(float t01, bool isDrag)
     {
         if (_clip == null || _clip.length <= 0f || audioSource == null) return;
 
         if (_chopArmed)
         {
-            // Drag scrubs regardless; tap adds/deletes depending on mode.
             if (isDrag) { SeekTo01(t01); return; }
 
             if (_markerAddMode) DropChopMarkerAt01(t01);
@@ -970,8 +1004,6 @@ public class KMusicPlayerUI : MonoBehaviour
         float start01;
         float end01;
 
-        // Start markers should always audition the chop that starts at that marker.
-        // Only the optional closing marker (index 16 / marker 17) should audition left.
         if (markerIndex >= 16)
         {
             start01 = leftStart01;
@@ -987,11 +1019,15 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
 
         float startTime = Mathf.Clamp(start01 * _clip.length, 0f, Mathf.Max(0f, _clip.length - 0.001f));
-        float dur = Mathf.Clamp((end01 - start01) * _clip.length, 0.03f, _clip.length);
+
+        float pitchRate = Mathf.Max(0.01f, GetCurrentSamplePitchRate());
+        float rawSliceDur = Mathf.Clamp((end01 - start01) * _clip.length, 0.03f, _clip.length);
+        float pitchedDur = Mathf.Max(0.02f, rawSliceDur / pitchRate);
 
         if (_markerPreviewCoroutine != null)
             StopCoroutine(_markerPreviewCoroutine);
-        _markerPreviewCoroutine = StartCoroutine(CoPreviewSlice(startTime, dur));
+
+        _markerPreviewCoroutine = StartCoroutine(CoPreviewSlice(startTime, pitchedDur));
     }
 
     private IEnumerator CoPreviewSlice(float startTime, float duration)
@@ -999,15 +1035,22 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null || audioSource == null)
             yield break;
 
+        float pitchRate = Mathf.Max(0.01f, GetCurrentSamplePitchRate());
+
         audioSource.Stop();
         audioSource.clip = _clip;
+        audioSource.loop = false;
+        audioSource.pitch = pitchRate;
         audioSource.time = Mathf.Clamp(startTime, 0f, Mathf.Max(0f, _clip.length - 0.001f));
         audioSource.Play();
 
         yield return new WaitForSecondsRealtime(duration);
 
         if (audioSource != null && audioSource.clip == _clip)
+        {
             audioSource.Stop();
+            audioSource.pitch = 1f;
+        }
 
         _markerPreviewCoroutine = null;
     }
@@ -1023,9 +1066,6 @@ public class KMusicPlayerUI : MonoBehaviour
             KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01);
     }
 
-    // ----------------------------
-    // ✅ Add/Delete buttons behavior
-    // ----------------------------
     private void OnAddMarkerButton()
     {
         SetMarkerMode(true);
@@ -1034,7 +1074,6 @@ public class KMusicPlayerUI : MonoBehaviour
 
         float t01;
 
-        // If playing, use real time.
         if (audioSource.isPlaying)
         {
             t01 = Mathf.Clamp01(audioSource.time / _clip.length);
@@ -1042,7 +1081,6 @@ public class KMusicPlayerUI : MonoBehaviour
         }
         else
         {
-            // Not playing: use last scrubbed playhead.
             t01 = Mathf.Clamp01(_scrub01);
         }
 
@@ -1069,9 +1107,6 @@ public class KMusicPlayerUI : MonoBehaviour
         DeleteNearestMarkerTo01(t01);
     }
 
-    // ----------------------------
-    // Marker ops
-    // ----------------------------
     private void DropChopMarkerAt01(float t01)
     {
         if (_clip == null || _clip.length <= 0f) return;
@@ -1080,7 +1115,6 @@ public class KMusicPlayerUI : MonoBehaviour
         t01 = Mathf.Clamp01(t01);
         if (_snapEnabled) t01 = Snap01(t01, _snapDiv);
 
-        // avoid duplicates (within ~0.5% of timeline)
         for (int i = 0; i < _chops01.Count; i++)
             if (_snapEnabled)
             {
@@ -1091,7 +1125,6 @@ public class KMusicPlayerUI : MonoBehaviour
                     return;
             }
 
-        // keep away from boundaries since 0 and 1 are implied
         if (t01 < 0.01f) t01 = 0.01f;
         if (t01 > 0.99f) t01 = 0.99f;
 
@@ -1125,7 +1158,6 @@ public class KMusicPlayerUI : MonoBehaviour
             if (d < bestDist) { bestDist = d; best = i; }
         }
 
-        // must be somewhat close to delete
         if (best >= 0 && bestDist <= 0.03f)
         {
             float removed = _chops01[best];
@@ -1140,21 +1172,15 @@ public class KMusicPlayerUI : MonoBehaviour
         }
     }
 
-    // ----------------------------
-    // Chop apply/send
-    // ----------------------------
     private void ApplyChops()
     {
         if (_clip == null || _clip.length <= 0f) return;
 
-        // Build boundaries [0, markers..., 1]
         var boundaries = new List<float>(_chops01.Count + 2) { 0f };
         boundaries.AddRange(_chops01);
         boundaries.Add(1f);
         boundaries.Sort();
 
-        // If your sampler reads chop state from KMusicChopState, you can store it here too.
-        // This keeps Apply and Send consistent.
         if (!string.IsNullOrEmpty(_clipResourcesPath))
             KMusicChopState.SaveApplied(_clipResourcesPath, _chops01);
         else
@@ -1174,7 +1200,6 @@ public class KMusicPlayerUI : MonoBehaviour
 
         UpdateTrackTitle($"SENT {Mathf.Min(16, _chops01.Count)} CHOPS");
     }
-
 
     private int FindNearestMarkerIndex(float t01)
     {
@@ -1221,7 +1246,6 @@ public class KMusicPlayerUI : MonoBehaviour
 
         RefreshChopPickerUI();
     }
-
 
     private void WirePointerDownButton(Button btn, Action action, string wiredClass)
     {
@@ -1351,7 +1375,6 @@ public class KMusicPlayerUI : MonoBehaviour
         float t = audioSource.time;
         float t01 = Mathf.Clamp01(t / _clip.length);
 
-        // ✅ keep scrub position in sync while playing
         _scrub01 = t01;
 
         _wave?.SetPlayhead01(t01);
@@ -1378,9 +1401,6 @@ public class KMusicPlayerUI : MonoBehaviour
         _trackNameLabel.text = string.IsNullOrEmpty(title) ? "TRACK" : title;
     }
 
-    // ----------------------------
-    // UI state helpers
-    // ----------------------------
     private void SetMarkerMode(bool add)
     {
         _markerAddMode = add;
@@ -1409,7 +1429,6 @@ public class KMusicPlayerUI : MonoBehaviour
             _markerPreviewCoroutine = null;
         }
 
-        // Also clear any applied chop set used by the sampler.
         KMusicChopState.ClearApplied();
 
         UpdateTrackTitle("MARKERS RESET");
@@ -1423,7 +1442,6 @@ public class KMusicPlayerUI : MonoBehaviour
 
         divisions = Mathf.Clamp(divisions, 1, 16);
 
-        // first chop always starts at 0
         _chops01.Add(0f);
 
         for (int i = 1; i < divisions; i++)
@@ -1433,7 +1451,6 @@ public class KMusicPlayerUI : MonoBehaviour
             _chops01.Add(t01);
         }
 
-        // closing marker near end so final chop has an end
         _chops01.Add(0.999f);
 
         _selectedMarkerIndex = _chops01.Count > 0 ? 0 : -1;
@@ -1442,7 +1459,7 @@ public class KMusicPlayerUI : MonoBehaviour
         PersistMarkersIfPossible();
         UpdateTrackTitle($"AUTO {divisions}");
     }
-    
+
     private static float Snap01(float t01, int div)
     {
         if (div <= 1) return Mathf.Clamp01(t01);

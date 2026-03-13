@@ -409,9 +409,24 @@
                 <ui:Button name="MarkerNudgePos10" class="chop-btn chop-btn-mode" text="+0.10"/>
             </ui:VisualElement>
               <ui:VisualElement class="chop-row-third">
-                  <ui:VisualElement class="km-chip-group" style="justify-content:center; align-items:center;">
-                      <km:KnobElement name="SampleMasterVol" label="CHOP VOL" paramId="sample.master" style="width:90px; height:90px;" />
-                  </ui:VisualElement> 
+                  <ui:VisualElement class="km-chip-group"
+                      style="flex-direction:row; justify-content:center; align-items:center; gap:12px;">
+                      
+                      <km:KnobElement name="SampleMasterVol"
+                          label="CHOP VOL"
+                          paramId="sample.master"
+                          style="width:90px; height:90px;" />
+
+                      <km:KnobElement
+                          name="SamplePitchKnob"
+                          label="PITCH"
+                          paramId="sample.pitch"
+                          step="1"
+                          min="-12"
+                          max="12"
+                          style="width:90px; height:90px;" />
+
+                  </ui:VisualElement>
               </ui:VisualElement>
         </ui:VisualElement>
         <!-- Chop Picker (2 rows x 8) -->

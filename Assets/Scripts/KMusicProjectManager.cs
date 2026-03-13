@@ -588,9 +588,10 @@ public sealed class KMusicProjectManager : MonoBehaviour
         public int chordMode;
         public string presetRelPath;
         public int presetIndex;
+        public float masterVolume = -1f;
     }
 
-    [Serializable] private class SynthState { public string presetRelPath; public int presetIndex; }
+    [Serializable] private class SynthState { public string presetRelPath; public int presetIndex; public float masterVolume = -1f; }
     [Serializable] private class PlayerState { public string lastTrackId; }
     [Serializable] private class ChopState { public string resourcesPath; public float[] sliceStart01; public float[] sliceEnd01; }
 
@@ -699,6 +700,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         {
             data.pad.presetRelPath = _padSynthRuntime.CurrentPresetRelPath;
             data.pad.presetIndex = _padSynthRuntime.CurrentPresetIndex;
+            data.pad.masterVolume = _padSynthRuntime.CaptureMasterVolume();
         }
 
         if (_helm != null)
@@ -706,6 +708,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
             data.synth.presetRelPath = _helm.CurrentPresetRelPath;
             data.synth.presetIndex = _helm.CurrentPresetIndex;
         }
+
+        if (_app != null && _app.Bus != null)
+            data.synth.masterVolume = Mathf.Clamp01(_app.Bus.GetValue("master.vol"));
 
         if (_player != null)
             data.player.lastTrackId = _player.GetLastTrackId();
@@ -794,7 +799,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
             if (_player != null)
             {
-                _player.SetLastTrackId(null);
+                _player.ClearLastTrackId();
                 _player.RefreshAppliedMarkersFromState();
             }
 
@@ -890,6 +895,10 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
             if (_chainUi != null)
                 _chainUi.ReloadFromSaved();
+
+            float mainSynthVol = (data.synth != null) ? data.synth.masterVolume : -1f;
+            float padSynthVol = (data.pad != null) ? data.pad.masterVolume : -1f;
+            StartCoroutine(ApplySavedSynthVolumesAfterLoad(mainSynthVol, padSynthVol));
         }
         finally
         {
@@ -902,6 +911,20 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (_pad != null) _pad.SetAllowSaving(true);
         }
     }
+
+
+private System.Collections.IEnumerator ApplySavedSynthVolumesAfterLoad(float mainSynthVolume, float padSynthVolume)
+{
+    yield return null;
+    yield return new WaitForEndOfFrame();
+    yield return null;
+
+    if (_app != null && _app.Bus != null && mainSynthVolume >= 0f)
+        _app.Bus.SetValue("master.vol", Mathf.Clamp01(mainSynthVolume));
+
+    if (_padSynthRuntime != null && padSynthVolume >= 0f)
+        _padSynthRuntime.ApplyMasterVolume(padSynthVolume);
+}
 
     private void ResetToBlank()
     {
@@ -933,5 +956,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_chainUi != null) _chainUi.ReloadFromSaved();
 
         KMusicChopState.ClearApplied();
+
+        if (_player != null)
+        {
+            _player.ClearLastTrackId();
+            _player.RefreshAppliedMarkersFromState();
+        }
     }
 }
