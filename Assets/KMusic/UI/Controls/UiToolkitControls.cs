@@ -165,19 +165,17 @@ namespace KMusic.UI
 
             if (_bus.TryGet(ParamId, out var p))
             {
-                float value = Mathf.Lerp(p.Min, p.Max, t);
-
                 if (ParamId == "sample.pitch")
                 {
+                    float value = Mathf.Lerp(p.Min, p.Max, t);
                     value = Mathf.Round(value);
                     value = Mathf.Clamp(value, -12f, 12f);
+                    _bus.SetValue(ParamId, value);
                 }
-
-                _bus.SetValue(ParamId, value);
-            }
-            else
-            {
-                _bus.SetNormalized(ParamId, t);
+                else
+                {
+                    _bus.SetNormalized(ParamId, t);
+                }
             }
 
             Refresh();
