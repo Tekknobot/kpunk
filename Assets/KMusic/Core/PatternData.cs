@@ -14,6 +14,7 @@ namespace KMusic.Core
         public const int Steps = 16;
 
         public byte[] drumMask;   // len 16
+        public byte[] drumVelocityData; // len 32 packed 2-bit tiers
         public int[] sampleSteps; // len 16
         public int[] seqSteps;    // len 16
         public int[] padSteps;    // len 16
@@ -22,6 +23,7 @@ namespace KMusic.Core
         public PatternData()
         {
             drumMask = new byte[Steps];
+            drumVelocityData = new byte[Steps * 2];
             sampleSteps = new int[Steps];
             seqSteps = new int[Steps];
             padSteps = new int[Steps];
@@ -32,6 +34,7 @@ namespace KMusic.Core
         {
             var p = new PatternData();
             if (drumMask != null) Array.Copy(drumMask, p.drumMask, Math.Min(drumMask.Length, p.drumMask.Length));
+            if (drumVelocityData != null) Array.Copy(drumVelocityData, p.drumVelocityData, Math.Min(drumVelocityData.Length, p.drumVelocityData.Length));
             if (sampleSteps != null) Array.Copy(sampleSteps, p.sampleSteps, Math.Min(sampleSteps.Length, p.sampleSteps.Length));
             if (seqSteps != null) Array.Copy(seqSteps, p.seqSteps, Math.Min(seqSteps.Length, p.seqSteps.Length));
             if (padSteps != null) Array.Copy(padSteps, p.padSteps, Math.Min(padSteps.Length, p.padSteps.Length));

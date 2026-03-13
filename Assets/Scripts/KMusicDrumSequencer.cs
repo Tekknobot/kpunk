@@ -42,6 +42,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     // NEW: PlayerPrefs fallback key for stepmask (base64) so lane patterns survive even if KMusicSaveState isn’t available in builds.
     private const string PrefKey_DrumStepMask_B64 = "kmusic.drum.stepmask.b64";
+    private const string PrefKey_DrumVelocity_B64 = "kmusic.drum.velocity.b64";
 
     private StepGrid _drumGrid;
     private IVisualElementScheduledItem _rebindLoop;
@@ -86,6 +87,19 @@ public class KMusicDrumSequencer : MonoBehaviour
     [SerializeField] private int drumVoicesPerLane = 4;
 
     private Action<string, float> _onBusChanged;
+
+    private const int RandomizeLongPressMs = 650;
+
+    private enum RandomBeatStyle
+    {
+        House = 0,
+        BoomBap = 1,
+    }
+
+    private readonly Dictionary<Button, IVisualElementScheduledItem> _buttonLongPressJobs = new();
+    private readonly HashSet<Button> _buttonLongPressFired = new();
+    private RandomBeatStyle _nextWholeBeatStyle = RandomBeatStyle.House;
+    private System.Random _rng;
 
     [Header("Sampler Volume")]
     [Range(0f, 1f)] public float sampleMasterVolume = 1f;
@@ -160,7 +174,7 @@ public class KMusicDrumSequencer : MonoBehaviour
     }
 
 
-    private void ScheduleDrum(int drumId, double dspTime)
+    private void ScheduleDrum(int drumId, double dspTime, float velocityScale = 1f)
     {
         if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
             return;
@@ -170,11 +184,11 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         // Scheduled playback (tight timing)
         src.Stop();
-        src.volume = 1f;
+        src.volume = Mathf.Clamp01(velocityScale);
         src.PlayScheduled(dspTime);
     }
 
-    private void PreviewDrum(int drumId)
+    private void PreviewDrum(int drumId, float velocityScale = 1f)
     {
         if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
             return;
@@ -184,7 +198,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         src.Stop();
         src.volume = 1f;
-        src.PlayOneShot(clip, 1f);
+        src.PlayOneShot(clip, Mathf.Clamp01(velocityScale));
     }
 
     [SerializeField] private UIDocument uiDocument;
@@ -244,6 +258,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private const int LANES = 8;                        // 8 drums max in this UI
     private byte[] _stepMask = new byte[16];
+    private ushort[] _stepVelocityPacked = new ushort[16];
 
     // --- Sampler (chop sequencer) ---
     private int[] _sampleChopByStep = new int[16]; // 0 = none, 1..16 = chop id
@@ -257,14 +272,38 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private bool _didLoadSamplePattern = false;
     private bool _didLoadAppliedChops = false;
+
+    private bool _velocityGestureArmed = false;
+    private bool _velocityGestureMoved = false;
+    private bool _velocityGestureStartedOn = false;
+    private int _velocityGestureStep = -1;
+    private int _velocityGestureLane = -1;
+    private Vector2 _velocityGestureStartLocal = Vector2.zero;
+    private int _velocityGestureTier = 1;
+    private const float DrumVelocityDragThresholdPx = 18f;
     
     // Tracks whether applied chops changed since last load
     private int _appliedRevisionSeen = -1;
-private string _appliedResourcesPath = null;
+    private string _appliedResourcesPath = null;
     private AudioClip _appliedClip = null;
     private float[] _sliceStart01 = new float[16];
     private float[] _sliceEnd01 = new float[16];
 
+    private static string GetDrumShortLabel(int drumId)
+    {
+        return drumId switch
+        {
+            1 => "K",
+            2 => "S",
+            3 => "C",
+            4 => "HC",
+            5 => "HO",
+            6 => "RD",
+            7 => "RM",
+            8 => "CR",
+            _ => ""
+        };
+    }
 
     private UIDocument _doc;
     private VisualElement _root;
@@ -448,6 +487,8 @@ private string _appliedResourcesPath = null;
 
     private void Awake()
     {
+        _rng = new System.Random(Environment.TickCount);
+
         _doc = GetComponent<UIDocument>();
         _app = GetComponent<KMusicApp>();
         if (_app == null)
@@ -496,7 +537,7 @@ private string _appliedResourcesPath = null;
             return;
         }
 
-        StartCoroutine(BindWhenReady()); // ✅ THIS WAS MISSING
+        StartCoroutine(BindWhenReady());
 
         var root = uiDocument.rootVisualElement;
 
@@ -507,37 +548,35 @@ private string _appliedResourcesPath = null;
             var kitPrev = root.Q<Button>("KitPrev");
             var kitNext = root.Q<Button>("KitNext");
 
-            if (playBtn != null && playBtn.text == "PLAY") { /* leave it */ }
+            if (playBtn != null && playBtn.text == "PLAY") { }
             else if (playBtn != null) playBtn.text = "\u25B6";
 
-            if (stopBtn != null && stopBtn.text == "STOP") { /* leave it */ }
+            if (stopBtn != null && stopBtn.text == "STOP") { }
             else if (stopBtn != null) stopBtn.text = "\u25A0";
 
-            if (kitPrev != null && kitPrev.text == "PREV") { /* leave it */ }
+            if (kitPrev != null && kitPrev.text == "PREV") { }
             else if (kitPrev != null) kitPrev.text = "\u25C0";
 
-            if (kitNext != null && kitNext.text == "NEXT") { /* leave it */ }
+            if (kitNext != null && kitNext.text == "NEXT") { }
             else if (kitNext != null) kitNext.text = "\u25B6";
 
             Debug.Log($"[DrumSequencer] playBtn={playBtn!=null} stopBtn={stopBtn!=null}");
 
-            if (playBtn != null)
+            if (playBtn != null && !playBtn.ClassListContains("km-play-btn--wired"))
+            {
+                playBtn.AddToClassList("km-play-btn--wired");
                 playBtn.clicked += () =>
                 {
                     Debug.Log("PLAY CLICK");
-                    OnPlayClicked(); // ✅ call the real play that sets dsp start etc
+                    OnPlayClicked();
                 };
+            }
 
-            if (stopBtn != null)
-                stopBtn.clicked += () =>
-                {
-                    Debug.Log("STOP CLICK");
-                    OnStopClicked();
-                };
+            // STOP long-press is now wired in BindUI() against _stopBtn,
+            // not here against a potentially stale queried button.
         });
+    }    
     
-    }
-
     private void HookKitUI(VisualElement root)
     {
         _kitPrevBtn = root.Q<Button>("KitPrev");
@@ -611,10 +650,46 @@ private string _appliedResourcesPath = null;
         if (_playBtn == null || _stopBtn == null || _gridDrum == null)
             return false;
 
+        // STOP button: short tap stops, long press randomizes whole beat.
+        if (!_stopBtn.ClassListContains("km-stop-btn--wired"))
+        {
+            _stopBtn.AddToClassList("km-stop-btn--wired");
+
+            _stopBtn.clicked += () =>
+            {
+                if (_buttonLongPressFired.Contains(_stopBtn))
+                {
+                    _buttonLongPressFired.Remove(_stopBtn);
+                    return;
+                }
+
+                Debug.Log("STOP CLICK");
+                OnStopClicked();
+            };
+
+            _stopBtn.RegisterCallback<PointerDownEvent>(_ =>
+            {
+                Debug.Log("[Random Beat] STOP pointer down");
+                BeginButtonLongPress(_stopBtn, RandomizeWholeBeatFromLongPress);
+            }, TrickleDown.TrickleDown);
+
+            _stopBtn.RegisterCallback<PointerUpEvent>(_ =>
+            {
+                Debug.Log("[Random Beat] STOP pointer up");
+                CancelButtonLongPress(_stopBtn);
+            }, TrickleDown.TrickleDown);
+
+            _stopBtn.RegisterCallback<PointerCancelEvent>(_ =>
+            {
+                Debug.Log("[Random Beat] STOP pointer cancel");
+                CancelButtonLongPress(_stopBtn);
+            }, TrickleDown.TrickleDown);
+        }
         // Cache bus for drum volume faders.
         if (_app == null) _app = FindObjectOfType<KMusicApp>();
         _bus = _app != null ? _app.Bus : null;
         ApplySampleMasterVolume();
+
         // Keep mixer params in sync with ParameterBus changes.
         if (_bus != null)
         {
@@ -639,7 +714,6 @@ private string _appliedResourcesPath = null;
 
         // Push current drum faders into the mixer right away (if assigned).
         ApplyDrumMixerFromBus();
-
 
         // --- Kit UI ---
         _kitNameLabel = _root.Q<Label>("KitName");
@@ -666,6 +740,8 @@ private string _appliedResourcesPath = null;
         // --- Grid visuals ---
         _gridDrum.EnableValueLabels(true, DrumLabel);
         _gridDrum.EnableValueTint(true, DrumTint);
+        _gridDrum.EnableOccupiedLeftClickErase(false);
+        _gridDrum.EnableDeferredOccupiedLeftClick(true);
 
         // IMPORTANT: start in a clean state, but do NOT accidentally write to _stepMask here
         _suppressGridEvents = true;
@@ -681,6 +757,15 @@ private string _appliedResourcesPath = null;
         _gridDrum.OnCellClicked -= OnGridCellClicked;
         _gridDrum.OnCellClicked += OnGridCellClicked;
 
+        _gridDrum.OnStrokePressed -= OnGridStrokePressed;
+        _gridDrum.OnStrokePressed += OnGridStrokePressed;
+
+        _gridDrum.OnStrokePointerMoved -= OnGridStrokePointerMoved;
+        _gridDrum.OnStrokePointerMoved += OnGridStrokePointerMoved;
+
+        _gridDrum.OnStrokeReleased -= OnGridStrokeReleased;
+        _gridDrum.OnStrokeReleased += OnGridStrokeReleased;
+
         // --- Initial draw from existing mask ---
         RefreshGridForActiveDrum();
 
@@ -694,7 +779,6 @@ private string _appliedResourcesPath = null;
 
         return true;
     }
-
 
     private float GetSamplePitchSemitones()
     {
@@ -838,6 +922,13 @@ private void ApplySamplePitch()
                 catch { }
             }
 
+            try
+            {
+                string velB64 = Convert.ToBase64String(PackVelocityData());
+                ProjectPrefs.SetString(PrefKey_DrumVelocity_B64, velB64);
+            }
+            catch { }
+
             // --- mutes / ui state ---
             try { KMusicSaveState.SaveBools(kMutes, _drumMute); } catch { }
 
@@ -906,6 +997,28 @@ private void ApplySamplePitch()
             if (_stepMask != null)
                 Array.Clear(_stepMask, 0, _stepMask.Length);
         }
+
+        bool loadedVelocity = false;
+        try
+        {
+            if (ProjectPrefs.HasKey(PrefKey_DrumVelocity_B64))
+            {
+                string velB64 = ProjectPrefs.GetString(PrefKey_DrumVelocity_B64, "");
+                if (!string.IsNullOrEmpty(velB64))
+                {
+                    byte[] velBytes = Convert.FromBase64String(velB64);
+                    ApplyPackedVelocityDataInternal(velBytes);
+                    loadedVelocity = true;
+                }
+            }
+        }
+        catch
+        {
+            loadedVelocity = false;
+        }
+
+        if (!loadedVelocity)
+            InitializeDefaultVelocitiesFromMask();
 
         // --- restore mutes ---
         try
@@ -1069,6 +1182,13 @@ private void ApplySamplePitch()
     private void OnDisable()
     {
         SaveDrumState();
+        foreach (var kv in _buttonLongPressJobs)
+        {
+            try { kv.Value?.Pause(); } catch { }
+        }
+        _buttonLongPressJobs.Clear();
+        _buttonLongPressFired.Clear();
+
         if (_grid != null)
         {
             _grid.OnCellValueChanged -= OnGridValueChanged;
@@ -1100,7 +1220,83 @@ private void ApplySamplePitch()
             return;
 
         b.AddToClassList(wiredClass);
-        b.clicked += () => SelectDrum(drumId);
+
+        b.clicked += () =>
+        {
+            if (_buttonLongPressFired.Contains(b))
+            {
+                _buttonLongPressFired.Remove(b);
+                return;
+            }
+
+            SelectDrum(drumId);
+        };
+
+        b.RegisterCallback<PointerDownEvent>(_ =>
+        {
+            Debug.Log($"[Random Beat] Drum {drumId} pointer down");
+            BeginButtonLongPress(b, () => RandomizeSingleDrumLaneFromLongPress(drumId));
+        }, TrickleDown.TrickleDown);
+
+        b.RegisterCallback<PointerUpEvent>(_ =>
+        {
+            Debug.Log($"[Random Beat] Drum {drumId} pointer up");
+            CancelButtonLongPress(b);
+        }, TrickleDown.TrickleDown);
+
+        b.RegisterCallback<PointerCancelEvent>(_ =>
+        {
+            Debug.Log($"[Random Beat] Drum {drumId} pointer cancel");
+            CancelButtonLongPress(b);
+        }, TrickleDown.TrickleDown);
+    }
+
+    private void BeginButtonLongPress(Button button, Action longPressAction)
+    {
+        if (button == null || longPressAction == null) return;
+
+        CancelButtonLongPress(button);
+
+        var job = button.schedule.Execute(() =>
+        {
+            CancelButtonLongPress(button);
+            _buttonLongPressFired.Add(button);
+            longPressAction();
+        });
+
+        job.ExecuteLater(RandomizeLongPressMs);
+        _buttonLongPressJobs[button] = job;
+    }
+
+    private void CancelButtonLongPress(Button button)
+    {
+        if (button == null) return;
+
+        if (_buttonLongPressJobs.TryGetValue(button, out var job) && job != null)
+        {
+            try { job.Pause(); } catch { }
+        }
+
+        _buttonLongPressJobs.Remove(button);
+    }
+
+    private void RandomizeWholeBeatFromLongPress()
+    {
+        var style = _nextWholeBeatStyle;
+        GenerateRandomBeat(style);
+        _nextWholeBeatStyle = style == RandomBeatStyle.House ? RandomBeatStyle.BoomBap : RandomBeatStyle.House;
+
+        Debug.Log($"[Random Beat] Generated {style} groove. Next long-press STOP style: {_nextWholeBeatStyle}.");
+    }
+
+    private void RandomizeSingleDrumLaneFromLongPress(int drumId)
+    {
+        Debug.Log($"[Random Beat] Lane long press fired drumId={drumId}");
+
+        RandomizeSingleDrumLane(drumId, _nextWholeBeatStyle);
+        SelectDrum(drumId);
+
+        Debug.Log($"[Random Beat] Randomized drum {drumId} using {_nextWholeBeatStyle} lane rules.");
     }
 
     private void SelectDrum(int drumId)
@@ -1127,7 +1323,7 @@ private void ApplySamplePitch()
         }
 
         // Audition when selecting a drum, so the user can hear it before painting.
-        TriggerDrumNow(_activeDrumId);
+        TriggerDrumNow(_activeDrumId, 1);
 
         // DO NOT save patterns during startup/bind unless saving is enabled.
         if (_allowSaving)
@@ -1159,12 +1355,9 @@ private void ApplySamplePitch()
 
     private void OnGridValueChanged(int r, int c, int v)
     {
-        // Ignore programmatic updates
         if (_suppressGridCallbacks || _suppressGridEvents) return;
 
-        // First real user edit => allow saving from now on
         _allowSaving = true;
-
         EnsureStateLoaded();
 
         if (r < 0 || r >= 2 || c < 0 || c >= 8) return;
@@ -1175,19 +1368,25 @@ private void ApplySamplePitch()
         int lane = _activeDrumId - 1;
         byte bit = (byte)(1 << lane);
 
-        // StepGrid sends v==0 when clearing, v>0 when painting.
-        // We treat it as ON/OFF for the current lane.
-        if (v > 0) _stepMask[step] = (byte)(_stepMask[step] | bit);
-        else       _stepMask[step] = (byte)(_stepMask[step] & ~bit);
+        if (v > 0)
+        {
+            _stepMask[step] = (byte)(_stepMask[step] | bit);
+            SetStepVelocityTier(step, lane, 1); // default medium
+        }
+        else
+        {
+            _stepMask[step] = (byte)(_stepMask[step] & ~bit);
+            SetStepVelocityTier(step, lane, 1);
+        }
 
-        // Keep the UI cell consistent with the current view:
-        // show active drum ID if bit is set, else 0.
-        int shown = 0;
+        int shown = ((_stepMask[step] & bit) != 0)
+            ? GetVisibleVelocityCellValue(_activeDrumId, GetStepVelocityTier(step, lane))
+            : 0;
 
         _suppressGridCallbacks = true;
         try
         {
-            shown = ((_stepMask[step] & bit) != 0) ? _activeDrumId : 0;
+            _grid.SetValue(r, c, 0);
             _grid.SetValue(r, c, shown);
         }
         finally
@@ -1195,17 +1394,15 @@ private void ApplySamplePitch()
             _suppressGridCallbacks = false;
         }
 
-        // ✅ Audition on edit (even while playing)
         if (v > 0)
-            TriggerDrumNow(_activeDrumId);
+            TriggerDrumNow(_activeDrumId, GetStepVelocityTier(step, lane));
 
         SaveDrumState();
         NotifyChainLiveEdited();
 
         if (verbose)
-            Debug.Log($"[DRUM GRID] r={r} c={c} step={step} active={_activeDrumId} v={v} shown={shown} mask=0x{_stepMask[step]:X2}");
-    }
-
+            Debug.Log($"[DRUM GRID] r={r} c={c} step={step} active={_activeDrumId} v={v} shown={shown} tier={GetStepVelocityTier(step, lane)} mask=0x{_stepMask[step]:X2}");
+    }  
     private void OnGridCellClicked(int r, int c)
     {
         if (_suppressGridCallbacks || _suppressGridEvents) return;
@@ -1223,7 +1420,7 @@ private void ApplySamplePitch()
         byte bit = (byte)(1 << lane);
         bool on = (_stepMask[step] & bit) != 0;
 
-        TriggerDrumNow(_activeDrumId);
+        TriggerDrumNow(_activeDrumId, on ? GetStepVelocityTier(step, lane) : 1);
     }
 
     private void RefreshGridForActiveDrum()
@@ -1242,9 +1439,10 @@ private void ApplySamplePitch()
                 int c = step % 8;
 
                 bool on = (_stepMask[step] & bit) != 0;
-                int cellValue = on ? _activeDrumId : 0;
+                int tier = GetStepVelocityTier(step, lane);
+                int cellValue = on ? GetVisibleVelocityCellValue(_activeDrumId, tier) : 0;
 
-                _gridDrum.SetValue(r, c, cellValue);
+                _gridDrum.SetValue(r, c, cellValue, false);
             }
 
             _gridDrum.SetPaintValue(_activeDrumId);
@@ -1254,8 +1452,6 @@ private void ApplySamplePitch()
             _suppressGridCallbacks = false;
         }
     }
-
-
     // ----------------------------
     // Sampler chop scheduling
     // ----------------------------
@@ -1419,6 +1615,290 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
             Debug.Log($"[Sampler] SCHED chop={chopId} t={start:0.000} dur={dur:0.000} slice={s01:0.000}->{e01:0.000} sliceDur={sliceDur:0.000}");
     }
 
+    private void GenerateRandomBeat(RandomBeatStyle style)
+    {
+        EnsureStateLoaded();
+
+        if (_stepMask == null || _stepMask.Length != steps)
+            _stepMask = new byte[steps];
+
+        Array.Clear(_stepMask, 0, _stepMask.Length);
+
+        if (_stepVelocityPacked == null || _stepVelocityPacked.Length != steps)
+            _stepVelocityPacked = new ushort[steps];
+
+        Array.Clear(_stepVelocityPacked, 0, _stepVelocityPacked.Length);
+
+        for (int drumId = 1; drumId <= LANES; drumId++)
+            RandomizeDrumLaneInternal(drumId, style, clearExistingLane: false);
+
+        GenerateRandomSamplePattern(style);
+
+        // Force a visible lane so the user always sees something after randomize.
+        ApplyActiveDrumId(1);
+
+        RefreshGridForActiveDrum();
+        RefreshSampleGrid();
+
+        SaveDrumState();
+        SaveSamplePatternState();
+        NotifyChainLiveEdited();
+    }
+
+    private void RandomizeSingleDrumLane(int drumId, RandomBeatStyle style)
+    {
+        EnsureStateLoaded();
+        RandomizeDrumLaneInternal(drumId, style, clearExistingLane: true);
+        RefreshGridForActiveDrum();
+        SaveDrumState();
+        NotifyChainLiveEdited();
+    }
+
+    private void RandomizeDrumLaneInternal(int drumId, RandomBeatStyle style, bool clearExistingLane)
+    {
+        drumId = Mathf.Clamp(drumId, 1, LANES);
+        int lane = drumId - 1;
+        byte bit = (byte)(1 << lane);
+
+        if (clearExistingLane)
+        {
+            for (int step = 0; step < steps; step++)
+            {
+                _stepMask[step] = (byte)(_stepMask[step] & ~bit);
+                SetStepVelocityTier(step, lane, 1);
+            }
+        }
+
+        for (int step = 0; step < steps; step++)
+        {
+            float chance = GetRandomLaneChance(style, drumId, step);
+            if (NextFloat01() > chance)
+                continue;
+
+            int tier = GetRandomVelocityTier(style, drumId, step);
+            SetStepStateAndVisual(step, lane, true, tier);
+        }
+
+        ApplyLaneAnchors(style, drumId);
+    }
+
+    private void ApplyLaneAnchors(RandomBeatStyle style, int drumId)
+    {
+        if (style == RandomBeatStyle.House)
+        {
+            if (drumId == 1)
+            {
+                ForceLaneStep(drumId, 0, 2);
+                ForceLaneStep(drumId, 4, 1);
+                ForceLaneStep(drumId, 8, 2);
+                ForceLaneStep(drumId, 12, 1);
+            }
+            else if (drumId == 2)
+            {
+                ForceLaneStep(drumId, 4, 2);
+                ForceLaneStep(drumId, 12, 2);
+            }
+            else if (drumId == 4)
+            {
+                ForceLaneStep(drumId, 2, 1);
+                ForceLaneStep(drumId, 6, 1);
+                ForceLaneStep(drumId, 10, 1);
+                ForceLaneStep(drumId, 14, 1);
+            }
+        }
+        else
+        {
+            if (drumId == 1)
+            {
+                ForceLaneStep(drumId, 0, 2);
+                ForceLaneStep(drumId, 7, 1);
+                ForceLaneStep(drumId, 10, 1);
+            }
+            else if (drumId == 2)
+            {
+                ForceLaneStep(drumId, 4, 2);
+                ForceLaneStep(drumId, 12, 2);
+            }
+            else if (drumId == 4)
+            {
+                ForceLaneStep(drumId, 2, 1);
+                ForceLaneStep(drumId, 6, 0);
+                ForceLaneStep(drumId, 10, 1);
+                ForceLaneStep(drumId, 14, 0);
+            }
+        }
+    }
+
+    private void ForceLaneStep(int drumId, int step, int tier)
+    {
+        if (step < 0 || step >= steps) return;
+        int lane = Mathf.Clamp(drumId - 1, 0, LANES - 1);
+        SetStepStateAndVisual(step, lane, true, tier);
+    }
+
+    private void GenerateRandomSamplePattern(RandomBeatStyle style)
+    {
+        if (_sampleChopByStep == null || _sampleChopByStep.Length != steps)
+            _sampleChopByStep = new int[steps];
+
+        Array.Clear(_sampleChopByStep, 0, _sampleChopByStep.Length);
+        _didLoadSamplePattern = true;
+
+        EnsureAppliedChopsLoaded();
+        if (_appliedClip == null)
+            return;
+
+        var available = GetAvailableChopIds();
+        if (available.Count == 0)
+            return;
+
+        if (style == RandomBeatStyle.House)
+        {
+            int[] anchors = { 0, 4, 8, 12 };
+            for (int i = 0; i < anchors.Length; i++)
+            {
+                if (NextFloat01() <= 0.72f)
+                    _sampleChopByStep[anchors[i]] = PickChopId(available, i);
+            }
+
+            int[] extras = { 2, 6, 10, 14, 15 };
+            for (int i = 0; i < extras.Length; i++)
+            {
+                if (_sampleChopByStep[extras[i]] != 0) continue;
+                if (NextFloat01() <= 0.22f)
+                    _sampleChopByStep[extras[i]] = PickChopId(available, i + 4);
+            }
+        }
+        else
+        {
+            int[] phrase = { 0, 3, 6, 8, 11, 14 };
+            int motifA = PickChopId(available, 0);
+            int motifB = PickChopId(available, 1);
+
+            for (int i = 0; i < phrase.Length; i++)
+            {
+                if (NextFloat01() > 0.68f) continue;
+                _sampleChopByStep[phrase[i]] = (i % 2 == 0) ? motifA : motifB;
+            }
+
+            int[] fillSteps = { 5, 7, 13, 15 };
+            for (int i = 0; i < fillSteps.Length; i++)
+            {
+                if (_sampleChopByStep[fillSteps[i]] != 0) continue;
+                if (NextFloat01() <= 0.25f)
+                    _sampleChopByStep[fillSteps[i]] = PickChopId(available, i + 2);
+            }
+        }
+    }
+
+    private List<int> GetAvailableChopIds()
+    {
+        var ids = new List<int>(16);
+        for (int i = 0; i < 16; i++)
+        {
+            if (_sliceEnd01 != null && _sliceStart01 != null && i < _sliceEnd01.Length && i < _sliceStart01.Length)
+            {
+                if (_sliceEnd01[i] > _sliceStart01[i] + 0.0001f)
+                    ids.Add(i + 1);
+            }
+        }
+        return ids;
+    }
+
+    private int PickChopId(List<int> available, int seedOffset)
+    {
+        if (available == null || available.Count == 0)
+            return 0;
+
+        if (_rng == null)
+            _rng = new System.Random(Environment.TickCount);
+
+        seedOffset = Mathf.Abs(seedOffset);
+        int index = seedOffset % available.Count;
+        if (NextFloat01() > 0.35f)
+            index = _rng.Next(available.Count);
+
+        return available[index];
+    }
+
+    private float GetRandomLaneChance(RandomBeatStyle style, int drumId, int step)
+    {
+        bool quarter = (step % 4) == 0;
+        bool offbeat8 = (step % 4) == 2;
+        bool even16 = (step % 2) == 0;
+
+        if (style == RandomBeatStyle.House)
+        {
+            return drumId switch
+            {
+                1 => quarter ? 0.92f : (offbeat8 ? 0.10f : 0.04f),
+                2 => (step == 4 || step == 12) ? 0.95f : (step == 15 ? 0.10f : 0.03f),
+                3 => (step == 4 || step == 12) ? 0.28f : (offbeat8 ? 0.08f : 0.02f),
+                4 => offbeat8 ? 0.88f : (even16 ? 0.18f : 0.10f),
+                5 => (step == 7 || step == 15) ? 0.34f : 0.02f,
+                6 => (step == 0 || step == 8) ? 0.22f : (offbeat8 ? 0.08f : 0.02f),
+                7 => (step == 3 || step == 11) ? 0.18f : 0.02f,
+                8 => (step == 0) ? 0.18f : (step == 15 ? 0.10f : 0.01f),
+                _ => 0f,
+            };
+        }
+
+        return drumId switch
+        {
+            1 => (step == 0) ? 0.95f : ((step == 7 || step == 10 || step == 15) ? 0.48f : ((step == 3 || step == 8) ? 0.20f : 0.03f)),
+            2 => (step == 4 || step == 12) ? 0.95f : 0.02f,
+            3 => (step == 12) ? 0.30f : ((step == 4) ? 0.18f : 0.02f),
+            4 => offbeat8 ? 0.72f : (even16 ? 0.15f : 0.05f),
+            5 => (step == 6 || step == 14) ? 0.18f : 0.01f,
+            6 => (step == 2 || step == 10) ? 0.10f : 0.01f,
+            7 => (step == 3 || step == 15) ? 0.20f : 0.02f,
+            8 => (step == 0) ? 0.08f : (step == 15 ? 0.12f : 0.01f),
+            _ => 0f,
+        };
+    }
+
+    private int GetRandomVelocityTier(RandomBeatStyle style, int drumId, int step)
+    {
+        float roll = NextFloat01();
+
+        if (style == RandomBeatStyle.House)
+        {
+            if (drumId == 1 && step % 4 == 0) return roll < 0.60f ? 2 : 1;
+            if (drumId == 2 && (step == 4 || step == 12)) return 2;
+            if (drumId == 4) return roll < 0.20f ? 0 : 1;
+            if (drumId == 5 || drumId == 7) return roll < 0.60f ? 0 : 1;
+            if (drumId == 8) return 2;
+            return roll < 0.18f ? 0 : (roll > 0.82f ? 2 : 1);
+        }
+
+        if (drumId == 1 && step == 0) return 2;
+        if (drumId == 2 && (step == 4 || step == 12)) return 2;
+        if (drumId == 4) return roll < 0.34f ? 0 : 1;
+        if (drumId == 7) return roll < 0.50f ? 0 : 1;
+        return roll < 0.20f ? 0 : (roll > 0.86f ? 2 : 1);
+    }
+
+    private float NextFloat01()
+    {
+        if (_rng == null)
+            _rng = new System.Random(Environment.TickCount);
+
+        return (float)_rng.NextDouble();
+    }
+
+    private void SaveSamplePatternState()
+    {
+        try
+        {
+            var flat = new int[steps];
+            Array.Copy(_sampleChopByStep, flat, Mathf.Min(_sampleChopByStep.Length, flat.Length));
+
+            KMusicSaveState.SaveIntArray(ProjectPrefs.Key(PrefKey_SampleStepGrid), flat);
+            KMusicSaveState.SaveIntArray(PrefKey_SampleStepGrid, flat);
+        }
+        catch { }
+    }
+
     private void OnPlayClicked()
     {
         if (_playing) return;
@@ -1567,11 +2047,11 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                         {
                             // Use per-drum AudioSources so Unity AudioMixer meters/gain work per channel.
                             if (!IsDrumMuted(drumId))
-                                ScheduleDrum(drumId, _nextStepDspTime);
+                                ScheduleDrum(drumId, _nextStepDspTime, GetDrumGain(drumId) * GetVelocityGain(step, lane));
                         }
                         else
                         {
-                            float vel = GetDrumGain(drumId);
+                            float vel = GetDrumGain(drumId) * GetVelocityGain(step, lane);
                             if (vel > 0f)
                                 _sampler.NoteOnScheduled(note, vel, _nextStepDspTime, end);
                         }
@@ -1652,6 +2132,17 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         return b;
     }
 
+    public byte[] CaptureDrumVelocityData()
+    {
+        return PackVelocityData();
+    }
+
+    public void ApplyDrumVelocityData(byte[] data)
+    {
+        ApplyPackedVelocityDataInternal(data);
+        try { RefreshGridForActiveDrum(); } catch { }
+    }
+
     public void ApplyDrumMask(byte[] mask)
     {
         if (_stepMask == null || _stepMask.Length != steps)
@@ -1680,6 +2171,8 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         // 3) copy loaded data
         if (mask != null)
             Array.Copy(mask, _stepMask, Mathf.Min(mask.Length, _stepMask.Length));
+
+        InitializeDefaultVelocitiesFromMask();
 
         // 4) redraw using your real drawer
         try { RefreshGridForActiveDrum(); } catch { }
@@ -1831,7 +2324,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         _bpmLabel.text = $"{Mathf.RoundToInt(bpm)} BPM";
     }
 
-    private void TriggerDrumNow(int drumId)
+    private void TriggerDrumNow(int drumId, int velocityTier = 1)
     {
         if (_sampler == null) return;
         if (!_noteByDrumId.TryGetValue(drumId, out var note)) return;
@@ -1843,7 +2336,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         if (verbose)
             Debug.Log($"[KMusicDrumSequencer] TRIG drumId={drumId} note={note} clip={clip.name}");
 
-        float vel = GetDrumGain(drumId);
+        float vel = GetDrumGain(drumId) * VelocityTierToGain(velocityTier);
         if (vel > 0f)
             _sampler.NoteOnScheduled(note, vel, start, end);
     }
@@ -1857,36 +2350,302 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
 
     private string DrumLabel(int v)
     {
-        return v switch
-        {
-            1 => "K",
-            2 => "S",
-            3 => "C",
-            4 => "HC",
-            5 => "HO",
-            6 => "RD",
-            7 => "RM",
-            8 => "X",
-            _ => ""
-        };
+        if (v <= 0) return "";
+        int drumId = DecodeDrumIdFromCellValue(v);
+        return GetDrumShortLabel(drumId);
     }
 
     private Color DrumTint(int v)
     {
-        return v switch
+        if (v <= 0) return new Color(0f, 0f, 0f, 0f);
+
+        int drumId = DecodeDrumIdFromCellValue(v);
+        int tier = DecodeVelocityTierFromCellValue(v);
+
+        Color baseColor = drumId switch
         {
-            1 => new Color(0.90f, 0.22f, 0.27f, 1f), // kick
-            2 => new Color(0.96f, 0.50f, 0.00f, 1f), // snare
-            3 => new Color(1.00f, 0.30f, 0.60f, 1f), // clap
-            4 => new Color(0.00f, 0.90f, 1.00f, 1f), // hat c
-            5 => new Color(0.30f, 0.76f, 0.97f, 1f), // hat o
-            6 => new Color(0.60f, 0.36f, 0.90f, 1f), // ride
-            7 => new Color(0.50f, 0.93f, 0.60f, 1f), // rim
-            8 => new Color(1.00f, 0.84f, 0.04f, 1f), // crash
+            1 => new Color(0.90f, 0.22f, 0.27f, 1f),
+            2 => new Color(0.96f, 0.50f, 0.00f, 1f),
+            3 => new Color(1.00f, 0.30f, 0.60f, 1f),
+            4 => new Color(0.00f, 0.90f, 1.00f, 1f),
+            5 => new Color(0.30f, 0.76f, 0.97f, 1f),
+            6 => new Color(0.60f, 0.36f, 0.90f, 1f),
+            7 => new Color(0.50f, 0.93f, 0.60f, 1f),
+            8 => new Color(1.00f, 0.84f, 0.04f, 1f),
             _ => Color.white
+        };
+
+        float brightness = tier switch
+        {
+            2 => 1.20f, // high
+            1 => 1.00f, // medium
+            _ => 0.60f  // low
+        };
+
+        return new Color(
+            Mathf.Clamp01(baseColor.r * brightness),
+            Mathf.Clamp01(baseColor.g * brightness),
+            Mathf.Clamp01(baseColor.b * brightness),
+            1f
+        );
+    }
+    private static string GetVelocityGlyph(int tier)
+    {
+        return tier switch
+        {
+            2 => "■",
+            1 => "▣",
+            _ => "□"
         };
     }
 
+    private static float VelocityTierToGain(int tier)
+    {
+        return tier switch
+        {
+            2 => 1.00f, // high
+            1 => 0.58f, // medium
+            _ => 0.25f  // low
+        };
+    }
+
+    private static int GetVisibleVelocityCellValue(int drumId, int tier)
+    {
+        drumId = Mathf.Clamp(drumId, 1, 8);
+        tier = Mathf.Clamp(tier, 0, 2);
+        return tier switch
+        {
+            2 => drumId + 8,
+            1 => drumId,
+            _ => drumId + 16
+        };
+    }
+
+    private static int DecodeDrumIdFromCellValue(int v)
+    {
+        if (v <= 0) return 0;
+        if (v <= 8) return v;
+        if (v <= 16) return v - 8;
+        if (v <= 24) return v - 16;
+        return Mathf.Clamp(((v - 1) % 8) + 1, 1, 8);
+    }
+
+    private static int DecodeVelocityTierFromCellValue(int v)
+    {
+        if (v <= 0) return 1;
+        if (v <= 8) return 1;
+        if (v <= 16) return 2;
+        if (v <= 24) return 0;
+        return 1;
+    }
+
+    private int GetStepVelocityTier(int step, int lane)
+    {
+        if (_stepVelocityPacked == null || step < 0 || step >= _stepVelocityPacked.Length) return 1;
+        lane = Mathf.Clamp(lane, 0, 7);
+        int shift = lane * 2;
+        return (_stepVelocityPacked[step] >> shift) & 0x3;
+    }
+
+    private void SetStepVelocityTier(int step, int lane, int tier)
+    {
+        if (_stepVelocityPacked == null || _stepVelocityPacked.Length != steps)
+            _stepVelocityPacked = new ushort[steps];
+
+        if (step < 0 || step >= _stepVelocityPacked.Length) return;
+        lane = Mathf.Clamp(lane, 0, 7);
+        tier = Mathf.Clamp(tier, 0, 2);
+
+        int shift = lane * 2;
+        ushort mask = (ushort)(0x3 << shift);
+        ushort packed = _stepVelocityPacked[step];
+        packed = (ushort)(packed & ~mask);
+        packed = (ushort)(packed | (ushort)(tier << shift));
+        _stepVelocityPacked[step] = packed;
+    }
+
+    private float GetVelocityGain(int step, int lane)
+    {
+        return VelocityTierToGain(GetStepVelocityTier(step, lane));
+    }
+
+    private void InitializeDefaultVelocitiesFromMask()
+    {
+        if (_stepVelocityPacked == null || _stepVelocityPacked.Length != steps)
+            _stepVelocityPacked = new ushort[steps];
+
+        Array.Clear(_stepVelocityPacked, 0, _stepVelocityPacked.Length);
+
+        for (int step = 0; step < steps; step++)
+        {
+            byte mask = (step < _stepMask.Length) ? _stepMask[step] : (byte)0;
+            for (int lane = 0; lane < LANES; lane++)
+            {
+                if ((mask & (1 << lane)) != 0)
+                    SetStepVelocityTier(step, lane, 1);
+            }
+        }
+    }
+
+    private byte[] PackVelocityData()
+    {
+        if (_stepVelocityPacked == null || _stepVelocityPacked.Length != steps)
+            InitializeDefaultVelocitiesFromMask();
+
+        byte[] data = new byte[steps * 2];
+        for (int i = 0; i < steps; i++)
+        {
+            ushort packed = _stepVelocityPacked[i];
+            data[i * 2] = (byte)(packed & 0xFF);
+            data[i * 2 + 1] = (byte)((packed >> 8) & 0xFF);
+        }
+        return data;
+    }
+
+    private void ApplyPackedVelocityDataInternal(byte[] data)
+    {
+        if (_stepVelocityPacked == null || _stepVelocityPacked.Length != steps)
+            _stepVelocityPacked = new ushort[steps];
+
+        Array.Clear(_stepVelocityPacked, 0, _stepVelocityPacked.Length);
+
+        if (data == null || data.Length == 0)
+        {
+            InitializeDefaultVelocitiesFromMask();
+            return;
+        }
+
+        int count = Mathf.Min(steps, data.Length / 2);
+        for (int i = 0; i < count; i++)
+            _stepVelocityPacked[i] = (ushort)(data[i * 2] | (data[i * 2 + 1] << 8));
+    }
+
+    private void SetStepStateAndVisual(int step, int lane, bool on, int tier)
+    {
+        if (step < 0 || step >= steps) return;
+        lane = Mathf.Clamp(lane, 0, 7);
+        tier = Mathf.Clamp(tier, 0, 2);
+
+        byte bit = (byte)(1 << lane);
+
+        if (on) _stepMask[step] = (byte)(_stepMask[step] | bit);
+        else _stepMask[step] = (byte)(_stepMask[step] & ~bit);
+
+        SetStepVelocityTier(step, lane, tier);
+
+        if (_gridDrum != null && lane == Mathf.Clamp(_activeDrumId - 1, 0, 7))
+        {
+            int r = step / 8;
+            int c = step % 8;
+            int cellValue = on ? GetVisibleVelocityCellValue(_activeDrumId, tier) : 0;
+
+            _suppressGridCallbacks = true;
+            try
+            {
+                _gridDrum.SetValue(r, c, cellValue, false);
+            }
+            finally
+            {
+                _suppressGridCallbacks = false;
+            }
+        }
+    }
+    private void OnGridStrokePressed(int r, int c, Vector2 localPos, bool isErase)
+    {
+        if (_suppressGridCallbacks || _suppressGridEvents || isErase)
+        {
+            _velocityGestureArmed = false;
+            return;
+        }
+
+        EnsureStateLoaded();
+
+        int step = (r * 8) + c;
+        if (step < 0 || step >= steps)
+        {
+            _velocityGestureArmed = false;
+            return;
+        }
+
+        int lane = Mathf.Clamp(_activeDrumId - 1, 0, 7);
+        bool on = (_stepMask[step] & (1 << lane)) != 0;
+
+        _velocityGestureArmed = true;
+        _velocityGestureMoved = false;
+        _velocityGestureStartedOn = on;
+        _velocityGestureStep = step;
+        _velocityGestureLane = lane;
+
+        // IMPORTANT:
+        // Use the exact same coordinate space that OnStrokePointerMoved gives us.
+        _velocityGestureStartLocal = localPos;
+
+        _velocityGestureTier = on ? GetStepVelocityTier(step, lane) : 1;
+    }
+    private void OnGridStrokePointerMoved(Vector2 localPos)
+    {
+        if (!_velocityGestureArmed) return;
+        if (_velocityGestureStep < 0 || _velocityGestureLane < 0) return;
+
+        // Same coordinate space as press event
+        float dy = _velocityGestureStartLocal.y - localPos.y;
+
+        int newTier = 1; // medium dead zone
+
+        if (dy >= DrumVelocityDragThresholdPx)
+            newTier = 2; // high
+        else if (dy <= -DrumVelocityDragThresholdPx)
+            newTier = 0; // low
+
+        // Do not convert a normal tap into a drag unless user actually leaves the dead zone
+        if (!_velocityGestureMoved && Mathf.Abs(dy) < DrumVelocityDragThresholdPx)
+            return;
+
+        // Once dragging has started, allow returning to medium
+        if (_velocityGestureMoved && newTier == _velocityGestureTier)
+            return;
+
+        _velocityGestureMoved = true;
+        _velocityGestureTier = newTier;
+
+        SetStepStateAndVisual(_velocityGestureStep, _velocityGestureLane, true, _velocityGestureTier);
+        TriggerDrumNow(_velocityGestureLane + 1, _velocityGestureTier);
+    }
+    private void OnGridStrokeReleased(Vector2 localPos, List<Vector2Int> cells, bool isErase)
+    {
+        if (!_velocityGestureArmed) return;
+
+        int step = _velocityGestureStep;
+        int lane = _velocityGestureLane;
+        bool startedOn = _velocityGestureStartedOn;
+        bool moved = _velocityGestureMoved;
+
+        _velocityGestureArmed = false;
+        _velocityGestureMoved = false;
+        _velocityGestureStartedOn = false;
+        _velocityGestureStep = -1;
+        _velocityGestureLane = -1;
+
+        if (isErase || step < 0 || lane < 0)
+            return;
+
+        // If this was a drag, keep the final tier and save it
+        if (moved)
+        {
+            SaveDrumState();
+            NotifyChainLiveEdited();
+            return;
+        }
+
+        // Normal tap on existing note = erase
+        if (startedOn)
+        {
+            SetStepStateAndVisual(step, lane, false, 1);
+            SaveDrumState();
+            NotifyChainLiveEdited();
+        }
+        // tap empty step is still handled by OnGridValueChanged
+    }
     private void EnsureAudioHelmClock()
     {
         _clock = FindObjectOfType<AudioHelmClock>();

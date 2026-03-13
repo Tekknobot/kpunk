@@ -22,6 +22,7 @@ namespace KMusic.Core
         }
 
         private static string KeyDrums(int id)  => $"kmusic.pattern.{id:000}.drum.stepmask";
+        private static string KeyDrumVelocity(int id) => $"kmusic.pattern.{id:000}.drum.velocity";
         private static string KeySample(int id) => $"kmusic.pattern.{id:000}.sample.stepgrid";
         private static string KeySeq(int id)    => $"kmusic.pattern.{id:000}.seq.stepgrid";
         private static string KeyPad(int id)    => $"kmusic.pattern.{id:000}.pad.stepgrid";
@@ -41,6 +42,7 @@ namespace KMusic.Core
 
             // Parallel arrays aligned to ids[]
             public List<string> drumMaskB64 = new();
+            public List<string> drumVelocityB64 = new();
 
             // NOTE: Unity's JsonUtility is very limited. In particular it is unreliable
             // with nested collections like List<int[]>.
@@ -141,6 +143,7 @@ namespace KMusic.Core
 
             // normalize sizes
             byte[] drums = new byte[PatternData.Steps];
+            byte[] drumVelocity = new byte[PatternData.Steps * 2];
             int[] sample = new int[PatternData.Steps];
             int[] seq = new int[PatternData.Steps];
             int[] pad = new int[PatternData.Steps];
@@ -148,6 +151,8 @@ namespace KMusic.Core
 
             if (data.drumMask != null)
                 Array.Copy(data.drumMask, drums, Math.Min(data.drumMask.Length, drums.Length));
+            if (data.drumVelocityData != null)
+                Array.Copy(data.drumVelocityData, drumVelocity, Math.Min(data.drumVelocityData.Length, drumVelocity.Length));
             if (data.sampleSteps != null)
                 Array.Copy(data.sampleSteps, sample, Math.Min(data.sampleSteps.Length, sample.Length));
             if (data.seqSteps != null)
@@ -156,6 +161,7 @@ namespace KMusic.Core
                 Array.Copy(data.padSteps, pad, Math.Min(data.padSteps.Length, pad.Length));
 
             KMusic.KMusicSaveState.SaveBytes(KeyDrums(id), drums);
+            KMusic.KMusicSaveState.SaveBytes(KeyDrumVelocity(id), drumVelocity);
             KMusic.KMusicSaveState.SaveIntArray(KeySample(id), sample);
             KMusic.KMusicSaveState.SaveIntArray(KeySeq(id), seq);
             KMusic.KMusicSaveState.SaveIntArray(KeyPad(id), pad);
@@ -168,11 +174,13 @@ namespace KMusic.Core
             var p = new PatternData();
 
             var drums = KMusic.KMusicSaveState.LoadBytes(KeyDrums(id), PatternData.Steps);
+            var drumVelocity = KMusic.KMusicSaveState.LoadBytes(KeyDrumVelocity(id), PatternData.Steps * 2);
             var sample = KMusic.KMusicSaveState.LoadIntArray(KeySample(id), PatternData.Steps);
             var seq = KMusic.KMusicSaveState.LoadIntArray(KeySeq(id), PatternData.Steps);
             var pad = KMusic.KMusicSaveState.LoadIntArray(KeyPad(id), PatternData.Steps);
 
             if (drums != null) p.drumMask = drums;
+            if (drumVelocity != null) p.drumVelocityData = drumVelocity;
             if (sample != null) p.sampleSteps = sample;
             if (seq != null) p.seqSteps = seq;
             if (pad != null) p.padSteps = pad;
@@ -198,6 +206,7 @@ namespace KMusic.Core
                 int id = idx.ids[i];
                 var p = Load(id);
                 save.drumMaskB64.Add(p.drumMask != null ? Convert.ToBase64String(p.drumMask) : "");
+                save.drumVelocityB64.Add(p.drumVelocityData != null ? Convert.ToBase64String(p.drumVelocityData) : "");
                 save.sampleSteps.Add(new PatternBankSave.IntArrayWrap(p.sampleSteps));
                 save.seqSteps.Add(new PatternBankSave.IntArrayWrap(p.seqSteps));
                 save.padSteps.Add(new PatternBankSave.IntArrayWrap(p.padSteps));
@@ -234,6 +243,14 @@ namespace KMusic.Core
                 }
                 catch { drums = null; }
 
+                byte[] drumVelocity = null;
+                try
+                {
+                    if (save.drumVelocityB64 != null && i < save.drumVelocityB64.Count && !string.IsNullOrEmpty(save.drumVelocityB64[i]))
+                        drumVelocity = Convert.FromBase64String(save.drumVelocityB64[i]);
+                }
+                catch { drumVelocity = null; }
+
                 int[] sample = null;
                 if (save.sampleSteps != null && i < save.sampleSteps.Count && save.sampleSteps[i] != null)
                     sample = save.sampleSteps[i].v;
@@ -250,7 +267,7 @@ namespace KMusic.Core
                 if (save.padChordModes != null && i < save.padChordModes.Count)
                     padMode = save.padChordModes[i];
 
-                Save(id, new PatternData { drumMask = drums, sampleSteps = sample, seqSteps = seq, padSteps = pad, padChordMode = padMode });
+                Save(id, new PatternData { drumMask = drums, drumVelocityData = drumVelocity, sampleSteps = sample, seqSteps = seq, padSteps = pad, padChordMode = padMode });
 
                 if (save.names != null && i < save.names.Count && !string.IsNullOrEmpty(save.names[i]))
                     ProjectPrefs.SetString(KeyName(id), save.names[i]);

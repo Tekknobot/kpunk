@@ -572,6 +572,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private class DrumState
     {
         public string stepMaskB64;
+        public string stepVelocityB64;
         public bool[] mutes;
         public int activeDrumId;
         public int kitIndex;
@@ -677,7 +678,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_drums != null)
         {
             var mask = _drums.CaptureDrumMask();
+            var vel = _drums.CaptureDrumVelocityData();
             data.drums.stepMaskB64 = mask != null ? Convert.ToBase64String(mask) : "";
+            data.drums.stepVelocityB64 = vel != null ? Convert.ToBase64String(vel) : "";
             data.drums.sampleSteps = _drums.CaptureSampleStepsFlat();
             data.drums.mutes = _drums.CaptureDrumMutes();
             data.drums.activeDrumId = _drums.CaptureActiveDrumId();
@@ -834,6 +837,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (_drums != null && data.drums != null)
             {
                 byte[] mask = null;
+                byte[] vel = null;
                 try
                 {
                     if (!string.IsNullOrEmpty(data.drums.stepMaskB64))
@@ -844,7 +848,18 @@ public sealed class KMusicProjectManager : MonoBehaviour
                     mask = null;
                 }
 
+                try
+                {
+                    if (!string.IsNullOrEmpty(data.drums.stepVelocityB64))
+                        vel = Convert.FromBase64String(data.drums.stepVelocityB64);
+                }
+                catch
+                {
+                    vel = null;
+                }
+
                 _drums.ApplyDrumMask(mask);
+                _drums.ApplyDrumVelocityData(vel);
                 _drums.ApplySampleStepsFlat(data.drums.sampleSteps);
                 _drums.ApplyDrumMutes(data.drums.mutes);
                 _drums.ApplyKitIndex(data.drums.kitIndex);

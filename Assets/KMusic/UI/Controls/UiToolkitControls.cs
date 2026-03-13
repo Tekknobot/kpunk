@@ -616,6 +616,10 @@ namespace KMusic.UI
         private readonly Dictionary<VisualElement, Vector2Int> _cellIndex = new Dictionary<VisualElement, Vector2Int>();
 
         private bool _strokeErase = false;
+        private bool _deferredOccupiedStroke = false;
+        private bool _occupiedLeftClickErase = true;
+        private bool _deferOccupiedLeftClick = false;
+        private Vector2 _lastPointerLocalPos = Vector2.zero;
 
         // Optional: show a label per active cell (e.g. "02")
         private bool _showValueLabel = false;
@@ -751,6 +755,9 @@ namespace KMusic.UI
         // Fired when the pointer is released / stroke ends.
         // Carries every (r,c) cell that was painted/erased during the stroke, in order.
         public event Action<List<Vector2Int>, bool> OnStrokeEnded;
+        public event Action<int, int, Vector2, bool> OnStrokePressed;
+        public event Action<Vector2> OnStrokePointerMoved;
+        public event Action<Vector2, List<Vector2Int>, bool> OnStrokeReleased;
 
         // Cells visited during the current stroke (in paint order).
         private readonly List<Vector2Int> _strokeCells = new List<Vector2Int>();
@@ -777,6 +784,16 @@ namespace KMusic.UI
         public void EnableToggleEraseOnSameValue(bool on)
         {
             _toggleEraseOnSameValue = on;
+        }
+
+        public void EnableOccupiedLeftClickErase(bool on)
+        {
+            _occupiedLeftClickErase = on;
+        }
+
+        public void EnableDeferredOccupiedLeftClick(bool on)
+        {
+            _deferOccupiedLeftClick = on;
         }
 
         public void SetActiveTint(Color c)
@@ -1002,8 +1019,10 @@ namespace KMusic.UI
                         _activeErase = gestureErase;
 
                         int existing = GetValue(rr, cc);
-                        bool clickOccupiedErase = (e.button == (int)MouseButton.LeftMouse) && !gestureErase && existing > 0;
+                        bool occupiedLeftClick = (e.button == (int)MouseButton.LeftMouse) && !gestureErase && existing > 0;
+                        bool clickOccupiedErase = _occupiedLeftClickErase && occupiedLeftClick;
 
+                        _deferredOccupiedStroke = _deferOccupiedLeftClick && occupiedLeftClick;
                         _strokeErase = gestureErase || clickOccupiedErase;
 
                         // --- Start stroke (GRID-level pointer capture) ---
@@ -1011,15 +1030,18 @@ namespace KMusic.UI
                         _capturedPointerId = e.pointerId;
                         _lastPaintR = -1;
                         _lastPaintC = -1;
+                        _lastPointerLocalPos = e.localPosition;
                         _strokeCells.Clear();
 
                         OnStrokeStarted?.Invoke(_strokeErase);
+                        OnStrokePressed?.Invoke(rr, cc, e.localPosition, _strokeErase);
 
-                        // ✅ capture pointer on the GRID, not the cell (older UITK uses helper)
+                        // capture pointer on the GRID, not the cell
                         PointerCaptureHelper.CapturePointer(this, e.pointerId);
 
-                        // paint immediately on down
-                        ApplyPaint(rr, cc, _strokeErase);
+                        if (!_deferredOccupiedStroke)
+                            ApplyPaint(rr, cc, _strokeErase);
+
                         _strokeCells.Add(new Vector2Int(rr, cc));
                         _lastPaintR = rr;
                         _lastPaintC = cc;
@@ -1069,6 +1091,15 @@ namespace KMusic.UI
             if (_capturedPointerId != -1 && e.pointerId != _capturedPointerId) return;
             if (!PointerCaptureHelper.HasPointerCapture(this, e.pointerId)) return;
 
+            _lastPointerLocalPos = e.localPosition;
+            OnStrokePointerMoved?.Invoke(e.localPosition);
+
+            if (_deferredOccupiedStroke)
+            {
+                e.StopImmediatePropagation();
+                return;
+            }
+
             if (!TryGetCellAt(e.localPosition, out int r, out int c))
                 return;
 
@@ -1086,6 +1117,7 @@ namespace KMusic.UI
         private void OnGridPointerUp(PointerUpEvent e)
         {
             if (_capturedPointerId != -1 && e.pointerId != _capturedPointerId) return;
+            _lastPointerLocalPos = e.localPosition;
             EndStroke(e.pointerId);
             e.StopImmediatePropagation();
         }
@@ -1093,6 +1125,7 @@ namespace KMusic.UI
         private void OnGridPointerCancel(PointerCancelEvent e)
         {
             if (_capturedPointerId != -1 && e.pointerId != _capturedPointerId) return;
+            _lastPointerLocalPos = e.localPosition;
             EndStroke(e.pointerId);
             e.StopImmediatePropagation();
         }
@@ -1101,11 +1134,16 @@ namespace KMusic.UI
         {
             // Something else stole capture (ScrollView/panel/etc.)
             if (_painting && _strokeCells.Count > 0)
-                OnStrokeEnded?.Invoke(new List<Vector2Int>(_strokeCells), _strokeErase);
+            {
+                var cells = new List<Vector2Int>(_strokeCells);
+                OnStrokeEnded?.Invoke(cells, _strokeErase);
+                OnStrokeReleased?.Invoke(_lastPointerLocalPos, cells, _strokeErase);
+            }
 
             _painting = false;
             _capturedPointerId = -1;
             _strokeErase = false;
+            _deferredOccupiedStroke = false;
             _lastPaintR = -1;
             _lastPaintC = -1;
             _strokeCells.Clear();
@@ -1144,6 +1182,7 @@ namespace KMusic.UI
         {
             bool wasErase = _strokeErase;
             var cells = new List<Vector2Int>(_strokeCells);
+            Vector2 releasePos = _lastPointerLocalPos;
 
             _painting = false;
 
@@ -1154,6 +1193,7 @@ namespace KMusic.UI
                 _capturedPointerId = -1;
 
             _strokeErase = false;
+            _deferredOccupiedStroke = false;
             _activePointerId = -1;
             _activeErase = false;
 
@@ -1162,6 +1202,7 @@ namespace KMusic.UI
             _strokeCells.Clear();
 
             OnStrokeEnded?.Invoke(cells, wasErase);
+            OnStrokeReleased?.Invoke(releasePos, cells, wasErase);
         }
     }
 

@@ -586,6 +586,7 @@ public class KMusicChainUI : MonoBehaviour
         if (_drums != null)
         {
             p.drumMask = _drums.CaptureDrumMask();
+            p.drumVelocityData = _drums.CaptureDrumVelocityData();
             p.sampleSteps = _drums.CaptureSampleStepsFlat();
         }
 
@@ -655,6 +656,9 @@ public class KMusicChainUI : MonoBehaviour
                 {
                     if (p.drumMask != null)
                         _drums.ApplyDrumMask(p.drumMask);
+
+                    if (p.drumVelocityData != null)
+                        _drums.ApplyDrumVelocityData(p.drumVelocityData);
 
                     if (p.sampleSteps != null)
                         _drums.ApplySampleStepsFlat(p.sampleSteps);
