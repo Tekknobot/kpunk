@@ -1,62 +1,103 @@
 fileFormatVersion: 2
 guid: 0daadbceb4ab141f89e68589e76c8adc
-folderAsset: yes
-timeCreated: 1488325019
-licenseType: Store
 PluginImporter:
-  serializedVersion: 1
+  externalObjects: {}
+  serializedVersion: 2
   iconMap: {}
   executionOrder: {}
+  defineConstraints: []
   isPreloaded: 1
+  isOverridable: 0
+  isExplicitlyReferenced: 0
+  validateReferences: 1
   platformData:
-    Android:
+  - first:
+      : Any
+    second:
       enabled: 0
       settings:
+        Exclude Android: 1
+        Exclude Editor: 0
+        Exclude Linux64: 1
+        Exclude OSXUniversal: 0
+        Exclude Win: 1
+        Exclude Win64: 1
+        Exclude iOS: 0
+  - first:
+      : Linux
+    second:
+      enabled: 0
+      settings:
+        CPU: x86
+  - first:
+      : LinuxUniversal
+    second:
+      enabled: 0
+      settings:
+        CPU: None
+  - first:
+      : OSXIntel
+    second:
+      enabled: 1
+      settings:
         CPU: AnyCPU
-    Any:
+  - first:
+      : OSXIntel64
+    second:
+      enabled: 1
+      settings:
+        CPU: AnyCPU
+  - first:
+      Android: Android
+    second:
+      enabled: 0
+      settings:
+        AndroidSharedLibraryType: Executable
+        CPU: ARMv7
+  - first:
+      Any: 
+    second:
       enabled: 0
       settings: {}
-    Editor:
+  - first:
+      Editor: Editor
+    second:
       enabled: 1
       settings:
         CPU: AnyCPU
         DefaultValueInitialized: true
         OS: OSX
-    Linux:
+  - first:
+      Standalone: Linux64
+    second:
       enabled: 0
       settings:
-        CPU: x86
-    Linux64:
-      enabled: 0
-      settings:
-        CPU: x86_64
-    LinuxUniversal:
-      enabled: 0
-      settings:
-        CPU: None
-    OSXIntel:
+        CPU: AnyCPU
+  - first:
+      Standalone: OSXUniversal
+    second:
       enabled: 1
       settings:
         CPU: AnyCPU
-    OSXIntel64:
+  - first:
+      Standalone: Win
+    second:
+      enabled: 0
+      settings:
+        CPU: AnyCPU
+  - first:
+      Standalone: Win64
+    second:
+      enabled: 0
+      settings:
+        CPU: AnyCPU
+  - first:
+      iPhone: iOS
+    second:
       enabled: 1
       settings:
+        AddToEmbeddedBinaries: false
         CPU: AnyCPU
-    OSXUniversal:
-      enabled: 1
-      settings:
-        CPU: AnyCPU
-    Win:
-      enabled: 0
-      settings:
-        CPU: AnyCPU
-    Win64:
-      enabled: 0
-      settings:
-        CPU: AnyCPU
-    iOS:
-      enabled: 0
-      settings:
         CompileFlags: 
         FrameworkDependencies: 
   userData: 
