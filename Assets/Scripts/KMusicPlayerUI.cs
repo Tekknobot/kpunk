@@ -2,12 +2,17 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
+using UnityEngine.Networking;
 using UnityEngine.UIElements;
 using KMusic.UI;
 using KMusic;
 using KMusic.Core;
 using KMusic.Android;
+#if UNITY_IOS && !UNITY_EDITOR
+using KMusic.iOS;
+#endif
 
 public class KMusicPlayerUI : MonoBehaviour
 {
@@ -26,6 +31,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private VisualElement _root;
 
     private Button _btnPlay, _btnStop, _btnPrev, _btnNext, _btnLoad, _btnChop, _btnApply;
+    private Button _btnImport;
     private Label _timeLabel, _durLabel, _trackNameLabel;
     private WaveformView _wave;
     private Button _btnSend;
@@ -74,6 +80,31 @@ public class KMusicPlayerUI : MonoBehaviour
 #endif
 
     private const string PrefKey_LastTrack = "kmusic.player.lastTrack.v1";
+
+
+    private sealed class ImportedTrackInfo
+    {
+        public string absolutePath;
+        public string title;
+        public string subtitle;
+    }
+
+    private readonly List<ImportedTrackInfo> _importedTracks = new();
+
+    private static string ImportedSamplesDir =>
+        Path.Combine(Application.persistentDataPath, "ImportedSamples");
+
+    private static string SharedSamplesDir =>
+        Application.persistentDataPath;
+
+    private static void EnsureImportFolders()
+    {
+        if (!Directory.Exists(SharedSamplesDir))
+            Directory.CreateDirectory(SharedSamplesDir);
+
+        if (!Directory.Exists(ImportedSamplesDir))
+            Directory.CreateDirectory(ImportedSamplesDir);
+    }
 
     private static void SaveLastTrackId(string id)
     {
@@ -208,12 +239,129 @@ public class KMusicPlayerUI : MonoBehaviour
                 }
             }
         }
+
+        if (id.StartsWith("file:"))
+        {
+            string wantPath = id.Substring(5);
+            if (!string.IsNullOrEmpty(wantPath) && File.Exists(wantPath))
+            {
+                StartCoroutine(CoLoadImportedTrackByPath(wantPath, true));
+                return;
+            }
+        }
+    }
+
+
+    private void RefreshImportedTrackList()
+    {
+        _importedTracks.Clear();
+
+        string dir = ImportedSamplesDir;
+        if (!Directory.Exists(dir))
+            return;
+
+        string[] files = Directory.GetFiles(dir);
+        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+
+        for (int i = 0; i < files.Length; i++)
+        {
+            string path = files[i];
+            string ext = Path.GetExtension(path)?.ToLowerInvariant();
+            if (ext != ".wav" && ext != ".mp3" && ext != ".ogg" && ext != ".m4a" && ext != ".aac" && ext != ".mp4")
+                continue;
+
+            _importedTracks.Add(new ImportedTrackInfo
+            {
+                absolutePath = path,
+                title = Path.GetFileNameWithoutExtension(path),
+                subtitle = "Imported • " + Path.GetFileName(path)
+            });
+        }
+    }
+
+    private void LoadImportedTrackByIndex(int index)
+    {
+        RefreshImportedTrackList();
+        if (_importedTracks.Count == 0)
+            return;
+
+        index = Mathf.Clamp(index, 0, _importedTracks.Count - 1);
+        StartCoroutine(CoLoadImportedTrackByPath(_importedTracks[index].absolutePath, true));
+    }
+
+    private IEnumerator CoLoadImportedTrackByPath(string absolutePath, bool persistAsLastTrack)
+    {
+        if (string.IsNullOrEmpty(absolutePath) || !File.Exists(absolutePath))
+            yield break;
+
+        _chops01.Clear();
+        SyncMarkersToWave();
+
+        string url = "file://" + absolutePath.Replace("\\", "/");
+        AudioType type = GuessAudioTypeFromPath(absolutePath);
+
+        using UnityWebRequest req = UnityWebRequestMultimedia.GetAudioClip(url, type);
+        if (req.downloadHandler is DownloadHandlerAudioClip dh)
+        {
+            dh.streamAudio = false;
+            dh.compressed = false;
+        }
+
+        yield return req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+        {
+            Debug.LogWarning("[Player] Imported sample load failed: " + req.error + " path=" + absolutePath);
+            yield break;
+        }
+
+        var loaded = DownloadHandlerAudioClip.GetContent(req);
+        if (loaded == null)
+            yield break;
+
+        _clip = loaded;
+        _clipResourcesPath = "file:" + absolutePath;
+        _clipIndex = -1;
+
+        if (persistAsLastTrack)
+            SaveLastTrackId(_clipResourcesPath);
+
+        KMusicChopState.SetCachedClip(_clipResourcesPath, _clip);
+
+        audioSource.Stop();
+        audioSource.clip = _clip;
+        audioSource.time = 0f;
+
+        _scrub01 = 0f;
+
+        _wave.SetClip(_clip);
+        _wave.SetPlayhead01(0f);
+        RestoreMarkersFromAppliedState();
+        UpdateTimeLabels(0f, _clip.length);
+        UpdateTrackTitle(Path.GetFileNameWithoutExtension(absolutePath));
+        RefreshTrackBrowserList();
+    }
+
+    private static AudioType GuessAudioTypeFromPath(string path)
+    {
+        string ext = Path.GetExtension(path)?.ToLowerInvariant();
+        switch (ext)
+        {
+            case ".mp3": return AudioType.MPEG;
+            case ".wav": return AudioType.WAV;
+            case ".ogg": return AudioType.OGGVORBIS;
+            case ".m4a":
+            case ".aac":
+            case ".mp4": return AudioType.MPEG;
+            default: return AudioType.UNKNOWN;
+        }
     }
 
     private void Awake()
     {
         if (!doc) doc = GetComponent<UIDocument>();
         EnsureDedicatedPlayerAudioSource();
+        EnsureImportFolders();
     }
 
     private void EnsureDedicatedPlayerAudioSource()
@@ -391,23 +539,26 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
         }
 #endif
+        RefreshImportedTrackList();
         RefreshClipList();
-        if (_clips.Length > 0 && _clip == null)
+
+        var lastTrackId = LoadLastTrackId();
+        if (!string.IsNullOrEmpty(lastTrackId))
         {
-            int idx = 0;
-            var last = LoadLastTrackId();
-            if (!string.IsNullOrEmpty(last) && last.StartsWith("res:"))
-            {
-                string wantPath = last.Substring(4);
-                string wantName = wantPath.Contains("/") ? wantPath.Substring(wantPath.LastIndexOf('/') + 1) : wantPath;
-                for (int i = 0; i < _clips.Length; i++)
-                {
-                    if (_clips[i] != null && _clips[i].name == wantName) { idx = i; break; }
-                }
-            }
-            LoadClipByIndex(idx);
+            LoadTrackById(lastTrackId);
         }
-        else if (_clips.Length == 0) UpdateTrackTitle("NO TRACKS");
+        else if (_clips.Length > 0 && _clip == null)
+        {
+            LoadClipByIndex(0);
+        }
+        else if (_importedTracks.Count > 0 && _clip == null)
+        {
+            LoadImportedTrackByIndex(0);
+        }
+        else if (_clips.Length == 0)
+        {
+            UpdateTrackTitle(_importedTracks.Count > 0 ? "IMPORTED SAMPLES" : "NO TRACKS");
+        }
 
         RefreshTrackBrowserList();
     }
@@ -727,7 +878,13 @@ public class KMusicPlayerUI : MonoBehaviour
         closeBtn.AddToClassList("km-project-toolbar-btn");
         closeBtn.AddToClassList("km-track-close");
 
+        _btnImport = new Button(BeginImportSample) { text = "IMPORT" };
+        _btnImport.AddToClassList("km-pillbtn");
+        _btnImport.AddToClassList("km-project-toolbar-btn");
+        _btnImport.AddToClassList("km-track-import");
+
         header.Add(title);
+        header.Add(_btnImport);
         header.Add(closeBtn);
 
         _trackBrowserSearch = new TextField();
@@ -841,6 +998,25 @@ public class KMusicPlayerUI : MonoBehaviour
         }
 #endif
 
+        RefreshImportedTrackList();
+        for (int i = 0; i < _importedTracks.Count; i++)
+        {
+            var track = _importedTracks[i];
+            if (track == null || string.IsNullOrEmpty(track.absolutePath))
+                continue;
+
+            int idx = i;
+            string id = "file:" + track.absolutePath;
+            items.Add(new TrackBrowserItem
+            {
+                Title = track.title,
+                Subtitle = track.subtitle,
+                SearchText = track.title + " " + track.subtitle + " " + track.absolutePath,
+                IsCurrent = string.Equals(_clipResourcesPath, id, StringComparison.Ordinal),
+                OnPick = () => LoadImportedTrackByIndex(idx)
+            });
+        }
+
         RefreshClipList();
         if (_clips != null)
         {
@@ -866,6 +1042,35 @@ public class KMusicPlayerUI : MonoBehaviour
         }
 
         return items;
+    }
+
+
+    private void BeginImportSample()
+    {
+#if UNITY_IOS && !UNITY_EDITOR
+        IOSAudioFileImporter.PickAudioFile(gameObject.name, nameof(OnIOSSampleImported), nameof(OnIOSSampleImportCancelled));
+#else
+        UpdateTrackTitle("IMPORT AVAILABLE ON iPHONE BUILD");
+#endif
+    }
+
+    public void OnIOSSampleImported(string importedAbsolutePath)
+    {
+        if (string.IsNullOrEmpty(importedAbsolutePath))
+        {
+            UpdateTrackTitle("IMPORT FAILED");
+            return;
+        }
+
+        RefreshImportedTrackList();
+        RefreshTrackBrowserList();
+        StartCoroutine(CoLoadImportedTrackByPath(importedAbsolutePath, true));
+        UpdateTrackTitle("IMPORTED SAMPLE");
+    }
+
+    public void OnIOSSampleImportCancelled(string _)
+    {
+        UpdateTrackTitle("IMPORT CANCELLED");
     }
 
     private void OnPlayClicked()
