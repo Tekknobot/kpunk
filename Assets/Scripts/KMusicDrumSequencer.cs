@@ -280,7 +280,9 @@ public class KMusicDrumSequencer : MonoBehaviour
     private int _velocityGestureLane = -1;
     private Vector2 _velocityGestureStartLocal = Vector2.zero;
     private int _velocityGestureTier = 1;
-    private const float DrumVelocityDragThresholdPx = 18f;
+    private const float DrumVelocityDragThresholdPx = 42f;
+    private const float DrumVelocityDragHorizontalTolerancePx = 16f;
+    private const float DrumVelocityDragAxisBias = 1.35f;
     
     // Tracks whether applied chops changed since last load
     private int _appliedRevisionSeen = -1;
@@ -2589,6 +2591,24 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
 
         // Same coordinate space as press event
         float dy = _velocityGestureStartLocal.y - localPos.y;
+        float dx = localPos.x - _velocityGestureStartLocal.x;
+        float absDy = Mathf.Abs(dy);
+        float absDx = Mathf.Abs(dx);
+
+        // On touch devices, slight thumb roll can create enough vertical jitter to accidentally
+        // turn an intended erase tap into a velocity drag. Require a deliberate, mostly vertical
+        // gesture before arming velocity edits.
+        if (!_velocityGestureMoved)
+        {
+            if (absDy < DrumVelocityDragThresholdPx)
+                return;
+
+            if (absDx > DrumVelocityDragHorizontalTolerancePx)
+                return;
+
+            if (absDy < (absDx * DrumVelocityDragAxisBias))
+                return;
+        }
 
         int newTier = 1; // medium dead zone
 
@@ -2597,11 +2617,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         else if (dy <= -DrumVelocityDragThresholdPx)
             newTier = 0; // low
 
-        // Do not convert a normal tap into a drag unless user actually leaves the dead zone
-        if (!_velocityGestureMoved && Mathf.Abs(dy) < DrumVelocityDragThresholdPx)
-            return;
-
-        // Once dragging has started, allow returning to medium
+        // Once dragging has started, allow returning to medium without re-triggering identical tiers.
         if (_velocityGestureMoved && newTier == _velocityGestureTier)
             return;
 

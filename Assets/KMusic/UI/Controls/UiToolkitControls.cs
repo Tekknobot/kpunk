@@ -1030,11 +1030,12 @@ namespace KMusic.UI
                         _capturedPointerId = e.pointerId;
                         _lastPaintR = -1;
                         _lastPaintC = -1;
-                        _lastPointerLocalPos = e.localPosition;
+                        Vector2 gridLocalPos = this.WorldToLocal(cell.LocalToWorld(e.localPosition));
+                        _lastPointerLocalPos = gridLocalPos;
                         _strokeCells.Clear();
 
                         OnStrokeStarted?.Invoke(_strokeErase);
-                        OnStrokePressed?.Invoke(rr, cc, e.localPosition, _strokeErase);
+                        OnStrokePressed?.Invoke(rr, cc, gridLocalPos, _strokeErase);
 
                         // capture pointer on the GRID, not the cell
                         PointerCaptureHelper.CapturePointer(this, e.pointerId);
