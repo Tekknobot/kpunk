@@ -613,6 +613,206 @@ namespace KMusic
                 ProjectPrefs.Save();
             }
         }
+        public void RandomizeMusicalProgression()
+        {
+            if (!TryEnsureRandomizeGridBound())
+                return;
+
+            var plan = KMusicSongRandomizePlan.ForceNewPlan(1);
+            GenerateProgressionArrays(out var flat, out var runs, out var mode, 0, 1, plan);
+            _mode = mode;
+            RefreshChordButtons();
+
+            bool hadSaving = _allowSaving;
+            _allowSaving = true;
+            ApplyPadStepsFlat(flat, runs);
+            _allowSaving = hadSaving;
+            RebuildSequenceNow();
+
+            if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+            _chainUI?.NotifyLiveEdited();
+        }
+
+        public void RandomizeMusicalProgressionAcrossChain()
+        {
+            if (!TryEnsureRandomizeGridBound())
+                return;
+
+            if (!KMusicChainRandomizeUtil.TryGetContext(out var chain, out int currentBar, out int currentPatternId))
+            {
+                RandomizeMusicalProgression();
+                return;
+            }
+
+            int[] barPatternIds = KMusicChainRandomizeUtil.EnsureUniquePatternIdsPerBar(
+                chain,
+                currentBar,
+                currentPatternId,
+                CaptureLivePatternData);
+
+            int barCount = barPatternIds != null ? barPatternIds.Length : 0;
+            var plan = KMusicSongRandomizePlan.ForceNewPlan(Mathf.Max(1, barCount));
+            ChordMode sharedMode = (plan != null && plan.isMinor != 0) ? ChordMode.Minor : ChordMode.Major;
+            bool modeSet = false;
+
+            for (int bar = 0; bar < barCount; bar++)
+            {
+                GenerateProgressionArrays(out var flat, out var runs, out var mode, bar, barCount, plan);
+                if (!modeSet)
+                {
+                    sharedMode = mode;
+                    modeSet = true;
+                }
+                mode = sharedMode;
+
+                int pid = barPatternIds[bar];
+                var pattern = PatternBank.Load(pid) ?? new PatternData();
+                pattern.padSteps = new int[PatternData.Steps];
+                Array.Copy(flat, pattern.padSteps, Mathf.Min(flat.Length, pattern.padSteps.Length));
+                pattern.padChordMode = (int)mode;
+                PatternBank.Save(pid, pattern);
+
+                if (bar == currentBar)
+                {
+                    _mode = mode;
+                    RefreshChordButtons();
+
+                    bool hadSaving = _allowSaving;
+                    _allowSaving = true;
+                    ApplyPadStepsFlat(flat, runs);
+                    _allowSaving = hadSaving;
+                    RebuildSequenceNow();
+                }
+            }
+
+            chain.Save();
+            if (_chainUI == null) _chainUI = FindObjectOfType<KMusicChainUI>();
+            _chainUI?.NotifyLiveEdited();
+        }
+
+        private bool TryEnsureRandomizeGridBound()
+        {
+            if (_step == null && _doc != null && _doc.rootVisualElement != null)
+            {
+                var root = _doc.rootVisualElement;
+                if (_piano == null) _piano = root.Q<PianoRollGrid>(pianoRollName);
+                if (_step == null) _step = root.Q<StepGrid>(stepGridName);
+            }
+
+            if (_step == null)
+            {
+                Debug.LogWarning("[KMusicChordTrackUI] RandomizeMusicalProgression skipped: StepGrid is not bound.");
+                return false;
+            }
+
+            return true;
+        }
+
+        private PatternData CaptureLivePatternData()
+        {
+            var p = new PatternData();
+            var pad = CapturePadStepsFlat();
+            if (pad != null)
+                Array.Copy(pad, p.padSteps, Mathf.Min(pad.Length, p.padSteps.Length));
+            p.padChordMode = CaptureChordMode();
+            return p;
+        }
+
+        private void GenerateProgressionArrays(out int[] flat, out int[] runs, out ChordMode mode, int barIndex, int totalBars, KMusicSongRandomizePlanData plan)
+        {
+            int rows = _step.RowCount;
+            int cols = _step.ColCount;
+            int total = rows * cols;
+            flat = new int[total];
+            runs = new int[total];
+            mode = ChordMode.Major;
+            if (rows <= 0 || cols <= 0 || total <= 0)
+                return;
+
+            int maxValueId = (_piano != null) ? Mathf.Max(1, _piano.RowCount * _piano.ColCount) : Mathf.Max(1, total);
+            plan = plan ?? KMusicSongRandomizePlan.EnsurePlan(Mathf.Max(1, totalBars));
+            bool isMinor = plan != null && plan.isMinor != 0;
+            mode = isMinor ? ChordMode.Minor : ChordMode.Major;
+
+            int degree = 1;
+            if (plan != null && plan.chordDegrees != null && plan.chordDegrees.Length > 0)
+                degree = plan.chordDegrees[Mathf.Clamp(barIndex, 0, plan.chordDegrees.Length - 1)];
+
+            int tonic = plan != null ? plan.tonicSemitone : 0;
+            int rootValueId = plan != null ? plan.rootValueId : 1 + tonic;
+            int chordValueId = KMusicSongRandomizePlan.DegreeToValueId(rootValueId, isMinor, degree, maxValueId);
+            KMusicChordRhythmKind rhythm = KMusicSongRandomizePlan.GetChordRhythm(plan, barIndex);
+
+            int[] starts;
+            int[] lengths;
+            if (barIndex == totalBars - 1)
+            {
+                starts = new[] { 2, 6, 10, 12 };
+                lengths = new[] { 2, 2, 2, 4 };
+            }
+            else
+            {
+                switch (rhythm)
+                {
+                    default:
+                    case KMusicChordRhythmKind.OffbeatStabs:
+                        starts = new[] { 2, 6, 10, 14 };
+                        lengths = new[] { 2, 2, 2, 2 };
+                        break;
+                    case KMusicChordRhythmKind.PushPattern:
+                        starts = new[] { 1, 4, 7, 10, 13 };
+                        lengths = new[] { 2, 2, 2, 2, 2 };
+                        break;
+                    case KMusicChordRhythmKind.AnthemLift:
+                        starts = new[] { 2, 6, 8, 10, 12, 14 };
+                        lengths = new[] { 2, 2, 1, 1, 1, 1 };
+                        break;
+                    case KMusicChordRhythmKind.LateOffbeats:
+                        starts = new[] { 3, 7, 11, 15 };
+                        lengths = new[] { 1, 1, 1, 1 };
+                        break;
+                    case KMusicChordRhythmKind.DeepSparse:
+                        starts = new[] { 5, 11, 14 };
+                        lengths = new[] { 2, 2, 1 };
+                        break;
+                    case KMusicChordRhythmKind.Bounce:
+                        starts = new[] { 0, 3, 6, 10, 14 };
+                        lengths = new[] { 1, 1, 1, 2, 1 };
+                        break;
+                    case KMusicChordRhythmKind.DenseGroove:
+                        starts = new[] { 1, 3, 6, 9, 11, 14 };
+                        lengths = new[] { 1, 1, 2, 1, 1, 1 };
+                        break;
+                    case KMusicChordRhythmKind.Hold:
+                        starts = new[] { 0, 8, 12 };
+                        lengths = new[] { 8, 4, 4 };
+                        break;
+                }
+            }
+
+            for (int i = 0; i < starts.Length; i++)
+            {
+                int startIndex = starts[i];
+                if (startIndex < 0 || startIndex >= total)
+                    continue;
+
+                int len = Mathf.Clamp(lengths[Mathf.Min(i, lengths.Length - 1)], 1, total - startIndex);
+                if (flat[startIndex] > 0)
+                    continue;
+
+                flat[startIndex] = chordValueId;
+                runs[startIndex] = len;
+                for (int k = 1; k < len && (startIndex + k) < total; k++)
+                    flat[startIndex + k] = chordValueId;
+            }
+
+            if (flat[0] <= 0 && rhythm == KMusicChordRhythmKind.Hold)
+            {
+                flat[0] = chordValueId;
+                runs[0] = Mathf.Clamp(total, 1, total);
+            }
+        }
+
         public int CaptureChordMode() => (int)_mode;
 
         public void ApplyChordMode(int mode)
