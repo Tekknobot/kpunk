@@ -931,7 +931,607 @@ namespace KMusic.UI
             }
 
             _sequenceBuilt = false;
-        }        public void RebuildSynthSequenceNow()
+        }        public void RandomizeMusicalPhrase()
+        {
+            if (!TryEnsureRandomizeGridBound())
+                return;
+
+            var plan = KMusicSongRandomizePlan.ForceNewPlan(1);
+            GenerateMusicalPhraseArrays(out var flat, out var runs, 0, 1, -1, plan);
+
+            bool hadSaving = _allowSaving;
+            _allowSaving = true;
+            ApplySeqStepsFlat(flat, runs);
+            _allowSaving = hadSaving;
+            RebuildSynthSequenceNow();
+
+            var chain = FindObjectOfType<KMusicChainUI>();
+            chain?.NotifyLiveEdited();
+        }
+
+        public void RandomizeMusicalPhraseAcrossChain()
+        {
+            if (!TryEnsureRandomizeGridBound())
+                return;
+
+            if (!KMusicChainRandomizeUtil.TryGetContext(out var chain, out int currentBar, out int currentPatternId))
+            {
+                RandomizeMusicalPhrase();
+                return;
+            }
+
+            int[] barPatternIds = KMusicChainRandomizeUtil.EnsureUniquePatternIdsPerBar(
+                chain,
+                currentBar,
+                currentPatternId,
+                CaptureLivePatternData);
+
+            int barCount = barPatternIds != null ? barPatternIds.Length : 0;
+            var plan = KMusicSongRandomizePlan.ForceNewPlan(Mathf.Max(1, barCount));
+            int previousLastValue = -1;
+
+            for (int bar = 0; bar < barCount; bar++)
+            {
+                GenerateMusicalPhraseArrays(out var flat, out var runs, bar, barCount, previousLastValue, plan);
+                previousLastValue = FindLastNonZero(flat, previousLastValue);
+
+                int pid = barPatternIds[bar];
+                var pattern = PatternBank.Load(pid) ?? new PatternData();
+                pattern.seqSteps = new int[PatternData.Steps];
+                Array.Copy(flat, pattern.seqSteps, Mathf.Min(flat.Length, pattern.seqSteps.Length));
+                PatternBank.Save(pid, pattern);
+
+                if (bar == currentBar)
+                {
+                    bool hadSaving = _allowSaving;
+                    _allowSaving = true;
+                    ApplySeqStepsFlat(flat, runs);
+                    _allowSaving = hadSaving;
+                    RebuildSynthSequenceNow();
+                }
+            }
+
+            chain.Save();
+            var chainUi = FindObjectOfType<KMusicChainUI>();
+            chainUi?.NotifyLiveEdited();
+        }
+
+        private bool TryEnsureRandomizeGridBound()
+        {
+            if (_step == null && _doc != null && _doc.rootVisualElement != null)
+            {
+                _root = _doc.rootVisualElement;
+                if (_piano == null) _piano = _root.Q<PianoRollGrid>(pianoRollName);
+                if (_step == null) _step = _root.Q<StepGrid>(stepGridName);
+            }
+
+            if (_step == null)
+            {
+                Debug.LogWarning("[PianoRollPainter] RandomizeMusicalPhrase skipped: StepGrid is not bound.");
+                return false;
+            }
+
+            return true;
+        }
+
+        private PatternData CaptureLivePatternData()
+        {
+            var p = new PatternData();
+            var seq = CaptureSeqStepsFlat();
+            if (seq != null)
+                Array.Copy(seq, p.seqSteps, Mathf.Min(seq.Length, p.seqSteps.Length));
+            return p;
+        }
+
+
+        private void GenerateMusicalPhraseArrays(out int[] flat, out int[] runs, int barIndex, int totalBars, int previousLastValue, KMusicSongRandomizePlanData plan)
+        {
+            int rows = _step.RowCount;
+            int cols = _step.ColCount;
+            int total = rows * cols;
+            flat = new int[total];
+            runs = new int[total];
+            if (rows <= 0 || cols <= 0 || total <= 0)
+                return;
+
+            int maxValueId = (_piano != null) ? Mathf.Max(1, _piano.RowCount * _piano.ColCount) : Mathf.Max(1, total);
+            plan = plan ?? KMusicSongRandomizePlan.EnsurePlan(Mathf.Max(1, totalBars));
+
+            bool isMinor = plan != null && plan.isMinor != 0;
+            int tonic = plan != null ? plan.tonicSemitone : 0;
+            int degree = 1;
+            if (plan != null && plan.chordDegrees != null && plan.chordDegrees.Length > 0)
+                degree = plan.chordDegrees[Mathf.Clamp(barIndex, 0, plan.chordDegrees.Length - 1)];
+
+            KMusicPhraseKind phraseKind = KMusicPhraseKind.Hook;
+            if (plan != null && plan.phraseKinds != null && plan.phraseKinds.Length > 0)
+                phraseKind = (KMusicPhraseKind)plan.phraseKinds[Mathf.Clamp(barIndex, 0, plan.phraseKinds.Length - 1)];
+
+            int[] chordPitchClasses = KMusicSongRandomizePlan.BuildChordPitchClasses(tonic, isMinor, degree);
+            int[] scaleOffsets = KMusicSongRandomizePlan.GetScaleOffsets(isMinor);
+            KMusicChordRhythmKind chordRhythm = KMusicSongRandomizePlan.GetChordRhythm(plan, barIndex);
+
+            int melodyBase = 1 + tonic + Mathf.Clamp((plan != null ? plan.melodyBaseOctave : 1), 0, 3) * 12;
+            int preferredStart = previousLastValue > 0 ? previousLastValue : melodyBase;
+            preferredStart = KMusicSongRandomizePlan.FindNearestValueIdForPitchClass(preferredStart, chordPitchClasses[0], maxValueId);
+            int currentValue = Mathf.Clamp(preferredStart, 1, maxValueId);
+
+            int motifA = KMusicSongRandomizePlan.FindNearestValueIdForPitchClass(currentValue, chordPitchClasses[0], maxValueId);
+            int motifB = KMusicSongRandomizePlan.FindNearestValueIdForPitchClass(motifA + 2, chordPitchClasses[1], maxValueId);
+            int motifC = KMusicSongRandomizePlan.FindNearestValueIdForPitchClass(motifB + 2, chordPitchClasses[2], maxValueId);
+            int motifHigh = KMusicSongRandomizePlan.FindNearestValueIdForPitchClass(motifC + 5, chordPitchClasses[1], maxValueId);
+            int passing = KMusicSongRandomizePlan.FindNearestValueIdForPitchClass(motifB + 1, KMusicSongRandomizePlan.DegreeToSemitone(tonic, isMinor, degree + 1), maxValueId);
+            int tension = KMusicSongRandomizePlan.FindNearestValueIdForPitchClass(motifC + 1, KMusicSongRandomizePlan.DegreeToSemitone(tonic, isMinor, degree + 6), maxValueId);
+
+            ChooseMelodyPattern(
+                phraseKind,
+                chordRhythm,
+                barIndex,
+                totalBars,
+                total,
+                degree,
+                motifA,
+                motifB,
+                motifC,
+                motifHigh,
+                passing,
+                tension,
+                out var starts,
+                out var lengths,
+                out var notes);
+
+            for (int i = 0; i < starts.Length; i++)
+            {
+                int startIndex = starts[i];
+                if (startIndex < 0 || startIndex >= total)
+                    continue;
+
+                int valueId = ClampToNearestScaleValue(notes[Mathf.Min(i, notes.Length - 1)], tonic, scaleOffsets, maxValueId);
+                int runLen = Mathf.Clamp(lengths[Mathf.Min(i, lengths.Length - 1)], 1, total - startIndex);
+
+                if (flat[startIndex] > 0)
+                    continue;
+
+                flat[startIndex] = valueId;
+                runs[startIndex] = runLen;
+                for (int k = 1; k < runLen && (startIndex + k) < total; k++)
+                    flat[startIndex + k] = valueId;
+                currentValue = valueId;
+            }
+
+            if (CountRunStarts(runs) < 3)
+            {
+                int[] chordStarts;
+                int[] chordLengths;
+                GetChordRhythmStartsAndLengths(chordRhythm, total, out chordStarts, out chordLengths);
+                int rescueCount = Mathf.Min(chordStarts.Length, 3);
+                for (int i = 0; i < rescueCount; i++)
+                {
+                    int idx = Mathf.Clamp(chordStarts[i] + ((i % 2 == 0) ? -1 : 1), 0, total - 1);
+                    if (flat[idx] > 0)
+                        continue;
+
+                    int note = (i % 3 == 0) ? motifA : ((i % 3 == 1) ? motifB : motifC);
+                    flat[idx] = ClampToNearestScaleValue(note, tonic, scaleOffsets, maxValueId);
+                    runs[idx] = 1;
+                }
+            }
+
+            if (barIndex == totalBars - 1)
+            {
+                int cadenceIndex = Mathf.Max(0, total - 2);
+                int cadenceValue = KMusicSongRandomizePlan.FindNearestValueIdForPitchClass(currentValue, chordPitchClasses[0], maxValueId);
+                flat[cadenceIndex] = cadenceValue;
+                runs[cadenceIndex] = Mathf.Max(runs[cadenceIndex], Mathf.Min(2, total - cadenceIndex));
+                for (int k = 1; k < runs[cadenceIndex] && cadenceIndex + k < total; k++)
+                    flat[cadenceIndex + k] = cadenceValue;
+            }
+        }
+
+        private static void ChooseMelodyPattern(
+            KMusicPhraseKind phraseKind,
+            KMusicChordRhythmKind chordRhythm,
+            int barIndex,
+            int totalBars,
+            int totalSteps,
+            int degree,
+            int motifA,
+            int motifB,
+            int motifC,
+            int motifHigh,
+            int passing,
+            int tension,
+            out int[] starts,
+            out int[] lengths,
+            out int[] notes)
+        {
+            bool lastBar = barIndex == totalBars - 1;
+            int variant = PositiveMod(barIndex + degree + (int)phraseKind, 4);
+
+            int[] chordStarts;
+            int[] chordLengths;
+            GetChordRhythmStartsAndLengths(chordRhythm, totalSteps, out chordStarts, out chordLengths);
+
+            if (lastBar)
+            {
+                starts = new[] { 2, 6, 10, 14 };
+                lengths = new[] { 1, 1, 2, 2 };
+                notes = new[] { motifB, motifC, motifB, motifA };
+                return;
+            }
+
+            switch (phraseKind)
+            {
+                default:
+                case KMusicPhraseKind.Hook:
+                    if (variant == 0)
+                    {
+                        starts = ShiftAndClampStarts(chordStarts, totalSteps, 1, 5);
+                        lengths = BuildUniformLengths(starts.Length, 1, 2);
+                        notes = BuildRepeatingNotes(starts.Length, motifA, motifB, motifC, motifB);
+                    }
+                    else if (variant == 1)
+                    {
+                        starts = ShiftAndClampStarts(chordStarts, totalSteps, -1, 5);
+                        lengths = BuildUniformLengths(starts.Length, 1, 1);
+                        notes = BuildRepeatingNotes(starts.Length, motifB, motifA, passing, motifC);
+                    }
+                    else if (variant == 2)
+                    {
+                        starts = BuildBetweenStarts(chordStarts, totalSteps, 4, false);
+                        lengths = BuildUniformLengths(starts.Length, 1, 2);
+                        notes = BuildRepeatingNotes(starts.Length, motifA, motifB, motifC, tension);
+                    }
+                    else
+                    {
+                        starts = new[] { 0, 3, 6, 8, 11, 14 };
+                        lengths = new[] { 1, 1, 2, 1, 1, 2 };
+                        notes = new[] { motifA, motifB, motifC, motifB, motifC, motifA };
+                    }
+                    break;
+
+                case KMusicPhraseKind.Answer:
+                    starts = (variant % 2 == 0)
+                        ? new[] { 1, 5, 9, 12, 15 }
+                        : ShiftAndClampStarts(chordStarts, totalSteps, 2, 4);
+                    lengths = (variant % 2 == 0)
+                        ? new[] { 1, 1, 1, 2, 1 }
+                        : BuildUniformLengths(starts.Length, 1, 1);
+                    notes = (variant % 2 == 0)
+                        ? new[] { motifB, motifA, passing, motifC, motifA }
+                        : BuildRepeatingNotes(starts.Length, motifB, passing, motifA, motifC);
+                    break;
+
+                case KMusicPhraseKind.Ascend:
+                case KMusicPhraseKind.HouseLift:
+                    starts = (variant % 2 == 0)
+                        ? new[] { 2, 6, 9, 11, 13, 15 }
+                        : new[] { 1, 4, 7, 10, 12, 14 };
+                    lengths = BuildUniformLengths(starts.Length, 1, 1);
+                    notes = (variant % 2 == 0)
+                        ? new[] { motifA, motifB, motifC, passing, tension, motifHigh }
+                        : new[] { motifA, motifB, passing, motifC, tension, motifHigh };
+                    break;
+
+                case KMusicPhraseKind.Descend:
+                    starts = new[] { 1, 4, 7, 10, 12, 14 };
+                    lengths = new[] { 1, 1, 1, 1, 1, 2 };
+                    notes = new[] { motifHigh, motifC, motifB, passing, motifA, motifA };
+                    break;
+
+                case KMusicPhraseKind.Arp:
+                    starts = (variant % 2 == 0)
+                        ? ShiftAndClampStarts(chordStarts, totalSteps, 0, 6)
+                        : new[] { 0, 2, 4, 6, 8, 10, 12, 14 };
+                    lengths = BuildUniformLengths(starts.Length, 1, 2);
+                    notes = BuildRepeatingNotes(starts.Length, motifA, motifB, motifC, motifB, motifA, motifB, motifC, tension);
+                    break;
+
+                case KMusicPhraseKind.Sustain:
+                    starts = new[] { 2, 10 };
+                    lengths = new[] { 6, 6 };
+                    notes = new[] { motifA, motifB };
+                    break;
+
+                case KMusicPhraseKind.Sparse:
+                    starts = BuildBetweenStarts(chordStarts, totalSteps, 4, true);
+                    lengths = BuildUniformLengths(starts.Length, 1, 1);
+                    notes = BuildRepeatingNotes(starts.Length, motifA, motifB, motifC, motifA);
+                    break;
+
+                case KMusicPhraseKind.Pulse:
+                    starts = ShiftAndClampStarts(chordStarts, totalSteps, 0, 4);
+                    lengths = BuildUniformLengths(starts.Length, 1, 1);
+                    notes = BuildRepeatingNotes(starts.Length, motifA, motifB, motifC, motifA);
+                    break;
+
+                case KMusicPhraseKind.HouseStab:
+                    if (variant == 0)
+                    {
+                        starts = ShiftAndClampStarts(chordStarts, totalSteps, 1, 4);
+                        lengths = BuildUniformLengths(starts.Length, 1, 1);
+                        notes = BuildRepeatingNotes(starts.Length, motifC, motifB, motifA, motifB);
+                    }
+                    else if (variant == 1)
+                    {
+                        starts = ShiftAndClampStarts(chordStarts, totalSteps, -1, 4);
+                        lengths = BuildUniformLengths(starts.Length, 1, 1);
+                        notes = BuildRepeatingNotes(starts.Length, motifB, motifC, motifA, motifB);
+                    }
+                    else if (variant == 2)
+                    {
+                        starts = new[] { 1, 5, 9, 13, 15 };
+                        lengths = new[] { 1, 1, 1, 1, 1 };
+                        notes = new[] { motifA, motifB, motifC, motifB, motifA };
+                    }
+                    else
+                    {
+                        starts = BuildBetweenStarts(chordStarts, totalSteps, 4, false);
+                        lengths = BuildUniformLengths(starts.Length, 1, 1);
+                        notes = BuildRepeatingNotes(starts.Length, motifC, motifB, motifA, passing);
+                    }
+                    break;
+
+                case KMusicPhraseKind.HouseCall:
+                    if (variant % 2 == 0)
+                    {
+                        starts = new[] { 2, 4, 6, 10, 12, 14 };
+                        lengths = new[] { 1, 1, 2, 1, 1, 2 };
+                        notes = new[] { motifA, motifB, motifC, motifA, motifB, motifC };
+                    }
+                    else
+                    {
+                        starts = ShiftAndClampStarts(chordStarts, totalSteps, 1, 6);
+                        lengths = new[] { 1, 1, 2, 1, 1, 2 };
+                        notes = new[] { motifA, motifB, motifC, motifB, motifA, motifC };
+                    }
+                    break;
+            }
+
+            if (chordRhythm == KMusicChordRhythmKind.Hold && phraseKind != KMusicPhraseKind.Sustain)
+            {
+                starts = new[] { 2, 6, 10, 14 };
+                lengths = new[] { 2, 2, 2, 2 };
+                notes = new[] { motifA, motifB, motifC, motifA };
+            }
+            else if (chordRhythm == KMusicChordRhythmKind.DeepSparse && starts.Length > 4)
+            {
+                starts = TrimStarts(starts, 4);
+                lengths = TrimLengths(lengths, starts.Length, 1);
+                notes = TrimNotes(notes, starts.Length);
+            }
+        }
+
+        private static void GetChordRhythmStartsAndLengths(KMusicChordRhythmKind rhythm, int totalSteps, out int[] starts, out int[] lengths)
+        {
+            switch (rhythm)
+            {
+                default:
+                case KMusicChordRhythmKind.OffbeatStabs:
+                    starts = new[] { 2, 6, 10, 14 };
+                    lengths = new[] { 2, 2, 2, 2 };
+                    break;
+                case KMusicChordRhythmKind.PushPattern:
+                    starts = new[] { 1, 4, 7, 10, 13 };
+                    lengths = new[] { 2, 2, 2, 2, 2 };
+                    break;
+                case KMusicChordRhythmKind.AnthemLift:
+                    starts = new[] { 2, 6, 8, 10, 12, 14 };
+                    lengths = new[] { 2, 2, 1, 1, 1, 1 };
+                    break;
+                case KMusicChordRhythmKind.LateOffbeats:
+                    starts = new[] { 3, 7, 11, 15 };
+                    lengths = new[] { 1, 1, 1, 1 };
+                    break;
+                case KMusicChordRhythmKind.DeepSparse:
+                    starts = new[] { 5, 11, 14 };
+                    lengths = new[] { 2, 2, 1 };
+                    break;
+                case KMusicChordRhythmKind.Bounce:
+                    starts = new[] { 0, 3, 6, 10, 14 };
+                    lengths = new[] { 1, 1, 1, 2, 1 };
+                    break;
+                case KMusicChordRhythmKind.DenseGroove:
+                    starts = new[] { 1, 3, 6, 9, 11, 14 };
+                    lengths = new[] { 1, 1, 2, 1, 1, 1 };
+                    break;
+                case KMusicChordRhythmKind.Hold:
+                    starts = new[] { 0, 8, 12 };
+                    lengths = new[] { 8, 4, 4 };
+                    break;
+            }
+
+            for (int i = 0; i < starts.Length; i++)
+                starts[i] = Mathf.Clamp(starts[i], 0, Mathf.Max(0, totalSteps - 1));
+        }
+
+        private static int[] ShiftAndClampStarts(int[] source, int totalSteps, int shift, int maxCount)
+        {
+            if (source == null || source.Length == 0)
+                return new[] { Mathf.Clamp(2 + shift, 0, Mathf.Max(0, totalSteps - 1)) };
+
+            int count = Mathf.Clamp(maxCount, 1, source.Length);
+            int[] result = new int[count];
+            for (int i = 0; i < count; i++)
+                result[i] = Mathf.Clamp(source[i] + shift, 0, Mathf.Max(0, totalSteps - 1));
+            return DeduplicateSorted(result, totalSteps);
+        }
+
+        private static int[] BuildBetweenStarts(int[] source, int totalSteps, int maxCount, bool lateBias)
+        {
+            if (source == null || source.Length == 0)
+                return new[] { 2, 6, 10, 14 };
+
+            List<int> values = new List<int>();
+            for (int i = 0; i < source.Length; i++)
+            {
+                int a = source[i];
+                int b = (i < source.Length - 1) ? source[i + 1] : totalSteps;
+                int mid = lateBias ? (a + Mathf.Max(a + 1, b - 1)) / 2 : a + 2;
+                values.Add(Mathf.Clamp(mid, 0, Mathf.Max(0, totalSteps - 1)));
+            }
+            while (values.Count > maxCount)
+                values.RemoveAt(values.Count - 1);
+            return DeduplicateSorted(values.ToArray(), totalSteps);
+        }
+
+        private static int[] DeduplicateSorted(int[] values, int totalSteps)
+        {
+            List<int> list = new List<int>();
+            int prev = -999;
+            for (int i = 0; i < values.Length; i++)
+            {
+                int v = Mathf.Clamp(values[i], 0, Mathf.Max(0, totalSteps - 1));
+                if (i == 0 || v != prev)
+                    list.Add(v);
+                prev = v;
+            }
+            return list.ToArray();
+        }
+
+        private static int[] BuildUniformLengths(int count, int value, int lastValue)
+        {
+            count = Mathf.Max(1, count);
+            int[] result = new int[count];
+            for (int i = 0; i < count; i++)
+                result[i] = (i == count - 1) ? lastValue : value;
+            return result;
+        }
+
+        private static int[] BuildRepeatingNotes(int count, params int[] palette)
+        {
+            count = Mathf.Max(1, count);
+            if (palette == null || palette.Length == 0)
+                palette = new[] { 1 };
+            int[] result = new int[count];
+            for (int i = 0; i < count; i++)
+                result[i] = palette[i % palette.Length];
+            return result;
+        }
+
+        private static int[] TrimStarts(int[] starts, int maxCount)
+        {
+            if (starts == null)
+                return Array.Empty<int>();
+            int count = Mathf.Clamp(maxCount, 0, starts.Length);
+            int[] result = new int[count];
+            Array.Copy(starts, result, count);
+            return result;
+        }
+
+        private static int[] TrimLengths(int[] lengths, int count, int fallback)
+        {
+            if (count <= 0)
+                return Array.Empty<int>();
+            int[] result = new int[count];
+            for (int i = 0; i < count; i++)
+                result[i] = (lengths != null && i < lengths.Length) ? lengths[i] : fallback;
+            return result;
+        }
+
+        private static int[] TrimNotes(int[] notes, int count)
+        {
+            if (count <= 0)
+                return Array.Empty<int>();
+            int[] result = new int[count];
+            for (int i = 0; i < count; i++)
+                result[i] = (notes != null && i < notes.Length) ? notes[i] : (notes != null && notes.Length > 0 ? notes[notes.Length - 1] : 1);
+            return result;
+        }
+
+        private static int CountRunStarts(int[] runs)
+        {
+            if (runs == null)
+                return 0;
+            int count = 0;
+            for (int i = 0; i < runs.Length; i++)
+            {
+                if (runs[i] > 0)
+                    count++;
+            }
+            return count;
+        }
+
+        private static int PositiveMod(int value, int mod)
+        {
+            if (mod <= 0)
+                return 0;
+            int result = value % mod;
+            return result < 0 ? result + mod : result;
+        }
+        private static int ClampToNearestScaleValue(int candidate, int tonicSemitone, int[] scaleOffsets, int maxValueId)
+        {
+            candidate = Mathf.Clamp(candidate, 1, Mathf.Max(1, maxValueId));
+            int best = candidate;
+            int bestDist = int.MaxValue;
+            for (int i = 1; i <= Mathf.Max(1, maxValueId); i++)
+            {
+                int pitchClass = Mathf.Abs(i - 1) % 12;
+                bool inScale = false;
+                for (int s = 0; s < scaleOffsets.Length; s++)
+                {
+                    if (((tonicSemitone + scaleOffsets[s]) % 12) == pitchClass)
+                    {
+                        inScale = true;
+                        break;
+                    }
+                }
+                if (!inScale)
+                    continue;
+                int dist = Mathf.Abs(i - candidate);
+                if (dist < bestDist)
+                {
+                    best = i;
+                    bestDist = dist;
+                }
+            }
+            return best;
+        }
+
+        private static int FindLastNonZero(int[] values, int fallback)
+        {
+            if (values != null)
+            {
+                for (int i = values.Length - 1; i >= 0; i--)
+                {
+                    if (values[i] > 0)
+                        return values[i];
+                }
+            }
+
+            return fallback;
+        }
+
+        private static int FindNearestScaleValue(int currentValue, int degreeDelta, int rootValueId, int[] scaleOffsets, int maxValueId)
+        {
+            int currentSemitone = Mathf.Max(0, currentValue - 1);
+            int octave = currentSemitone / 12;
+            int semitoneInOctave = currentSemitone % 12;
+
+            int bestDegree = 0;
+            float bestDistance = float.MaxValue;
+            for (int i = 0; i < scaleOffsets.Length; i++)
+            {
+                int degreeSemitone = (rootValueId - 1 + scaleOffsets[i]) % 12;
+                float dist = Mathf.Abs(Mathf.DeltaAngle(semitoneInOctave * 30f, degreeSemitone * 30f));
+                if (dist < bestDistance)
+                {
+                    bestDistance = dist;
+                    bestDegree = i;
+                }
+            }
+
+            int linearDegree = octave * scaleOffsets.Length + bestDegree + degreeDelta;
+            if (linearDegree < 0) linearDegree = 0;
+
+            int newOctave = linearDegree / scaleOffsets.Length;
+            int degreeIndex = linearDegree % scaleOffsets.Length;
+            int semitone = (rootValueId - 1) + (newOctave * 12) + scaleOffsets[degreeIndex];
+            int valueId = semitone + 1;
+            return Mathf.Clamp(valueId, 1, maxValueId);
+        }
+
+        public void RebuildSynthSequenceNow()
         {
             if (helmSequencer == null) return;
             RebuildHelmSequenceFromGrid();

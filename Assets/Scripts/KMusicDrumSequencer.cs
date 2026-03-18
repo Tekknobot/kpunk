@@ -98,6 +98,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private readonly Dictionary<Button, IVisualElementScheduledItem> _buttonLongPressJobs = new();
     private readonly HashSet<Button> _buttonLongPressFired = new();
+    private readonly HashSet<Button> _buttonHandledOnPointerDown = new();
     private RandomBeatStyle _nextWholeBeatStyle = RandomBeatStyle.House;
     private System.Random _rng;
 
@@ -280,7 +281,9 @@ public class KMusicDrumSequencer : MonoBehaviour
     private int _velocityGestureLane = -1;
     private Vector2 _velocityGestureStartLocal = Vector2.zero;
     private int _velocityGestureTier = 1;
-    private const float DrumVelocityDragThresholdPx = 18f;
+    private const float DrumVelocityDragThresholdPx = 42f;
+    private const float DrumVelocityDragHorizontalTolerancePx = 16f;
+    private const float DrumVelocityDragAxisBias = 1.35f;
     
     // Tracks whether applied chops changed since last load
     private int _appliedRevisionSeen = -1;
@@ -1221,33 +1224,45 @@ private void ApplySamplePitch()
 
         b.AddToClassList(wiredClass);
 
-        b.clicked += () =>
-        {
-            if (_buttonLongPressFired.Contains(b))
-            {
-                _buttonLongPressFired.Remove(b);
-                return;
-            }
-
-            SelectDrum(drumId);
-        };
-
-        b.RegisterCallback<PointerDownEvent>(_ =>
+        b.RegisterCallback<PointerDownEvent>(evt =>
         {
             Debug.Log($"[Random Beat] Drum {drumId} pointer down");
+            _buttonHandledOnPointerDown.Add(b);
+            _buttonLongPressFired.Remove(b);
+
+            SelectDrum(drumId); // audition + lane UI switch happen immediately on press
             BeginButtonLongPress(b, () => RandomizeSingleDrumLaneFromLongPress(drumId));
+
+            evt.StopPropagation();
+            evt.PreventDefault();
         }, TrickleDown.TrickleDown);
 
-        b.RegisterCallback<PointerUpEvent>(_ =>
+        b.RegisterCallback<PointerUpEvent>(evt =>
         {
             Debug.Log($"[Random Beat] Drum {drumId} pointer up");
             CancelButtonLongPress(b);
+            evt.StopPropagation();
         }, TrickleDown.TrickleDown);
 
-        b.RegisterCallback<PointerCancelEvent>(_ =>
+        b.RegisterCallback<PointerCancelEvent>(evt =>
         {
             Debug.Log($"[Random Beat] Drum {drumId} pointer cancel");
             CancelButtonLongPress(b);
+            evt.StopPropagation();
+        }, TrickleDown.TrickleDown);
+
+        b.RegisterCallback<ClickEvent>(evt =>
+        {
+            // Drum selection must not wait for release/click.
+            // PointerDown already handled the audition + active lane switch.
+            if (_buttonHandledOnPointerDown.Contains(b))
+                _buttonHandledOnPointerDown.Remove(b);
+
+            if (_buttonLongPressFired.Contains(b))
+                _buttonLongPressFired.Remove(b);
+
+            evt.StopPropagation();
+            evt.PreventDefault();
         }, TrickleDown.TrickleDown);
     }
 
@@ -1283,20 +1298,137 @@ private void ApplySamplePitch()
     private void RandomizeWholeBeatFromLongPress()
     {
         var style = _nextWholeBeatStyle;
-        GenerateRandomBeat(style);
+        RandomizeWholeBeatAcrossChain(style);
         _nextWholeBeatStyle = style == RandomBeatStyle.House ? RandomBeatStyle.BoomBap : RandomBeatStyle.House;
 
-        Debug.Log($"[Random Beat] Generated {style} groove. Next long-press STOP style: {_nextWholeBeatStyle}.");
+        Debug.Log($"[Random Beat] Generated {style} groove across visible chain bars. Next long-press STOP style: {_nextWholeBeatStyle}.");
     }
 
     private void RandomizeSingleDrumLaneFromLongPress(int drumId)
     {
         Debug.Log($"[Random Beat] Lane long press fired drumId={drumId}");
 
-        RandomizeSingleDrumLane(drumId, _nextWholeBeatStyle);
+        RandomizeSingleDrumLaneAcrossChain(drumId, _nextWholeBeatStyle);
         SelectDrum(drumId);
 
-        Debug.Log($"[Random Beat] Randomized drum {drumId} using {_nextWholeBeatStyle} lane rules.");
+        Debug.Log($"[Random Beat] Randomized drum {drumId} across visible chain bars using {_nextWholeBeatStyle} lane rules.");
+    }
+
+    private void RandomizeWholeBeatAcrossChain(RandomBeatStyle style)
+    {
+        if (!KMusicChainRandomizeUtil.TryGetContext(out var chain, out int currentBar, out int currentPatternId))
+        {
+            GenerateRandomBeat(style);
+            return;
+        }
+
+        int[] barPatternIds = KMusicChainRandomizeUtil.EnsureUniquePatternIdsPerBar(
+            chain,
+            currentBar,
+            currentPatternId,
+            CaptureLivePatternData);
+
+        bool hadSaving = _allowSaving;
+        _allowSaving = false;
+        try
+        {
+            for (int bar = 0; bar < barPatternIds.Length; bar++)
+            {
+                GenerateRandomBeat(style);
+
+                int pid = barPatternIds[bar];
+                var pattern = PatternBank.Load(pid) ?? new PatternData();
+                pattern.drumMask = CaptureDrumMask();
+                pattern.drumVelocityData = CaptureDrumVelocityData();
+                pattern.sampleSteps = CaptureSampleStepsFlat();
+                PatternBank.Save(pid, pattern);
+            }
+        }
+        finally
+        {
+            _allowSaving = hadSaving;
+        }
+
+        LoadPatternFromChainBar(chain, currentBar, barPatternIds);
+        chain.Save();
+        NotifyChainLiveEdited();
+    }
+
+    private void RandomizeSingleDrumLaneAcrossChain(int drumId, RandomBeatStyle style)
+    {
+        if (!KMusicChainRandomizeUtil.TryGetContext(out var chain, out int currentBar, out int currentPatternId))
+        {
+            RandomizeSingleDrumLane(drumId, style);
+            return;
+        }
+
+        int[] barPatternIds = KMusicChainRandomizeUtil.EnsureUniquePatternIdsPerBar(
+            chain,
+            currentBar,
+            currentPatternId,
+            CaptureLivePatternData);
+
+        bool hadSaving = _allowSaving;
+        _allowSaving = false;
+        try
+        {
+            for (int bar = 0; bar < barPatternIds.Length; bar++)
+            {
+                if (bar != currentBar)
+                {
+                    var existing = PatternBank.Load(barPatternIds[bar]) ?? new PatternData();
+                    ApplyDrumMask(existing.drumMask);
+                    ApplyDrumVelocityData(existing.drumVelocityData);
+                    ApplySampleStepsFlat(existing.sampleSteps);
+                }
+
+                RandomizeSingleDrumLane(drumId, style);
+
+                int pid = barPatternIds[bar];
+                var pattern = PatternBank.Load(pid) ?? new PatternData();
+                pattern.drumMask = CaptureDrumMask();
+                pattern.drumVelocityData = CaptureDrumVelocityData();
+                pattern.sampleSteps = CaptureSampleStepsFlat();
+                PatternBank.Save(pid, pattern);
+            }
+        }
+        finally
+        {
+            _allowSaving = hadSaving;
+        }
+
+        LoadPatternFromChainBar(chain, currentBar, barPatternIds);
+        chain.Save();
+        NotifyChainLiveEdited();
+    }
+
+    private PatternData CaptureLivePatternData()
+    {
+        var pattern = new PatternData();
+        pattern.drumMask = CaptureDrumMask();
+        pattern.drumVelocityData = CaptureDrumVelocityData();
+        pattern.sampleSteps = CaptureSampleStepsFlat();
+        return pattern;
+    }
+
+    private void LoadPatternFromChainBar(ChainState chain, int currentBar, int[] barPatternIds)
+    {
+        int pid = (barPatternIds != null && currentBar >= 0 && currentBar < barPatternIds.Length)
+            ? barPatternIds[currentBar]
+            : (chain != null ? chain.GetSlot(currentBar) : -1);
+
+        if (pid < 0)
+            return;
+
+        var pattern = PatternBank.Load(pid);
+        if (pattern == null)
+            return;
+
+        ApplyDrumMask(pattern.drumMask);
+        ApplyDrumVelocityData(pattern.drumVelocityData);
+        ApplySampleStepsFlat(pattern.sampleSteps);
+        RefreshGridForActiveDrum();
+        RefreshSampleGrid();
     }
 
     private void SelectDrum(int drumId)
@@ -2589,6 +2721,24 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
 
         // Same coordinate space as press event
         float dy = _velocityGestureStartLocal.y - localPos.y;
+        float dx = localPos.x - _velocityGestureStartLocal.x;
+        float absDy = Mathf.Abs(dy);
+        float absDx = Mathf.Abs(dx);
+
+        // On touch devices, slight thumb roll can create enough vertical jitter to accidentally
+        // turn an intended erase tap into a velocity drag. Require a deliberate, mostly vertical
+        // gesture before arming velocity edits.
+        if (!_velocityGestureMoved)
+        {
+            if (absDy < DrumVelocityDragThresholdPx)
+                return;
+
+            if (absDx > DrumVelocityDragHorizontalTolerancePx)
+                return;
+
+            if (absDy < (absDx * DrumVelocityDragAxisBias))
+                return;
+        }
 
         int newTier = 1; // medium dead zone
 
@@ -2597,11 +2747,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         else if (dy <= -DrumVelocityDragThresholdPx)
             newTier = 0; // low
 
-        // Do not convert a normal tap into a drag unless user actually leaves the dead zone
-        if (!_velocityGestureMoved && Mathf.Abs(dy) < DrumVelocityDragThresholdPx)
-            return;
-
-        // Once dragging has started, allow returning to medium
+        // Once dragging has started, allow returning to medium without re-triggering identical tiers.
         if (_velocityGestureMoved && newTier == _velocityGestureTier)
             return;
 

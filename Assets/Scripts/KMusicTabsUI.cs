@@ -13,6 +13,11 @@ public class KMusicTabsUI : MonoBehaviour
     private ParameterBus _bus;
     private Coroutine _co;
 
+    [Header("Long Press Randomize")]
+    [SerializeField, Min(0.2f)] private float longPressSeconds = 0.55f;
+
+    private readonly Dictionary<VisualElement, Coroutine> _longPressJobs = new Dictionary<VisualElement, Coroutine>();
+
     // Tabs in UXML:
     // TabSampler, TabSeq, TabPad, TabPlayer, TabSynth, TabSynth2, TabFx
     private VisualElement tabSeq, tabSynth, tabSynth2, tabSampler, tabPad, tabPlayer, tabFx;
@@ -48,6 +53,8 @@ public class KMusicTabsUI : MonoBehaviour
     {
         if (_co != null) StopCoroutine(_co);
         _co = null;
+
+        CancelAllLongPresses();
 
         _isSetup = false;
         _bus = null;
@@ -121,9 +128,11 @@ public class KMusicTabsUI : MonoBehaviour
             tabPlayer.style.display = DisplayStyle.None;
 
         RegisterTab(tabSeq,     () => Show("seq"));
+        RegisterLongPress(tabSeq, RandomizeKeysLongPress);
         RegisterTab(tabSynth,   () => Show("synth"));
         RegisterTab(tabSynth2,  () => Show("synth2"));
         RegisterTab(tabPad,     () => Show("pad"));
+        RegisterLongPress(tabPad, RandomizeChordsLongPress);
         RegisterTab(tabSampler, () => Show("sampler"));
 
         // Only register Player if the page exists
@@ -194,6 +203,110 @@ public class KMusicTabsUI : MonoBehaviour
             onActivate?.Invoke();
             evt.StopPropagation();
         }, TrickleDown.TrickleDown);
+    }
+
+    private void RegisterLongPress(VisualElement tab, System.Action onLongPress)
+    {
+        if (tab == null || onLongPress == null) return;
+
+        tab.RegisterCallback<PointerDownEvent>(evt =>
+        {
+            CancelLongPress(tab);
+            _longPressJobs[tab] = StartCoroutine(LongPressRoutine(tab, onLongPress));
+        }, TrickleDown.TrickleDown);
+
+        tab.RegisterCallback<PointerUpEvent>(evt => CancelLongPress(tab), TrickleDown.TrickleDown);
+        tab.RegisterCallback<PointerCancelEvent>(evt => CancelLongPress(tab), TrickleDown.TrickleDown);
+        tab.RegisterCallback<PointerLeaveEvent>(evt => CancelLongPress(tab), TrickleDown.TrickleDown);
+    }
+
+    private IEnumerator LongPressRoutine(VisualElement tab, System.Action onLongPress)
+    {
+        yield return new WaitForSecondsRealtime(longPressSeconds);
+
+        _longPressJobs.Remove(tab);
+        onLongPress?.Invoke();
+    }
+
+    private void CancelLongPress(VisualElement tab)
+    {
+        if (tab == null) return;
+
+        if (_longPressJobs.TryGetValue(tab, out var co) && co != null)
+            StopCoroutine(co);
+
+        _longPressJobs.Remove(tab);
+    }
+
+    private void CancelAllLongPresses()
+    {
+        foreach (var kv in _longPressJobs)
+        {
+            if (kv.Value != null)
+                StopCoroutine(kv.Value);
+        }
+
+        _longPressJobs.Clear();
+    }
+
+    private void RandomizeKeysLongPress()
+    {
+        Show("seq");
+        StartCoroutine(RandomizeKeysWhenReady());
+    }
+
+    private IEnumerator RandomizeKeysWhenReady()
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            var painter = FindFirstSceneComponent<KMusicPianoRollStepPainter>();
+            if (painter != null)
+            {
+                painter.RandomizeMusicalPhraseAcrossChain();
+                yield break;
+            }
+            yield return null;
+        }
+
+        Debug.LogWarning("KMusicTabsUI: KEYS long-press randomize failed. KMusicPianoRollStepPainter not found.");
+    }
+
+    private void RandomizeChordsLongPress()
+    {
+        Show("pad");
+        StartCoroutine(RandomizeChordsWhenReady());
+    }
+
+    private IEnumerator RandomizeChordsWhenReady()
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            var chords = FindFirstSceneComponent<KMusicChordTrackUI>();
+            if (chords != null)
+            {
+                // Requires patched KMusicChordTrackUI.cs in this same patch.
+                chords.RandomizeMusicalProgressionAcrossChain();
+                yield break;
+            }
+            yield return null;
+        }
+
+        Debug.LogWarning("KMusicTabsUI: CHORDS long-press randomize failed. KMusicChordTrackUI not found.");
+    }
+
+    private static T FindFirstSceneComponent<T>() where T : Component
+    {
+#if UNITY_2023_1_OR_NEWER
+        var all = FindObjectsByType<T>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+        var all = Resources.FindObjectsOfTypeAll<T>();
+#endif
+        foreach (var c in all)
+        {
+            if (c == null || !c.gameObject.scene.IsValid()) continue;
+            return c;
+        }
+        return null;
     }
 
     private void Show(string which)
