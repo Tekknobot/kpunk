@@ -838,6 +838,18 @@ namespace KMusic.UI
             return null;
         }
 
+        public int[] CaptureSeqRunsFlat()
+        {
+            if (_noteRunLengthAtStart != null && _noteRunLengthAtStart.Length > 0)
+                return (int[])_noteRunLengthAtStart.Clone();
+
+            int expected = ExpectedSeqFlatLength();
+            if (expected > 0)
+                return KMusic.KMusicSaveState.LoadIntArray(PrefKey_SeqStepGrid + ".runs", expected);
+
+            return null;
+        }
+
         public void ApplySeqStepsFlat(int[] flat)
         {
             int expected = ExpectedSeqFlatLength();
