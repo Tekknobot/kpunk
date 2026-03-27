@@ -580,12 +580,13 @@ public sealed class KMusicProjectManager : MonoBehaviour
     }
 
     [Serializable] private class SampleState { public int[] stepGrid; }
-    [Serializable] private class SeqState { public int[] stepGrid; }
+    [Serializable] private class SeqState { public int[] stepGrid; public int[] runs; }
 
     [Serializable]
     private class PadState
     {
         public int[] stepGrid;
+        public int[] runs;
         public int chordMode;
         public string presetRelPath;
         public int presetIndex;
@@ -653,6 +654,18 @@ public sealed class KMusicProjectManager : MonoBehaviour
         _pendingSynthBusRestore.Clear();
     }
 
+    private float TryGetProjectTempoBpm()
+    {
+        try
+        {
+            if (_app != null && _app.Bus != null && _app.Bus.TryGet("tempo", out var p))
+                return Mathf.Max(1f, p.Value);
+        }
+        catch { }
+
+        return 107f;
+    }
+
     public void SaveProject(int slot)
     {
         EnsureProjectsDir();
@@ -691,11 +704,15 @@ public sealed class KMusicProjectManager : MonoBehaviour
             data.sampler.stepGrid = _samplerUi.CaptureSampleStepsFlat();
 
         if (_keys != null)
+        {
             data.seq.stepGrid = _keys.CaptureSeqStepsFlat();
+            data.seq.runs = _keys.CaptureSeqRunsFlat();
+        }
 
         if (_pad != null)
         {
             data.pad.stepGrid = _pad.CapturePadStepsFlat();
+            data.pad.runs = _pad.CapturePadRunsFlat();
             data.pad.chordMode = _pad.CaptureChordMode();
         }
 
@@ -730,7 +747,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
         try
         {
-            File.WriteAllText(SlotPath(slot), JsonUtility.ToJson(data));
+            string jsonPath = SlotPath(slot);
+            File.WriteAllText(jsonPath, JsonUtility.ToJson(data));
+            KMusicMidiExporter.ExportProjectMidiBundle(jsonPath, data, TryGetProjectTempoBpm());
             _cachedProjectNames[slot] = data.projectName;
         }
         catch (Exception e)
@@ -870,13 +889,13 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
             if (_keys != null && data.seq != null)
             {
-                _keys.ApplySeqStepsFlat(data.seq.stepGrid);
+                _keys.ApplySeqStepsFlat(data.seq.stepGrid, data.seq.runs);
                 _keys.RebuildSynthSequenceNow();
             }
 
             if (_pad != null && data.pad != null)
             {
-                _pad.ApplyPadStepsFlat(data.pad.stepGrid);
+                _pad.ApplyPadStepsFlat(data.pad.stepGrid, data.pad.runs);
                 _pad.ApplyChordMode(data.pad.chordMode);
                 _pad.RebuildPadSequenceNow();
             }

@@ -17,7 +17,9 @@ namespace KMusic.Core
         public byte[] drumVelocityData; // len 32 packed 2-bit tiers
         public int[] sampleSteps; // len 16
         public int[] seqSteps;    // len 16
+        public int[] seqRuns;     // len 16 (run-lengths at note starts)
         public int[] padSteps;    // len 16
+        public int[] padRuns;     // len 16 (run-lengths at chord starts)
         public int padChordMode;
 
         public PatternData()
@@ -26,7 +28,9 @@ namespace KMusic.Core
             drumVelocityData = new byte[Steps * 2];
             sampleSteps = new int[Steps];
             seqSteps = new int[Steps];
+            seqRuns = new int[Steps];
             padSteps = new int[Steps];
+            padRuns = new int[Steps];
             padChordMode = 0;
         }
 
@@ -37,7 +41,9 @@ namespace KMusic.Core
             if (drumVelocityData != null) Array.Copy(drumVelocityData, p.drumVelocityData, Math.Min(drumVelocityData.Length, p.drumVelocityData.Length));
             if (sampleSteps != null) Array.Copy(sampleSteps, p.sampleSteps, Math.Min(sampleSteps.Length, p.sampleSteps.Length));
             if (seqSteps != null) Array.Copy(seqSteps, p.seqSteps, Math.Min(seqSteps.Length, p.seqSteps.Length));
+            if (seqRuns != null) Array.Copy(seqRuns, p.seqRuns, Math.Min(seqRuns.Length, p.seqRuns.Length));
             if (padSteps != null) Array.Copy(padSteps, p.padSteps, Math.Min(padSteps.Length, p.padSteps.Length));
+            if (padRuns != null) Array.Copy(padRuns, p.padRuns, Math.Min(padRuns.Length, p.padRuns.Length));
             p.padChordMode = padChordMode;
             return p;
         }

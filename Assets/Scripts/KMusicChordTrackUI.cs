@@ -518,6 +518,18 @@ namespace KMusic
             return _cachedFlat != null ? (int[])_cachedFlat.Clone() : null;
         }
 
+        public int[] CapturePadRunsFlat()
+        {
+            if (_noteRunLengthAtStart != null && _noteRunLengthAtStart.Length > 0)
+                return (int[])_noteRunLengthAtStart.Clone();
+
+            int expected = (_step != null) ? (_step.RowCount * _step.ColCount) : (_cachedFlat != null ? _cachedFlat.Length : 0);
+            if (expected > 0)
+                return KMusicSaveState.LoadIntArray(PrefKey_PadStepGrid + ".runs", expected);
+
+            return null;
+        }
+
         public void ApplyPadStepsFlat(int[] flat)
         {
             int expected = (_step != null) ? (_step.RowCount * _step.ColCount) : (flat != null ? flat.Length : 0);
