@@ -94,6 +94,7 @@ public class KMusicDrumSequencer : MonoBehaviour
     {
         House = 0,
         BoomBap = 1,
+        Amenish = 2,
     }
 
     private readonly Dictionary<Button, IVisualElementScheduledItem> _buttonLongPressJobs = new();
@@ -1299,7 +1300,12 @@ private void ApplySamplePitch()
     {
         var style = _nextWholeBeatStyle;
         RandomizeWholeBeatAcrossChain(style);
-        _nextWholeBeatStyle = style == RandomBeatStyle.House ? RandomBeatStyle.BoomBap : RandomBeatStyle.House;
+        _nextWholeBeatStyle = style switch
+        {
+            RandomBeatStyle.House => RandomBeatStyle.BoomBap,
+            RandomBeatStyle.BoomBap => RandomBeatStyle.Amenish,
+            _ => RandomBeatStyle.House,
+        };
 
         Debug.Log($"[Random Beat] Generated {style} groove across visible chain bars. Next long-press STOP style: {_nextWholeBeatStyle}.");
     }
@@ -1838,7 +1844,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                 ForceLaneStep(drumId, 14, 1);
             }
         }
-        else
+        else if (style == RandomBeatStyle.BoomBap)
         {
             if (drumId == 1)
             {
@@ -1857,6 +1863,38 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                 ForceLaneStep(drumId, 6, 0);
                 ForceLaneStep(drumId, 10, 1);
                 ForceLaneStep(drumId, 14, 0);
+            }
+        }
+        else
+        {
+            if (drumId == 1)
+            {
+                ForceLaneStep(drumId, 0, 2);
+                ForceLaneStep(drumId, 3, 1);
+                ForceLaneStep(drumId, 7, 1);
+                ForceLaneStep(drumId, 10, 1);
+                ForceLaneStep(drumId, 14, 1);
+            }
+            else if (drumId == 2)
+            {
+                ForceLaneStep(drumId, 4, 2);
+                ForceLaneStep(drumId, 11, 1);
+                ForceLaneStep(drumId, 12, 2);
+            }
+            else if (drumId == 4)
+            {
+                ForceLaneStep(drumId, 1, 1);
+                ForceLaneStep(drumId, 2, 1);
+                ForceLaneStep(drumId, 6, 0);
+                ForceLaneStep(drumId, 9, 1);
+                ForceLaneStep(drumId, 10, 1);
+                ForceLaneStep(drumId, 14, 0);
+                ForceLaneStep(drumId, 15, 1);
+            }
+            else if (drumId == 5)
+            {
+                ForceLaneStep(drumId, 7, 1);
+                ForceLaneStep(drumId, 15, 1);
             }
         }
     }
@@ -1901,7 +1939,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                     _sampleChopByStep[extras[i]] = PickChopId(available, i + 4);
             }
         }
-        else
+        else if (style == RandomBeatStyle.BoomBap)
         {
             int[] phrase = { 0, 3, 6, 8, 11, 14 };
             int motifA = PickChopId(available, 0);
@@ -1919,6 +1957,27 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                 if (_sampleChopByStep[fillSteps[i]] != 0) continue;
                 if (NextFloat01() <= 0.25f)
                     _sampleChopByStep[fillSteps[i]] = PickChopId(available, i + 2);
+            }
+        }
+        else
+        {
+            int[] phrase = { 0, 1, 3, 5, 7, 8, 10, 12, 14, 15 };
+            int motifA = PickChopId(available, 0);
+            int motifB = PickChopId(available, 1);
+            int motifC = PickChopId(available, 2);
+
+            for (int i = 0; i < phrase.Length; i++)
+            {
+                if (NextFloat01() > 0.74f) continue;
+                _sampleChopByStep[phrase[i]] = (i % 3 == 0) ? motifA : ((i % 3 == 1) ? motifB : motifC);
+            }
+
+            int[] fillSteps = { 2, 6, 9, 11, 13 };
+            for (int i = 0; i < fillSteps.Length; i++)
+            {
+                if (_sampleChopByStep[fillSteps[i]] != 0) continue;
+                if (NextFloat01() <= 0.38f)
+                    _sampleChopByStep[fillSteps[i]] = PickChopId(available, i + 3);
             }
         }
     }
@@ -1974,6 +2033,21 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                 _ => 0f,
             };
         }
+        else if (style == RandomBeatStyle.Amenish)
+        {
+            return drumId switch
+            {
+                1 => (step == 0) ? 0.96f : ((step == 3 || step == 7 || step == 10 || step == 14) ? 0.52f : ((step == 5 || step == 12) ? 0.24f : 0.04f)),
+                2 => (step == 4 || step == 12) ? 0.94f : ((step == 11) ? 0.42f : 0.05f),
+                3 => (step == 4 || step == 12) ? 0.24f : ((step == 11) ? 0.18f : 0.03f),
+                4 => (step == 1 || step == 2 || step == 5 || step == 6 || step == 9 || step == 10 || step == 13 || step == 15) ? 0.78f : (even16 ? 0.16f : 0.08f),
+                5 => (step == 7 || step == 15) ? 0.24f : ((step == 11) ? 0.12f : 0.02f),
+                6 => (step == 10 || step == 14) ? 0.18f : 0.02f,
+                7 => (step == 3 || step == 11 || step == 15) ? 0.24f : 0.03f,
+                8 => (step == 15) ? 0.15f : ((step == 7) ? 0.06f : 0.01f),
+                _ => 0f,
+            };
+        }
 
         return drumId switch
         {
@@ -2001,6 +2075,15 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
             if (drumId == 5 || drumId == 7) return roll < 0.60f ? 0 : 1;
             if (drumId == 8) return 2;
             return roll < 0.18f ? 0 : (roll > 0.82f ? 2 : 1);
+        }
+        else if (style == RandomBeatStyle.Amenish)
+        {
+            if (drumId == 1 && step == 0) return 2;
+            if (drumId == 2 && (step == 4 || step == 12)) return 2;
+            if (drumId == 2 && step == 11) return roll < 0.65f ? 1 : 2;
+            if (drumId == 4) return roll < 0.28f ? 0 : (roll > 0.88f ? 2 : 1);
+            if (drumId == 5 || drumId == 7) return roll < 0.48f ? 0 : 1;
+            return roll < 0.18f ? 0 : (roll > 0.84f ? 2 : 1);
         }
 
         if (drumId == 1 && step == 0) return 2;
