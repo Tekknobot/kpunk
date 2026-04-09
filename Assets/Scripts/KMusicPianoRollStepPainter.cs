@@ -391,7 +391,7 @@ namespace KMusic.UI
                 if (_noteRunStartForCell[stepIndex] >= 0 && _noteRunStartForCell[stepIndex] != stepIndex)
                     continue;
 
-                int midi = MidiFromValueIdChromatic(valueId, baseMidi: 60);
+                int midi = MidiFromValueIdChromatic(valueId, baseMidi: 21);
 
                 int runLen = _noteRunLengthAtStart[stepIndex];
                 if (runLen <= 0)
@@ -508,14 +508,14 @@ namespace KMusic.UI
 
             if (_helm == null) return;
 
-            int midi = MidiFromValueIdChromatic(valueId, baseMidi: 60);
+            int midi = MidiFromValueIdChromatic(valueId, baseMidi: 21);
             _helm.NoteOn(midi, Mathf.Clamp01(velocity), Mathf.Max(0.01f, length));
 
             if (verboseLogs)
                 Debug.Log($"[PianoRollPainter] HELM NoteOn valueId={valueId} midi={midi} len={length:0.000}");
         }
 
-        private static int MidiFromValueIdChromatic(int valueId, int baseMidi = 60)
+        private static int MidiFromValueIdChromatic(int valueId, int baseMidi = 21)
         {
             int idx = Mathf.Max(0, valueId - 1);
             int midi = baseMidi + idx;
@@ -560,13 +560,13 @@ namespace KMusic.UI
             }
 
             int valueId = _piano.GetCellValueId(r, c);
-            int midi = Mathf.Clamp(60 + (valueId - 1), 0, 127);
+            int midi = Mathf.Clamp(21 + (valueId - 1), 0, 127);
 
             Debug.Log($"[PianoRollPainter] MAIN HELM NoteOn midi={midi} valueId={valueId} channel={h.channel}");
             h.NoteOn(midi, 1.0f, 0.18f);
         }
 
-        private static int MidiFromValueIdChromatic(int valueId, int cols, int baseMidi = 60)
+        private static int MidiFromValueIdChromatic(int valueId, int cols, int baseMidi = 21)
         {
             int idx = Mathf.Max(0, valueId - 1);
             int midi = baseMidi + idx;
@@ -948,7 +948,7 @@ namespace KMusic.UI
             if (!TryEnsureRandomizeGridBound())
                 return;
 
-            var plan = KMusicSongRandomizePlan.ForceNewPlan(1);
+            var plan = KMusicSongRandomizePlan.AcquireLinkedPlan(1, KMusicRandomizeRequester.Keys);
             GenerateMusicalPhraseArrays(out var flat, out var runs, 0, 1, -1, plan);
 
             bool hadSaving = _allowSaving;
@@ -979,7 +979,7 @@ namespace KMusic.UI
                 CaptureLivePatternData);
 
             int barCount = barPatternIds != null ? barPatternIds.Length : 0;
-            var plan = KMusicSongRandomizePlan.ForceNewPlan(Mathf.Max(1, barCount));
+            var plan = KMusicSongRandomizePlan.AcquireLinkedPlan(Mathf.Max(1, barCount), KMusicRandomizeRequester.Keys);
             int previousLastValue = -1;
 
             for (int bar = 0; bar < barCount; bar++)

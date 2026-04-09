@@ -649,9 +649,8 @@
             <ui:Label class="km-subtitle" text="BARS"/>
             <ui:VisualElement class="km-row" style="align-items:center;">
               <ui:Button name="ChainClearButton" class="km-pillbtn km-pillbtn--chain" text="CLEAR" />
+              <ui:Button name="ChainLen2Button" class="km-pillbtn km-pillbtn--chain" text="2" />
               <ui:Button name="ChainLen16Button" class="km-pillbtn km-pillbtn--chain" text="16" />
-              <ui:Button name="ChainLen32Button" class="km-pillbtn km-pillbtn--chain" text="32" />
-              <ui:Button name="ChainLen64Button" class="km-pillbtn km-pillbtn--chain" text="64" />
             </ui:VisualElement>
           </ui:VisualElement>
 

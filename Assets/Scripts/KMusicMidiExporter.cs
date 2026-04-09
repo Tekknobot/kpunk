@@ -310,7 +310,7 @@ public static class KMusicMidiExporter
                 }
             }
 
-            int root = Mathf.Clamp(60 + Math.Max(0, valueId - 1), 0, 127);
+            int root = Mathf.Clamp(21 + Math.Max(0, valueId - 1), 0, 127);
             int[] chord = chordMode switch
             {
                 1 => new[] { root, root + 3, root + 7 },
