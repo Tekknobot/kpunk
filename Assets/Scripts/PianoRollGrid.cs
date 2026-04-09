@@ -87,14 +87,19 @@ namespace KMusic.UI
 
         public void SetSize(int rows, int cols)
         {
-            rows = Mathf.Clamp(rows, 1, 6);
+            rows = Mathf.Clamp(rows, 1, 8);
             cols = Mathf.Clamp(cols, 1, 8);
 
             _rows = rows;
             _cols = cols;
 
-            // ✅ if exact size, install exact maps (labels + colors)
-            if (_rows == 6 && _cols == 8)
+            // ✅ install exact maps for the picker layouts we use in zpunk
+            if (_rows == 8 && _cols == 8)
+            {
+                _cellLabelMap = BuildExactLabelMap8x8();
+                _cellColorMap = BuildExactColorMap8x8();
+            }
+            else if (_rows == 6 && _cols == 8)
             {
                 _cellLabelMap = BuildExactLabelMap6x8();
                 _cellColorMap = BuildExactColorMap6x8();
@@ -424,6 +429,72 @@ cell.RegisterCallback<PointerUpEvent>(e =>
         // -----------------------------
         // ✅ Exact 6x8 layout (matches your image)
         // -----------------------------
+
+
+        private static string[,] BuildExactLabelMap8x8()
+        {
+            // 64 semitone cells starting at A-1, ascending left-to-right then top-to-bottom.
+            // Labels intentionally mirror the original UI shorthand where sharps share the
+            // same letter as the lower natural (A/A#, C/C#, D/D#, F/F#, G/G#).
+            string[] cycle = { "A", "A", "B", "C", "C", "D", "D", "E", "F", "F", "G", "G" };
+            var map = new string[8, 8];
+
+            for (int i = 0; i < 64; i++)
+                map[i / 8, i % 8] = cycle[i % cycle.Length];
+
+            return map;
+        }
+
+        private static Color[,] BuildExactColorMap8x8()
+        {
+            // Shift the whole picker range down so the very first cell is A-1.
+            // Color families now map to pitch bands like this:
+            // - A-1..G#0  : sub / low octave
+            // - A0..G#1   : orange
+            // - A1..G#2   : green
+            // - A2..G#3   : blue
+            // - A3..G#4   : purple
+            // - A4..C5    : distinct high register tone
+            Color OR_L = new Color(0.95f, 0.55f, 0.25f, 1f);
+            Color OR_D = new Color(0.65f, 0.20f, 0.10f, 1f);
+
+            Color GR_L = new Color(0.70f, 0.88f, 0.45f, 1f);
+            Color GR_D = new Color(0.20f, 0.45f, 0.20f, 1f);
+
+            Color BL_L = new Color(0.30f, 0.80f, 0.95f, 1f);
+            Color BL_D = new Color(0.10f, 0.35f, 0.65f, 1f);
+
+            Color PU_L = new Color(0.62f, 0.50f, 0.88f, 1f);
+            Color PU_D = new Color(0.20f, 0.15f, 0.50f, 1f);
+
+            Color SUB_L = new Color(0.14f, 0.28f, 0.18f, 1f);
+            Color SUB_D = new Color(0.06f, 0.12f, 0.08f, 1f);
+
+            Color HI_L = new Color(1.00f, 0.78f, 0.36f, 1f);
+            Color HI_D = new Color(0.78f, 0.42f, 0.10f, 1f);
+
+            Color[] octaveColors =
+            {
+                // A-1 .. G#0
+                SUB_L, SUB_D, SUB_L, SUB_L, SUB_D, SUB_L, SUB_D, SUB_L, SUB_L, SUB_D, SUB_L, SUB_D,
+                // A0 .. G#1
+                OR_L,  OR_D,  OR_L,  OR_L,  OR_D,  OR_L,  OR_D,  OR_L,  OR_L,  OR_D,  OR_L,  OR_D,
+                // A1 .. G#2
+                GR_L,  GR_D,  GR_L,  GR_L,  GR_D,  GR_L,  GR_D,  GR_L,  GR_L,  GR_D,  GR_L,  GR_D,
+                // A2 .. G#3
+                BL_L,  BL_D,  BL_L,  BL_L,  BL_D,  BL_L,  BL_D,  BL_L,  BL_L,  BL_D,  BL_L,  BL_D,
+                // A3 .. G#4
+                PU_L,  PU_D,  PU_L,  PU_L,  PU_D,  PU_L,  PU_D,  PU_L,  PU_L,  PU_D,  PU_L,  PU_D,
+                // A4 .. C5
+                HI_L,  HI_D,  HI_L,  HI_L,  HI_D,  HI_L,  HI_D,  HI_L,  HI_L,  HI_D,  HI_L,  HI_D
+            };
+
+            var map = new Color[8, 8];
+            for (int i = 0; i < 64; i++)
+                map[i / 8, i % 8] = octaveColors[i];
+
+            return map;
+        }
 
         private static string[,] BuildExactLabelMap6x8()
         {

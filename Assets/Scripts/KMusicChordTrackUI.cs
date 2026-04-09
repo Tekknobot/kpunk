@@ -420,7 +420,7 @@ namespace KMusic
 
         private int[] BuildChordFromValueId(int valueId)
         {
-            int root = Mathf.Clamp(60 + Mathf.Max(0, valueId - 1), 0, 127);
+            int root = Mathf.Clamp(21 + Mathf.Max(0, valueId - 1), 0, 127);
             switch (_mode)
             {
                 default:
@@ -630,7 +630,7 @@ namespace KMusic
             if (!TryEnsureRandomizeGridBound())
                 return;
 
-            var plan = KMusicSongRandomizePlan.ForceNewPlan(1);
+            var plan = KMusicSongRandomizePlan.AcquireLinkedPlan(1, KMusicRandomizeRequester.Chords);
             GenerateProgressionArrays(out var flat, out var runs, out var mode, 0, 1, plan);
             _mode = mode;
             RefreshChordButtons();
@@ -663,7 +663,7 @@ namespace KMusic
                 CaptureLivePatternData);
 
             int barCount = barPatternIds != null ? barPatternIds.Length : 0;
-            var plan = KMusicSongRandomizePlan.ForceNewPlan(Mathf.Max(1, barCount));
+            var plan = KMusicSongRandomizePlan.AcquireLinkedPlan(Mathf.Max(1, barCount), KMusicRandomizeRequester.Chords);
             ChordMode sharedMode = (plan != null && plan.isMinor != 0) ? ChordMode.Minor : ChordMode.Major;
             bool modeSet = false;
 

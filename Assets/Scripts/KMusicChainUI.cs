@@ -33,7 +33,7 @@ public class KMusicChainUI : MonoBehaviour
     private Label _statusLabel;
     private VisualElement _barsRoot;
     private Button _btnNew, _btnSave, _btnDup, _btnPlace, _btnDupNext;
-    private Button _btnClear, _btnLen2, _btnLen4, _btnLen8, _btnLen16, _btnLen32, _btnLen64;
+    private Button _btnClear, _btnLen2, _btnLen4, _btnLen8, _btnLen16;
 
     private readonly List<Button> _barButtons = new();
     private bool _uiWired = false;
@@ -214,8 +214,6 @@ public class KMusicChainUI : MonoBehaviour
         _btnLen4 = root.Q<Button>("ChainLen4Button");
         _btnLen8 = root.Q<Button>("ChainLen8Button");
         _btnLen16 = root.Q<Button>("ChainLen16Button");
-        _btnLen32 = root.Q<Button>("ChainLen32Button");
-        _btnLen64 = root.Q<Button>("ChainLen64Button");
 
         if (_enabled != null)
         {
@@ -246,8 +244,6 @@ public class KMusicChainUI : MonoBehaviour
         if (_btnLen4 != null) _btnLen4.clicked += () => SetChainLength(4);
         if (_btnLen8 != null) _btnLen8.clicked += () => SetChainLength(8);
         if (_btnLen16 != null) _btnLen16.clicked += () => SetChainLength(16);
-        if (_btnLen32 != null) _btnLen32.clicked += () => SetChainLength(32);
-        if (_btnLen64 != null) _btnLen64.clicked += () => SetChainLength(64);
 
         BuildBarsIfNeeded();
         _uiWired = true;
@@ -474,7 +470,7 @@ public class KMusicChainUI : MonoBehaviour
     {
         if (_barButtons.Count == 0) return;
 
-        int len = Mathf.Clamp(_chain.length, 1, 64);
+        int len = NormalizeChainLength(_chain.length);
 
         for (int i = 0; i < _barButtons.Count; i++)
         {
@@ -570,7 +566,7 @@ public class KMusicChainUI : MonoBehaviour
     {
         if (_chain == null) return;
 
-        _chain.length = Mathf.Clamp(newLength, 1, 64);
+        _chain.length = NormalizeChainLength(newLength);
         _chain.cursor = Mathf.Clamp(_chain.cursor, 0, _chain.length - 1);
         _playBar = Mathf.Clamp(_playBar, 0, _chain.length - 1);
 
@@ -579,6 +575,14 @@ public class KMusicChainUI : MonoBehaviour
         SetStatus($"Chain length: {_chain.length} bars");
     }
 
+
+    private static int NormalizeChainLength(int length)
+    {
+        if (length <= 2) return 2;
+        if (length <= 4) return 4;
+        if (length <= 8) return 8;
+        return 16;
+    }
     private PatternData CaptureLiveToPattern()
     {
         var p = new PatternData();
@@ -714,7 +718,7 @@ public class KMusicChainUI : MonoBehaviour
 
         RefreshRuntimeRefsIfNeeded();
 
-        int len = Mathf.Clamp(_chain.length, 1, 64);
+        int len = NormalizeChainLength(_chain.length);
 
         _playBar = (barCount - 1) % len;
         int pid = _chain.GetSlot(_playBar);

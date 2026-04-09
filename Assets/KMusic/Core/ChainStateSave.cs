@@ -19,17 +19,26 @@ namespace KMusic.Core
         [Serializable]
         private class IntArraySave { public int[] v; }
 
-        public int length = 32;
+        public int length = 16;
         public int cursor = 0;
         public bool enabled = false;
         public int[] slots = new int[64];
+
+
+        private static int NormalizeLength(int length)
+        {
+            if (length <= 2) return 2;
+            if (length <= 4) return 4;
+            if (length <= 8) return 8;
+            return 16;
+        }
 
         public static ChainStateSave From(ChainState s)
         {
             var save = new ChainStateSave();
             if (s == null) return save;
 
-            save.length = Mathf.Clamp(s.length, 1, 64);
+            save.length = NormalizeLength(s.length);
             save.cursor = Mathf.Clamp(s.cursor, 0, 63);
             save.enabled = s.enabled;
             save.slots = new int[64];
@@ -42,7 +51,7 @@ namespace KMusic.Core
         {
             try
             {
-                ProjectPrefs.SetInt(Key_ChainLen, Mathf.Clamp(length, 1, 64));
+                ProjectPrefs.SetInt(Key_ChainLen, NormalizeLength(length));
                 ProjectPrefs.SetInt(Key_ChainCursor, Mathf.Clamp(cursor, 0, 63));
                 ProjectPrefs.SetInt(Key_ChainEnabled, enabled ? 1 : 0);
                 ProjectPrefs.SetString(Key_ChainSlots, JsonUtility.ToJson(new IntArraySave { v = slots ?? new int[64] }));

@@ -5,18 +5,32 @@ using KMusic.Core;
 [Serializable]
 public class KMusicSongRandomizePlanData
 {
-    public int version = 2;
+    public int version = 4;
     public int barCount = 1;
     public int tonicSemitone = 0;
     public int isMinor = 1;
     public int rootValueId = 1;
     public int melodyBaseOctave = 1;
     public int style = 1;
+    public int syncMask = 0;
     public int[] chordDegrees;
     public int[] phraseKinds;
     public int[] chordRhythmKinds;
     public int[] chordModes;
     public int[] chordVariationKinds;
+}
+
+
+public enum KMusicGenreStyle
+{
+    House = 1,
+    Techno = 2,
+}
+
+public enum KMusicRandomizeRequester
+{
+    Keys = 1,
+    Chords = 2,
 }
 
 public enum KMusicPhraseKind
@@ -57,7 +71,9 @@ public enum KMusicChordVariationKind
 
 public static class KMusicSongRandomizePlan
 {
-    private const string PrefKey = "kmusic.randomize.songplan.v3";
+    private const string PrefKey = "kmusic.randomize.songplan.v4";
+    private const int SyncMaskKeys = 1;
+    private const int SyncMaskChords = 2;
     private static KMusicSongRandomizePlanData _cached;
 
     public static KMusicSongRandomizePlanData EnsurePlan(int barCount)
@@ -82,6 +98,29 @@ public static class KMusicSongRandomizePlan
     public static KMusicSongRandomizePlanData ForceNewPlan(int barCount)
     {
         _cached = Generate(Mathf.Clamp(barCount, 1, 64));
+        Save(_cached);
+        return Clone(_cached);
+    }
+
+    public static KMusicSongRandomizePlanData AcquireLinkedPlan(int barCount, KMusicRandomizeRequester requester)
+    {
+        barCount = Mathf.Clamp(barCount, 1, 64);
+        int requesterMask = requester == KMusicRandomizeRequester.Chords ? SyncMaskChords : SyncMaskKeys;
+
+        var loaded = Load();
+        if (loaded != null && loaded.barCount == barCount)
+        {
+            if ((loaded.syncMask & requesterMask) == 0 && loaded.syncMask != 0)
+            {
+                loaded.syncMask |= requesterMask;
+                _cached = loaded;
+                Save(_cached);
+                return Clone(_cached);
+            }
+        }
+
+        _cached = Generate(barCount);
+        _cached.syncMask = requesterMask;
         Save(_cached);
         return Clone(_cached);
     }
@@ -184,16 +223,43 @@ public static class KMusicSongRandomizePlan
         return roll < 0.44f ? 0 : (roll < 0.84f ? 2 : 3);
     }
 
+    private static int ChooseTechnoChordMode(bool isMinor, int sectionBar, bool lastBar)
+    {
+        float roll = UnityEngine.Random.value;
+        if (lastBar)
+            return isMinor ? (roll < 0.60f ? 1 : 2) : (roll < 0.55f ? 0 : 3);
+
+        if (isMinor)
+        {
+            if (sectionBar == 0) return roll < 0.62f ? 1 : (roll < 0.84f ? 2 : 3);
+            if (sectionBar == 1) return roll < 0.44f ? 1 : (roll < 0.78f ? 3 : 2);
+            if (sectionBar == 2) return roll < 0.34f ? 1 : (roll < 0.72f ? 2 : 3);
+            return roll < 0.48f ? 1 : (roll < 0.82f ? 2 : 3);
+        }
+
+        if (sectionBar == 0) return roll < 0.56f ? 0 : (roll < 0.82f ? 3 : 2);
+        if (sectionBar == 1) return roll < 0.38f ? 0 : (roll < 0.70f ? 3 : 2);
+        if (sectionBar == 2) return roll < 0.28f ? 0 : (roll < 0.64f ? 2 : 3);
+        return roll < 0.42f ? 0 : (roll < 0.74f ? 3 : 2);
+    }
+
     private static KMusicSongRandomizePlanData Generate(int barCount)
+    {
+        return UnityEngine.Random.value < 0.5f
+            ? GenerateHouse(barCount)
+            : GenerateTechno(barCount);
+    }
+
+    private static KMusicSongRandomizePlanData GenerateHouse(int barCount)
     {
         bool isMinor = UnityEngine.Random.value < 0.84f;
         int tonicSemitone = (isMinor
             ? new[] { 0, 2, 4, 5, 7, 9 }
             : new[] { 0, 2, 5, 7, 9 })[UnityEngine.Random.Range(0, isMinor ? 6 : 5)];
 
-        int rootBaseOctave = UnityEngine.Random.value < 0.78f ? 12 : 0;
+        int rootBaseOctave = UnityEngine.Random.value < 0.60f ? 24 : 36;
         int rootValueId = 1 + tonicSemitone + rootBaseOctave;
-        int melodyBaseOctave = UnityEngine.Random.value < 0.72f ? 2 : 1;
+        int melodyBaseOctave = UnityEngine.Random.value < 0.65f ? 3 : 4;
 
         int[][] templatesMajor =
         {
@@ -354,13 +420,153 @@ public static class KMusicSongRandomizePlan
 
         return new KMusicSongRandomizePlanData
         {
-            version = 3,
+            version = 4,
             barCount = barCount,
             tonicSemitone = tonicSemitone,
             isMinor = isMinor ? 1 : 0,
             rootValueId = Mathf.Max(1, rootValueId),
             melodyBaseOctave = melodyBaseOctave,
-            style = 1,
+            style = (int)KMusicGenreStyle.House,
+            syncMask = 0,
+            chordDegrees = degrees,
+            phraseKinds = phrases,
+            chordRhythmKinds = rhythms,
+            chordModes = chordModes,
+            chordVariationKinds = chordVariations,
+        };
+    }
+
+    private static KMusicSongRandomizePlanData GenerateTechno(int barCount)
+    {
+        bool isMinor = UnityEngine.Random.value < 0.92f;
+        int tonicSemitone = (isMinor
+            ? new[] { 0, 2, 3, 5, 7, 8, 10 }
+            : new[] { 0, 2, 5, 7, 9, 10 })[UnityEngine.Random.Range(0, isMinor ? 7 : 6)];
+
+        int rootBaseOctave = UnityEngine.Random.value < 0.72f ? 12 : 24;
+        int rootValueId = 1 + tonicSemitone + rootBaseOctave;
+        int melodyBaseOctave = UnityEngine.Random.value < 0.62f ? 2 : 3;
+
+        int[][] templatesMinor =
+        {
+            new[] { 1, 7, 6, 7 },
+            new[] { 1, 4, 1, 7 },
+            new[] { 1, 6, 1, 7 },
+            new[] { 1, 5, 7, 6 },
+            new[] { 1, 1, 7, 6 },
+            new[] { 1, 3, 1, 7 },
+        };
+        int[][] templatesMajor =
+        {
+            new[] { 1, 7, 6, 5 },
+            new[] { 1, 5, 4, 5 },
+            new[] { 1, 4, 1, 5 },
+            new[] { 1, 2, 7, 5 },
+        };
+
+        int[] template = (isMinor ? templatesMinor : templatesMajor)[UnityEngine.Random.Range(0, isMinor ? templatesMinor.Length : templatesMajor.Length)];
+
+        int[] degrees = new int[barCount];
+        int[] phrases = new int[barCount];
+        int[] rhythms = new int[barCount];
+        int[] chordModes = new int[barCount];
+        int[] chordVariations = new int[barCount];
+
+        KMusicChordRhythmKind[] grooveFamilyA =
+        {
+            KMusicChordRhythmKind.DeepSparse,
+            KMusicChordRhythmKind.Bounce,
+            KMusicChordRhythmKind.PushPattern,
+            KMusicChordRhythmKind.DenseGroove,
+        };
+
+        KMusicChordRhythmKind[] grooveFamilyB =
+        {
+            KMusicChordRhythmKind.Bounce,
+            KMusicChordRhythmKind.LateOffbeats,
+            KMusicChordRhythmKind.DeepSparse,
+            KMusicChordRhythmKind.Hold,
+        };
+
+        bool useFamilyA = UnityEngine.Random.value < 0.58f;
+        KMusicChordRhythmKind previousRhythm = KMusicChordRhythmKind.DeepSparse;
+        int previousMode = isMinor ? 1 : 0;
+
+        for (int bar = 0; bar < barCount; bar++)
+        {
+            int sectionBar = bar % 4;
+            int degree = template[sectionBar];
+            if (bar >= 4 && sectionBar == 2 && UnityEngine.Random.value < 0.35f)
+                degree = isMinor ? 1 : 5;
+            if (bar == barCount - 1)
+                degree = 1;
+            degrees[bar] = degree;
+
+            KMusicPhraseKind phrase = sectionBar switch
+            {
+                0 => (UnityEngine.Random.value < 0.52f ? KMusicPhraseKind.Pulse : KMusicPhraseKind.Sparse),
+                1 => (UnityEngine.Random.value < 0.50f ? KMusicPhraseKind.Arp : KMusicPhraseKind.Descend),
+                2 => (UnityEngine.Random.value < 0.46f ? KMusicPhraseKind.Ascend : KMusicPhraseKind.Hook),
+                _ => (bar == barCount - 1 ? KMusicPhraseKind.Sustain : (UnityEngine.Random.value < 0.55f ? KMusicPhraseKind.Pulse : KMusicPhraseKind.Answer)),
+            };
+            phrases[bar] = (int)phrase;
+
+            var family = useFamilyA ? grooveFamilyA : grooveFamilyB;
+            KMusicChordRhythmKind rhythm = family[Mathf.Clamp(sectionBar, 0, family.Length - 1)];
+            float grooveRoll = UnityEngine.Random.value;
+            if (sectionBar == 1 && grooveRoll < 0.30f) rhythm = KMusicChordRhythmKind.LateOffbeats;
+            else if (sectionBar == 2 && grooveRoll < 0.25f) rhythm = KMusicChordRhythmKind.DenseGroove;
+            else if (sectionBar == 3 && grooveRoll < 0.38f) rhythm = KMusicChordRhythmKind.Hold;
+
+            if (bar == barCount - 1)
+                rhythm = UnityEngine.Random.value < 0.55f ? KMusicChordRhythmKind.Hold : KMusicChordRhythmKind.DeepSparse;
+            if (bar > 0 && rhythm == previousRhythm && UnityEngine.Random.value < 0.66f)
+            {
+                rhythm = rhythm switch
+                {
+                    KMusicChordRhythmKind.DeepSparse => KMusicChordRhythmKind.Bounce,
+                    KMusicChordRhythmKind.Bounce => KMusicChordRhythmKind.PushPattern,
+                    KMusicChordRhythmKind.PushPattern => KMusicChordRhythmKind.DenseGroove,
+                    KMusicChordRhythmKind.DenseGroove => KMusicChordRhythmKind.LateOffbeats,
+                    KMusicChordRhythmKind.Hold => KMusicChordRhythmKind.DeepSparse,
+                    _ => KMusicChordRhythmKind.DeepSparse,
+                };
+            }
+            rhythms[bar] = (int)rhythm;
+            previousRhythm = rhythm;
+
+            int chordMode = ChooseTechnoChordMode(isMinor, sectionBar, bar == barCount - 1);
+            if (bar > 0 && chordMode == previousMode && UnityEngine.Random.value < 0.60f)
+                chordMode = chordMode switch { 1 => 2, 2 => 3, 3 => isMinor ? 1 : 0, _ => 2 };
+            chordModes[bar] = chordMode;
+            previousMode = chordMode;
+
+            KMusicChordVariationKind variation = KMusicChordVariationKind.None;
+            float vRoll = UnityEngine.Random.value;
+            if (bar == barCount - 1)
+                variation = KMusicChordVariationKind.TailHold;
+            else if (rhythm == KMusicChordRhythmKind.DeepSparse || rhythm == KMusicChordRhythmKind.Hold)
+                variation = vRoll < 0.44f ? KMusicChordVariationKind.TailHold : KMusicChordVariationKind.None;
+            else if (rhythm == KMusicChordRhythmKind.Bounce || rhythm == KMusicChordRhythmKind.PushPattern)
+                variation = vRoll < 0.38f ? KMusicChordVariationKind.SplitPulse : (vRoll < 0.60f ? KMusicChordVariationKind.Anticipate : KMusicChordVariationKind.None);
+            else
+                variation = vRoll < 0.28f ? KMusicChordVariationKind.SkipFirst : (vRoll < 0.54f ? KMusicChordVariationKind.Anticipate : KMusicChordVariationKind.None);
+            chordVariations[bar] = (int)variation;
+
+            if ((bar % 4) == 3 && UnityEngine.Random.value < 0.24f)
+                useFamilyA = !useFamilyA;
+        }
+
+        return new KMusicSongRandomizePlanData
+        {
+            version = 4,
+            barCount = barCount,
+            tonicSemitone = tonicSemitone,
+            isMinor = isMinor ? 1 : 0,
+            rootValueId = Mathf.Max(1, rootValueId),
+            melodyBaseOctave = melodyBaseOctave,
+            style = (int)KMusicGenreStyle.Techno,
+            syncMask = 0,
             chordDegrees = degrees,
             phraseKinds = phrases,
             chordRhythmKinds = rhythms,
@@ -394,6 +600,12 @@ public static class KMusicSongRandomizePlan
                 if (loaded.chordVariationKinds == null || loaded.chordVariationKinds.Length != loaded.barCount)
                     loaded.chordVariationKinds = new int[Mathf.Max(1, loaded.barCount)];
             }
+            if (loaded != null && loaded.version < 4)
+            {
+                loaded.syncMask = 0;
+                if (loaded.style <= 0)
+                    loaded.style = (int)KMusicGenreStyle.House;
+            }
             return loaded;
         }
         catch
@@ -414,6 +626,7 @@ public static class KMusicSongRandomizePlan
         clone.rootValueId = data.rootValueId;
         clone.melodyBaseOctave = data.melodyBaseOctave;
         clone.style = data.style;
+        clone.syncMask = data.syncMask;
         clone.chordDegrees = data.chordDegrees != null ? (int[])data.chordDegrees.Clone() : null;
         clone.phraseKinds = data.phraseKinds != null ? (int[])data.phraseKinds.Clone() : null;
         clone.chordRhythmKinds = data.chordRhythmKinds != null ? (int[])data.chordRhythmKinds.Clone() : null;
