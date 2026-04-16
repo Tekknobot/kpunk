@@ -11,6 +11,7 @@ public class KMusicSamplerPaintUI : MonoBehaviour
 
     private StepGrid sampleGrid;
     private StepGrid drumGrid;
+    private bool _drumGridOwnedBySequencer = false;
 
     private Button[] chopBtns = new Button[16];
     private Button[] drumBtns = new Button[8];
@@ -58,8 +59,14 @@ public class KMusicSamplerPaintUI : MonoBehaviour
         if (sampleGrid == null) Debug.LogError("SampleStepGrid not found");
         if (drumGrid == null)   Debug.LogError("DrumStepGrid not found");
 
+        // KMusicDrumSequencer is the authoritative owner of DrumStepGrid.
+        // If it is present, this UI must not also subscribe to / mutate the drum grid,
+        // otherwise taps can be mirrored into this script's activeDrum lane (which defaults to kick).
+        _drumGridOwnedBySequencer = (sequencer != null && drumGrid != null);
+
         // enable labels
-        drumGrid?.EnableValueLabels(true, v => v == 0 ? "" : "•");
+        if (!_drumGridOwnedBySequencer)
+            drumGrid?.EnableValueLabels(true, v => v == 0 ? "" : "•");
 
         // Chop buttons
         for (int i = 0; i < 16; i++)
@@ -80,21 +87,27 @@ public class KMusicSamplerPaintUI : MonoBehaviour
             drumPatterns[d] = new bool[2,8];
 
         WireChops();
-        WireDrums();
+        if (!_drumGridOwnedBySequencer)
+            WireDrums();
         WireGrids();
 
         // sample labels show chop numbers
         sampleGrid?.EnableValueLabels(true, v => (v>=1 && v<=16)? v.ToString("00"):"");
 
         sampleGrid?.ClearAll();
-        drumGrid?.ClearAll();
+        if (!_drumGridOwnedBySequencer)
+            drumGrid?.ClearAll();
 
         sampleGrid?.EnableToggleEraseOnSameValue(true);
-        drumGrid?.EnableToggleEraseOnSameValue(true);
+        if (!_drumGridOwnedBySequencer)
+            drumGrid?.EnableToggleEraseOnSameValue(true);
 
         SelectChop(1);
-        SelectDrum(0);
-        LoadDrumLaneToGrid(0);
+        if (!_drumGridOwnedBySequencer)
+        {
+            SelectDrum(0);
+            LoadDrumLaneToGrid(0);
+        }
     }
 
     // ---------- CHOPS ----------
@@ -222,7 +235,7 @@ public class KMusicSamplerPaintUI : MonoBehaviour
             };
         }
 
-        if(drumGrid!=null)
+        if(drumGrid!=null && !_drumGridOwnedBySequencer)
         {
             drumGrid.OnCellValueChanged += (r,c,v)=>
             {
