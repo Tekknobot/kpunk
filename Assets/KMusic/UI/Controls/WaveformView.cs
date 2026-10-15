@@ -13,6 +13,12 @@ namespace KMusic.UI
 
         private float[] _peaks;
         private int _peakCount;
+        private AudioClip _peakClip;
+        private IVisualElementScheduledItem _peakJob;
+        private int _peakGeneration;
+        // This separate 2px element moves without rebuilding the whole 2k-
+        // segment vector waveform on every playback timer tick.
+        private readonly VisualElement _playheadOverlay;
 
         private readonly List<float> _markers01 = new();
         // -1 means "hidden". (So we don't draw a confusing default line at t=0.)
@@ -28,12 +34,46 @@ namespace KMusic.UI
         /// isDrag true on move while pressed.
         /// </summary>
         public event Action<float, bool> UserPointer01;
+        public event Action<float> UserTap01;
         public event Action<int, float, bool> MarkerDrag01;
+        // A marker tap selects it without moving it. The sampler can then delete
+        // or nudge that exact marker instead of guessing from the playhead.
+        public event Action<int> MarkerSelected;
+        // When dragging vertically over the waveform, let the surrounding
+        // sampler page scroll even though the waveform owns pointer capture.
+        public event Action<float> VerticalDragDelta;
 
         private readonly VisualElement _markerLabelLayer;
         private readonly List<Label> _markerLabels = new();
+        private readonly VisualElement _rulerLabelLayer;
+        private readonly List<Label> _rulerLabels = new();
+        private float _rulerBpm = 120f;
+        private float _rulerSeconds;
+
+        // Waveform ruler uses true musical beats at the active tempo. The viewport
+        // clips bars naturally when zooming and panning; slices remain normalized.
+        public void SetMusicalRuler(float bpm, float seconds)
+        {
+            _rulerBpm = Mathf.Max(1f, bpm);
+            _rulerSeconds = Mathf.Max(0f, seconds);
+            UpdateMarkerLabels();
+            MarkDirtyRepaint();
+        }
+
+        public void ZoomIn() => ZoomAround(ViewStart01 + ViewLen01 * .5f, .5f);
+        public void ZoomOut() => ZoomAround(ViewStart01 + ViewLen01 * .5f, 2f);
+        public void RestoreWindow(float start, float length) => SetViewWindow(start, length);
+        public float VisibleBars => _rulerSeconds * ViewLen01 * _rulerBpm / 240f;
 
         private bool _pointerDown;
+        private Vector2 _pointerDownPosition;
+        private bool _pointerMoved;
+        private bool _pointerWasPinching;
+        private Vector2 _lastPointerPosition;
+        private Vector2 _pointerDownPanelPosition;
+        private Vector2 _lastPointerPanelPosition;
+        private bool _panningWave;
+        private bool _verticalScrolling;
         private int _pointerIdPrimary = -1;
         private bool _draggingMarker;
         private int _dragMarkerIndex = -1;
@@ -41,6 +81,12 @@ namespace KMusic.UI
         private const float MarkerGrabPx = 18f;
 
         public bool MarkersDraggable { get; set; } = false;
+        public void SetSelectedMarker(int index)
+        {
+            _activeMarkerIndex = index >= 0 && index < _markers01.Count ? index : -1;
+            UpdateMarkerLabels();
+            MarkDirtyRepaint();
+        }
 
         // --- Zoom window in timeline-normalized space ---
         // View maps [ViewStart01 .. ViewStart01+ViewLen01] to the control width.
@@ -82,7 +128,26 @@ namespace KMusic.UI
             _markerLabelLayer.style.bottom = 0;
             Add(_markerLabelLayer);
 
-            RegisterCallback<GeometryChangedEvent>(_ => UpdateMarkerLabels());
+            _rulerLabelLayer = new VisualElement();
+            _rulerLabelLayer.pickingMode = PickingMode.Ignore;
+            _rulerLabelLayer.style.position = Position.Absolute;
+            _rulerLabelLayer.style.left = 0;
+            _rulerLabelLayer.style.right = 0;
+            _rulerLabelLayer.style.top = 0;
+            _rulerLabelLayer.style.height = 22;
+            Add(_rulerLabelLayer);
+
+            _playheadOverlay = new VisualElement { name = "ZPunkWavePlayhead" };
+            _playheadOverlay.pickingMode = PickingMode.Ignore;
+            _playheadOverlay.style.position = Position.Absolute;
+            _playheadOverlay.style.top = 0;
+            _playheadOverlay.style.bottom = 0;
+            _playheadOverlay.style.width = 2.5f;
+            _playheadOverlay.style.backgroundColor = PlayheadColor;
+            _playheadOverlay.style.display = DisplayStyle.None;
+            Add(_playheadOverlay);
+
+            RegisterCallback<GeometryChangedEvent>(_ => { UpdateMarkerLabels(); MovePlayhead(); });
             RegisterCallback<PointerDownEvent>(OnPointerDown);
             RegisterCallback<PointerMoveEvent>(OnPointerMove);
             RegisterCallback<PointerUpEvent>(OnPointerUp);
@@ -98,8 +163,25 @@ namespace KMusic.UI
         /// </summary>
         public void SetPlayhead01(float t01)
         {
-            _playhead01 = (t01 < 0f) ? -1f : Mathf.Clamp01(t01);
-            MarkDirtyRepaint();
+            float next = (t01 < 0f) ? -1f : Mathf.Clamp01(t01);
+            if (Mathf.Abs(_playhead01 - next) < .00005f) return;
+            _playhead01 = next;
+            MovePlayhead();
+        }
+
+        private void MovePlayhead()
+        {
+            if (_playheadOverlay == null) return;
+            bool visible = _playhead01 >= 0f &&
+                _playhead01 >= ViewStart01 && _playhead01 <= ViewStart01 + ViewLen01;
+            if (!visible)
+            {
+                _playheadOverlay.style.display = DisplayStyle.None;
+                return;
+            }
+            float fraction = Mathf.Clamp01((_playhead01 - ViewStart01) / Mathf.Max(.000001f, ViewLen01));
+            _playheadOverlay.style.display = DisplayStyle.Flex;
+            _playheadOverlay.style.left = fraction * Mathf.Max(0f, contentRect.width - 2.5f);
         }
 
         public void SetMarkers01(IEnumerable<float> markers01)
@@ -109,7 +191,8 @@ namespace KMusic.UI
             {
                 foreach (var m in markers01)
                 {
-                    // 0 and 1 are implied boundaries for chops; don't draw them as "user markers".
+                    // Starts live within the sample. The rightmost endpoint is
+                    // represented as a visible closing marker for slice 16.
                     float t = Mathf.Clamp01(m);
                     if (t <= 0.0005f) continue;
                     if (t >= 0.9995f) continue;
@@ -117,6 +200,9 @@ namespace KMusic.UI
                 }
             }
             _markers01.Sort();
+            // Slice 16 has a closing marker at the file end, even when the user
+            // did not place a 17th point. Unlike another chop, it is a boundary.
+            if (_markers01.Count == 16) _markers01.Add(1f);
             UpdateMarkerLabels();
             MarkDirtyRepaint();
         }
@@ -126,45 +212,83 @@ namespace KMusic.UI
             ViewStart01 = 0f;
             ViewLen01 = 1f;
             UpdateMarkerLabels();
+            MovePlayhead();
             MarkDirtyRepaint();
         }
 
         public void SetClip(AudioClip clip, int targetSamples = 2048)
         {
+            // Repeated sampler UI refreshes should not synchronously scan the
+            // entire AudioClip (potentially millions of PCM frames) again.
+            if (ReferenceEquals(_peakClip, clip) && _peaks != null) return;
+            _peakGeneration++;
+            if (_peakJob != null) { _peakJob.Pause(); _peakJob = null; }
+            _peakClip = clip;
             _peaks = null;
             _peakCount = 0;
-
             ResetZoom();
-
             if (clip == null || clip.samples <= 0) { MarkDirtyRepaint(); return; }
 
-            var channels = clip.channels;
-            var data = new float[clip.samples * channels];
-            clip.GetData(data, 0);
-
-            _peakCount = Mathf.Max(128, targetSamples);
+            int channels = Mathf.Max(1, clip.channels);
+            _peakCount = Mathf.Min(2048, Mathf.Max(128, clip.samples));
             _peaks = new float[_peakCount * 2];
-
-            int samplesPerBucket = Mathf.Max(1, clip.samples / _peakCount);
-
-            for (int i = 0; i < _peakCount; i++)
+            float[] peaks = _peaks;
+            int total = clip.samples;
+            int buckets = _peakCount;
+            const int frameBudget = 32768;
+            float[] chunk = new float[Mathf.Min(frameBudget, total) * channels];
+            int cursor = 0;
+            int version = _peakGeneration;
+            Action work = () =>
             {
-                int start = i * samplesPerBucket * channels;
-                int end = Mathf.Min(data.Length, start + samplesPerBucket * channels);
-
-                float min = 0f, max = 0f;
-                for (int s = start; s < end; s += channels)
+                if (version != _peakGeneration || _peakClip != clip) return;
+                int frames = Mathf.Min(frameBudget, total - cursor);
+                if (frames <= 0) return;
+                // Reuse one input buffer across every frame. At the last chunk
+                // GetData may wrap, but only 'frames' valid samples are read.
+                if (!clip.GetData(chunk, cursor))
                 {
-                    float v = data[s];
-                    if (v < min) min = v;
-                    if (v > max) max = v;
+                    cursor = total;
+                    return;
                 }
-
-                _peaks[i * 2] = min;
-                _peaks[i * 2 + 1] = max;
+                for (int frame = 0; frame < frames; ++frame)
+                {
+                    int bucket = Mathf.Min(buckets - 1,
+                        (int)((long)(cursor + frame) * buckets / total));
+                    float v = chunk[frame * channels];
+                    int ix = bucket * 2;
+                    peaks[ix] = Mathf.Min(peaks[ix], v);
+                    peaks[ix + 1] = Mathf.Max(peaks[ix + 1], v);
+                }
+                cursor += frames;
+            };
+            // Short one-shots draw at once; songs and long chops are sampled
+            // across UI frames so no audio deadline is blocked by waveform IO.
+            if (total <= frameBudget * 2)
+            {
+                while (cursor < total) work();
+                MarkDirtyRepaint();
             }
-
-            MarkDirtyRepaint();
+            else
+            {
+                _peakJob = schedule.Execute(() =>
+                {
+                    if (version != _peakGeneration || _peakClip != clip)
+                    {
+                        _peakJob?.Pause();
+                        return;
+                    }
+                    work();
+                    if (cursor >= total)
+                    {
+                        _peakJob?.Pause();
+                        _peakJob = null;
+                        MarkDirtyRepaint();
+                    }
+                    else if ((cursor / frameBudget) % 8 == 0)
+                        MarkDirtyRepaint();
+                }).Every(16);
+            }
         }
 
         private void OnGenerate(MeshGenerationContext ctx)
@@ -213,6 +337,26 @@ namespace KMusic.UI
                 }
             }
 
+            // Subtle bar/beat grid shares the waveform's viewport transform.
+            if (_rulerSeconds > 0f && _rulerBpm > 0f)
+            {
+                float totalBeats = _rulerSeconds * _rulerBpm / 60f;
+                float visibleBeats = totalBeats * vLen;
+                int stepBeats = visibleBeats > 128f ? 16 : visibleBeats > 48f ? 4 : 1;
+                int startBeat = Mathf.Max(0, Mathf.CeilToInt(v0 * totalBeats / stepBeats) * stepBeats);
+                painter.lineWidth = 1f;
+                for (int beat = startBeat; beat < totalBeats * v1; beat += stepBeats)
+                {
+                    float x = r.x + (beat / totalBeats - v0) / vLen * r.width;
+                    painter.strokeColor = beat % 4 == 0
+                        ? new Color(.25f, .49f, .57f, .50f) : new Color(.2f, .3f, .39f, .25f);
+                    painter.BeginPath();
+                    painter.MoveTo(new Vector2(x, r.y + 22));
+                    painter.LineTo(new Vector2(x, r.y + r.height));
+                    painter.Stroke();
+                }
+            }
+
             // Markers (only those inside window)
             if (_markers01.Count > 0)
             {
@@ -234,21 +378,7 @@ namespace KMusic.UI
                 }
             }
 
-            // Playhead (hidden when _playhead01 < 0)
-            if (_playhead01 >= 0f)
-            {
-                painter.lineWidth = 2.5f;
-                painter.strokeColor = PlayheadColor;
-
-                float ph = _playhead01;
-                float tWin = (ph - v0) / vLen;
-                float px = r.x + Mathf.Clamp01(tWin) * r.width;
-
-                painter.BeginPath();
-                painter.MoveTo(new Vector2(px, r.y));
-                painter.LineTo(new Vector2(px, r.y + r.height));
-                painter.Stroke();
-            }
+            // Playhead is a lightweight overlay, not part of the waveform mesh.
         }
 
         // --- Input ---
@@ -256,6 +386,7 @@ namespace KMusic.UI
         {
             if (evt == null) return;
             Focus();
+            this.CapturePointer(evt.pointerId);
 
             // Track up to 2 pointers
             if (_p1 == -1)
@@ -275,6 +406,14 @@ namespace KMusic.UI
             {
                 _pointerDown = true;
                 _pointerIdPrimary = evt.pointerId;
+                _pointerDownPosition = (Vector2)evt.localPosition;
+                _lastPointerPosition = _pointerDownPosition;
+                _pointerDownPanelPosition = (Vector2)evt.position;
+                _lastPointerPanelPosition = _pointerDownPanelPosition;
+                _panningWave = false;
+                _verticalScrolling = false;
+                _pointerMoved = false;
+                _pointerWasPinching = false;
 
                 float t01 = PositionToTimeline01(evt.localPosition);
                 int markerIndex = MarkersDraggable ? FindMarkerIndexNear(evt.localPosition) : -1;
@@ -283,7 +422,7 @@ namespace KMusic.UI
                     _draggingMarker = true;
                     _dragMarkerIndex = markerIndex;
                     _activeMarkerIndex = markerIndex;
-                    MarkerDrag01?.Invoke(markerIndex, t01, false);
+                    MarkerSelected?.Invoke(markerIndex);
                     UpdateMarkerLabels();
                     MarkDirtyRepaint();
                 }
@@ -311,17 +450,46 @@ namespace KMusic.UI
             if (_pinching)
             {
                 UpdatePinch();
+                _pointerWasPinching = true;
                 evt.StopPropagation();
                 return;
             }
 
             if (_pointerDown && evt.pointerId == _pointerIdPrimary)
             {
-                float t01 = PositionToTimeline01(evt.localPosition);
+                Vector2 pos = (Vector2)evt.localPosition;
+                Vector2 panelPos = (Vector2)evt.position;
+                Vector2 displacement = panelPos - _pointerDownPanelPosition;
+                if (displacement.sqrMagnitude > 64f) _pointerMoved = true;
+
                 if (_draggingMarker && _dragMarkerIndex >= 0)
-                    MarkerDrag01?.Invoke(_dragMarkerIndex, t01, true);
-                else
-                    UserPointer01?.Invoke(t01, true);
+                {
+                    if (_pointerMoved)
+                        MarkerDrag01?.Invoke(_dragMarkerIndex, PositionToTimeline01(pos), true);
+                }
+                else if (_pointerMoved)
+                {
+                    // Direction-lock the first meaningful drag. Vertical drags
+                    // scroll the sampler; horizontal drags pan zoomed audio.
+                    if (!_panningWave && !_verticalScrolling)
+                    {
+                        if (Mathf.Abs(displacement.y) > Mathf.Abs(displacement.x))
+                            _verticalScrolling = true;
+                        else if (ViewLen01 < .9999f)
+                            _panningWave = true;
+                    }
+                    if (_verticalScrolling)
+                        VerticalDragDelta?.Invoke(panelPos.y - _lastPointerPanelPosition.y);
+                    else if (_panningWave)
+                    {
+                        float width = Mathf.Max(1f, contentRect.width);
+                        SetViewWindow(ViewStart01 - (panelPos.x - _lastPointerPanelPosition.x) / width * ViewLen01, ViewLen01);
+                    }
+                    else
+                        UserPointer01?.Invoke(PositionToTimeline01(pos), true);
+                }
+                _lastPointerPosition = pos;
+                _lastPointerPanelPosition = panelPos;
                 evt.StopPropagation();
             }
         }
@@ -338,7 +506,10 @@ namespace KMusic.UI
 
             if (evt.pointerId == _pointerIdPrimary)
             {
-                if (_draggingMarker && _dragMarkerIndex >= 0)
+                bool clickedEmpty = !_draggingMarker && !_pointerMoved && !_pointerWasPinching
+                    && ((Vector2)evt.localPosition - _pointerDownPosition).sqrMagnitude <= 64f;
+                if (clickedEmpty) UserTap01?.Invoke(PositionToTimeline01(evt.localPosition));
+                if (_draggingMarker && _dragMarkerIndex >= 0 && _pointerMoved)
                 {
                     float t01 = PositionToTimeline01(evt.localPosition);
                     MarkerDrag01?.Invoke(_dragMarkerIndex, t01, false);
@@ -348,10 +519,14 @@ namespace KMusic.UI
                 _pointerIdPrimary = -1;
                 _draggingMarker = false;
                 _dragMarkerIndex = -1;
-                _activeMarkerIndex = -1;
+                _panningWave = false;
+                _verticalScrolling = false;
+                // Preserve selected-marker highlight after releasing a tap.
                 UpdateMarkerLabels();
                 MarkDirtyRepaint();
             }
+            if (this.HasPointerCapture(evt.pointerId)) this.ReleasePointer(evt.pointerId);
+            evt.StopPropagation();
         }
 
         private void OnPointerCancel(PointerCancelEvent evt)
@@ -360,8 +535,10 @@ namespace KMusic.UI
             _pointerIdPrimary = -1;
             _draggingMarker = false;
             _dragMarkerIndex = -1;
-            _activeMarkerIndex = -1;
+            _panningWave = false;
+            _verticalScrolling = false;
             UpdateMarkerLabels();
+            if (this.HasPointerCapture(evt.pointerId)) this.ReleasePointer(evt.pointerId);
 
             _p1 = -1;
             _p2 = -1;
@@ -384,6 +561,8 @@ namespace KMusic.UI
         private void BeginPinch()
         {
             _pinching = true;
+            _pointerWasPinching = true;
+            _pointerMoved = true;
 
             _pinchStartDist = Vector2.Distance(_p1Pos, _p2Pos);
             _pinchStartViewLen = ViewLen01;
@@ -446,12 +625,14 @@ namespace KMusic.UI
             ViewLen01 = len01;
 
             UpdateMarkerLabels();
+            MovePlayhead();
             MarkDirtyRepaint();
         }
 
 
         private void UpdateMarkerLabels()
         {
+            UpdateRulerLabels();
             if (_markerLabelLayer == null)
                 return;
 
@@ -460,7 +641,7 @@ namespace KMusic.UI
                 var lbl = new Label();
                 lbl.pickingMode = PickingMode.Ignore;
                 lbl.style.position = Position.Absolute;
-                lbl.style.top = 2;
+                lbl.style.top = 24;
                 lbl.style.unityFontStyleAndWeight = FontStyle.Bold;
                 lbl.style.fontSize = 12;
                 lbl.style.color = MarkerColor;
@@ -501,10 +682,45 @@ namespace KMusic.UI
                 float tWin = (m - v0) / vLen;
                 float px = Mathf.Clamp01(tWin) * r.width;
 
-                lbl.text = $"{(i + 1):00}";
+                lbl.text = i == 16 && _markers01.Count >= 17 ? "END 16" : $"{(i + 1):00}";
                 lbl.style.display = DisplayStyle.Flex;
-                lbl.style.left = Mathf.Max(0f, px - 12f);
+                lbl.style.left = Mathf.Clamp(px - (i == 16 ? 42f : 12f), 0f,
+                    Mathf.Max(0f, r.width - (i == 16 ? 55f : 30f)));
                 lbl.style.color = (i == _activeMarkerIndex) ? Color.white : MarkerColor;
+            }
+        }
+
+        private void UpdateRulerLabels()
+        {
+            if (_rulerLabelLayer == null) return;
+            for (int i = 0; i < _rulerLabels.Count; ++i)
+                _rulerLabels[i].style.display = DisplayStyle.None;
+            if (_rulerSeconds <= 0f || _rulerBpm <= 0f || contentRect.width < 10f) return;
+
+            float totalBeats = _rulerSeconds * _rulerBpm / 60f;
+            float start = ViewStart01 * totalBeats;
+            float end = (ViewStart01 + ViewLen01) * totalBeats;
+            float pixelsPerBar = 4f / Mathf.Max(.0001f, totalBeats * ViewLen01) * contentRect.width;
+            int barStep = pixelsPerBar < 32f ? 16 : pixelsPerBar < 65f ? 4 : 1;
+            int firstBar = Mathf.Max(0, Mathf.CeilToInt(start / 4f / barStep) * barStep);
+            int labelIndex = 0;
+            for (int bar = firstBar; bar * 4f <= end && labelIndex < 128; bar += barStep)
+            {
+                if (labelIndex >= _rulerLabels.Count)
+                {
+                    var label = new Label();
+                    label.pickingMode = PickingMode.Ignore;
+                    label.style.position = Position.Absolute;
+                    label.style.top = 2;
+                    label.style.fontSize = 10;
+                    label.style.color = new Color(.67f, .82f, .87f);
+                    _rulerLabelLayer.Add(label);
+                    _rulerLabels.Add(label);
+                }
+                var item = _rulerLabels[labelIndex++];
+                item.text = (bar + 1).ToString();
+                item.style.left = (bar * 4f / totalBeats - ViewStart01) / ViewLen01 * contentRect.width + 3f;
+                item.style.display = DisplayStyle.Flex;
             }
         }
 
@@ -523,6 +739,7 @@ namespace KMusic.UI
             for (int i = 0; i < _markers01.Count; i++)
             {
                 float m = _markers01[i];
+                if (m >= .9995f) continue; // implicit closing marker is not draggable
                 if (m < v0 || m > v1) continue;
 
                 float tWin = (m - v0) / vLen;

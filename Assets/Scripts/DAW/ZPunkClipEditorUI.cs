@@ -23,12 +23,19 @@ namespace ZPunk.DAW
         private VisualElement root, canvas, gridScrollContainer, chips;
         private VisualElement editorPlayhead;
         private VisualElement samplerPage, samplerWave;
-        private Label samplerTitle;
+        private ScrollView samplerScroll;
+        private Label samplerSelectedMarker;
+        private Label samplerTitle, samplerWarpLabel, samplerLibraryLabel;
+        private Button samplerWarpButton;
         private bool showingSampler;
         private KMusicPlayerUI samplePlayer;
         private ZPunkSongTransport songTransport;
         private ScrollView scroller;
         private Label title, info, selectedInfo;
+        private VisualElement kitSelector;
+        private Label kitName;
+        private KMusicDrumSequencer drumEngine;
+        private ScrollView trackScroller;
         private KMusicProjectManager projects;
         private SongData song;
         private ClipData clip;
@@ -48,6 +55,8 @@ namespace ZPunk.DAW
         private const int MidiRows = 128;
         private int steps;
         private bool ready;
+        private float nextPlayheadPaint;
+        private float lastPlayheadX = -1f;
 
         private sealed class Drag
         {
@@ -140,14 +149,17 @@ namespace ZPunk.DAW
             title.style.unityFontStyleAndWeight = FontStyle.Bold;
             title.style.flexShrink = 1;
             title.style.minWidth = 0;
+            title.style.whiteSpace = WhiteSpace.NoWrap;
+            title.style.overflow = Overflow.Hidden;
+            title.style.textOverflow = TextOverflow.Ellipsis;
+            heading.style.height = 46;
+            heading.style.flexShrink = 0;
             heading.Add(title);
-            var samplerShortcut = Btn("SAMPLER", OpenSampler, 74);
-            samplerShortcut.style.color = Accent;
-            heading.Add(samplerShortcut);
             heading.Add(Btn("+ NEW CLIP", NewClip, 98));
             root.Add(heading);
 
             var tracks = new ScrollView(ScrollViewMode.Horizontal);
+            trackScroller = tracks;
             tracks.style.height = 49;
             tracks.style.flexShrink = 0;
             tracks.style.marginTop = 6;
@@ -157,6 +169,30 @@ namespace ZPunk.DAW
             chips.style.flexDirection = FlexDirection.Row;
             chips.style.flexWrap = Wrap.NoWrap;
             root.Add(tracks);
+
+            // Reserve this one toolbar row for every track: switching Drums/Bass/etc
+            // must not shift the piano roll or the scroll viewport vertically.
+            kitSelector = new VisualElement { name = "ZPunkDrumKitSelector" };
+            kitSelector.style.height = 42;
+            kitSelector.style.minHeight = 42;
+            kitSelector.style.maxHeight = 42;
+            kitSelector.style.flexShrink = 0;
+            kitSelector.style.flexDirection = FlexDirection.Row;
+            kitSelector.style.alignItems = Align.Center;
+            kitSelector.style.marginTop = 2;
+            var kitCaption = Txt("DRUM KIT",10,Muted);
+            kitCaption.style.width = 72;
+            kitCaption.style.flexShrink = 0;
+            kitSelector.Add(kitCaption);
+            kitSelector.Add(Btn("<", () => StepDrumKit(-1), 40));
+            kitName = Txt("LOADING",11,Ink);
+            kitName.style.flexGrow = 1;
+            kitName.style.minWidth = 0;
+            kitName.style.whiteSpace = WhiteSpace.NoWrap;
+            kitName.style.unityTextAlign = TextAnchor.MiddleCenter;
+            kitSelector.Add(kitName);
+            kitSelector.Add(Btn(">", () => StepDrumKit(1), 40));
+            root.Add(kitSelector);
 
             var row = new VisualElement();
             row.style.flexDirection = FlexDirection.Row;
@@ -169,6 +205,7 @@ namespace ZPunk.DAW
             row.Add(Btn("LEN -", () => ChangeLength(-1), 56));
             row.Add(Btn("LEN +", () => ChangeLength(1), 56));
             row.Add(Btn("NOTE DEL", DeleteSelectedNote, 77));
+            row.Add(Btn("SAMPLE", OpenSampler, 76));
             row.Add(Btn("SAVE", Save, 53));
             var controls = new ScrollView(ScrollViewMode.Horizontal);
             controls.style.height = 48;
@@ -273,10 +310,16 @@ namespace ZPunk.DAW
 
         private void BuildSamplerPage()
         {
-            samplerPage = new VisualElement { name = "ZPunkSamplerPage" };
+            samplerScroll = new ScrollView(ScrollViewMode.Vertical) { name = "ZPunkSamplerPage" };
+            samplerScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            samplerScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            samplerScroll.contentContainer.style.flexDirection = FlexDirection.Column;
+            samplerScroll.contentContainer.style.paddingBottom = 16;
+            samplerPage = samplerScroll;
             samplerPage.style.display = DisplayStyle.None;
             samplerPage.style.flexDirection = FlexDirection.Column;
             samplerPage.style.flexGrow = 1;
+            samplerPage.style.flexShrink = 1;
             samplerPage.style.minHeight = 0;
             samplerPage.style.paddingTop = 9;
             var heading = Txt("SAMPLER  /  SLICE LAB",16,Ink);
@@ -303,22 +346,62 @@ namespace ZPunk.DAW
             actions.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             actions.Add(row);
             samplerPage.Add(actions);
+            var warpCard = Box(new Color(.108f,.147f,.204f),5);
+            warpCard.style.paddingLeft = 8;
+            warpCard.style.paddingRight = 8;
+            warpCard.style.paddingTop = 7;
+            warpCard.style.paddingBottom = 7;
+            warpCard.style.marginTop = 7;
+            warpCard.style.flexShrink = 0;
+            var warpRow = new VisualElement();
+            warpRow.style.flexDirection = FlexDirection.Row;
+            warpRow.style.alignItems = Align.Center;
+            warpRow.style.height = 42;
+            warpRow.style.flexShrink = 0;
+            samplerWarpButton = Btn("WARP ON", () => { FindSampler(); samplePlayer?.DawToggleAutoWarp(); RefreshSampler(); }, 98);
+            warpRow.Add(samplerWarpButton);
+            warpRow.Add(Btn("-1", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(-1); RefreshSampler(); }, 45));
+            warpRow.Add(Btn("+1", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(1); RefreshSampler(); }, 45));
+            warpCard.Add(warpRow);
+            samplerWarpLabel = Txt("SOURCE BPM / WAITING",11,Accent);
+            samplerWarpLabel.style.whiteSpace = WhiteSpace.Normal;
+            warpCard.Add(samplerWarpLabel);
+            samplerLibraryLabel = Txt("SAMPLE LIBRARY",10,Muted);
+            samplerLibraryLabel.style.whiteSpace = WhiteSpace.Normal;
+            samplerLibraryLabel.style.marginTop = 4;
+            warpCard.Add(samplerLibraryLabel);
+            samplerPage.Add(warpCard);
+            samplerPage.schedule.Execute(() => { if (showingSampler) RefreshSampler(); }).Every(500);
             samplerWave = Box(new Color(.049f,.073f,.105f),4);
             samplerWave.style.height = 145;
             samplerWave.style.flexShrink = 0;
             samplerWave.style.marginTop = 10;
             samplerPage.Add(samplerWave);
-            var help = Txt("SLICE POINTS   /   TAP WAVEFORM TO ADJUST",10,Muted);
+            var zoomActions = new VisualElement();
+            zoomActions.style.flexDirection = FlexDirection.Row;
+            zoomActions.style.alignItems = Align.Center;
+            zoomActions.style.height = 43;
+            zoomActions.style.flexShrink = 0;
+            zoomActions.style.marginTop = 4;
+            zoomActions.Add(Btn("- ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(false); RefreshSampler(); }, 80));
+            zoomActions.Add(Btn("+ ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(true); RefreshSampler(); }, 80));
+            var gridCaption = Txt("BAR GRID  /  SNAP 1/16",10,Accent);
+            gridCaption.style.flexGrow = 1;
+            gridCaption.style.unityTextAlign = TextAnchor.MiddleRight;
+            zoomActions.Add(gridCaption);
+            samplerPage.Add(zoomActions);
+            var help = Txt("TAP EMPTY SPACE: ADD  /  DRAG MARK: MOVE  /  DRAG WAVE: PAN  /  SWIPE UP: SCROLL",10,Muted);
+            help.style.whiteSpace = WhiteSpace.Normal;
+            help.style.flexShrink = 0;
             help.style.marginTop = 7;
             help.style.marginBottom = 8;
             samplerPage.Add(help);
             var slices = new VisualElement();
             slices.style.flexDirection = FlexDirection.Row;
             slices.style.height = 46;
-            slices.Add(Btn("4 SLICES",()=>AutoSlice(4),83));
-            slices.Add(Btn("8 SLICES",()=>AutoSlice(8),83));
-            slices.Add(Btn("16 SLICES",()=>AutoSlice(16),92));
-            slices.Add(Btn("APPLY",()=>{FindSampler();samplePlayer?.DawApplySlices();RefreshSampler();},75));
+            slices.Add(Btn("ADD MARK",()=>{FindSampler();samplePlayer?.DawAddMarker();RefreshSampler();},86));
+            slices.Add(Btn("DEL SELECTED",()=>{FindSampler();samplePlayer?.DawDeleteMarker();RefreshSampler();},111));
+            slices.Add(Btn("APPLY", ApplySamplerChops, 75));
             var sliceActions = new ScrollView(ScrollViewMode.Horizontal);
             sliceActions.style.height = 49;
             sliceActions.style.flexShrink = 0;
@@ -326,15 +409,36 @@ namespace ZPunk.DAW
             sliceActions.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             sliceActions.Add(slices);
             samplerPage.Add(sliceActions);
-            var padScroll = new ScrollView(ScrollViewMode.Vertical);
-            padScroll.style.flexGrow = 1;
-            padScroll.style.minHeight = 0;
-            padScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            // One continuous vertical scroller owns the entire sampler page;
+            // nested scroll views previously trapped touch drags on the chop pads.
+            samplerSelectedMarker = Txt("SELECT A MARKER TO MOVE OR DELETE",11,Accent);
+            samplerSelectedMarker.style.whiteSpace = WhiteSpace.Normal;
+            samplerSelectedMarker.style.marginTop = 5;
+            samplerSelectedMarker.style.marginBottom = 5;
+            samplerPage.Add(samplerSelectedMarker);
+            var markerTools = new ScrollView(ScrollViewMode.Horizontal);
+            markerTools.style.height = 48;
+            markerTools.style.flexShrink = 0;
+            markerTools.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            markerTools.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            var markerRow = new VisualElement();
+            markerRow.style.flexDirection = FlexDirection.Row;
+            markerRow.style.flexWrap = Wrap.NoWrap;
+            markerRow.Add(Btn("< MARK", () => { FindSampler(); samplePlayer?.DawSelectMarker(-1); RefreshSampler(); }, 76));
+            markerRow.Add(Btn("MARK >", () => { FindSampler(); samplePlayer?.DawSelectMarker(1); RefreshSampler(); }, 76));
+            markerRow.Add(Btn("- 10 MS", () => { FindSampler(); samplePlayer?.DawNudgeSelectedMarker(-1); RefreshSampler(); }, 78));
+            markerRow.Add(Btn("+ 10 MS", () => { FindSampler(); samplePlayer?.DawNudgeSelectedMarker(1); RefreshSampler(); }, 78));
+            markerTools.Add(markerRow);
+            samplerPage.Add(markerTools);
+            var padScroll = new VisualElement();
+            padScroll.style.flexDirection = FlexDirection.Column;
+            padScroll.style.flexShrink = 0;
             for (int group = 0; group < 4; group++)
             {
                 var padRow = new VisualElement();
                 padRow.style.flexDirection = FlexDirection.Row;
                 padRow.style.height = 55;
+                padRow.style.flexShrink = 0;
                 for (int j = 0; j < 4; j++)
                 {
                     int slice = group * 4 + j + 1;
@@ -343,7 +447,8 @@ namespace ZPunk.DAW
                         if (drum != null) drum.AuditionChop(slice);
                     },50);
                     button.style.flexGrow = 1;
-                    button.style.minWidth = 0;
+                    button.style.flexShrink = 0;
+                    button.style.minWidth = 56;
                     button.style.marginRight = 5;
                     button.style.height = 48;
                     button.style.backgroundColor = Raised;
@@ -355,21 +460,58 @@ namespace ZPunk.DAW
             root.Add(samplerPage);
         }
 
+        private void FindDrumEngine()
+        {
+            if (drumEngine == null) drumEngine = FindObjectOfType<KMusicDrumSequencer>();
+        }
+        private void RefreshKitSelector()
+        {
+            if (kitSelector == null) return;
+            // Visibility.Hidden reserves layout, unlike Display.None.
+            kitSelector.style.visibility = trackIndex == 0 ? Visibility.Visible : Visibility.Hidden;
+            FindDrumEngine();
+            if (kitName != null) kitName.text = drumEngine != null ? drumEngine.DawKitName : "KIT UNAVAILABLE";
+        }
+        private void StepDrumKit(int direction)
+        {
+            FindDrumEngine();
+            if (drumEngine == null) return;
+            drumEngine.DawStepKit(direction);
+            RefreshKitSelector();
+            if (projects != null)
+            {
+                var edited = projects.GetSongForArrangementEditor();
+                if (edited != null && edited.tracks != null && edited.tracks.Count > 0)
+                {
+                    if (!ReferenceEquals(projects.CurrentSong, edited))
+                        edited = ArrangementEditing.IndependentCopy(edited);
+                    edited.tracks[0].instrument.drumKitIndex = drumEngine.CaptureKitIndex();
+                    projects.AcceptArrangementEdit(edited);
+                    song = edited;
+                }
+            }
+            OnClipChanged?.Invoke();
+        }
+
         private void FindSampler()
         {
             if (samplePlayer == null) samplePlayer = FindObjectOfType<KMusicPlayerUI>();
-        }
-        private void AutoSlice(int n)
-        {
-            FindSampler();
-            samplePlayer?.DawAutoSlice(n);
-            RefreshSampler();
         }
         private void RefreshSampler()
         {
             FindSampler();
             if (samplerTitle != null)
                 samplerTitle.text = samplePlayer != null ? samplePlayer.DawSampleName : "SAMPLER UNAVAILABLE";
+            if (samplerWarpButton != null)
+                samplerWarpButton.text = samplePlayer != null && samplePlayer.DawAutoWarp ? "WARP ON" : "WARP OFF";
+            if (samplerWarpLabel != null)
+                samplerWarpLabel.text = samplePlayer != null ?
+                    "SOURCE BPM EST. " + samplePlayer.DawSourceBpm.ToString("0.#") + "  /  " + samplePlayer.DawWarpStatus :
+                    "NO SAMPLE";
+            if (samplerLibraryLabel != null)
+                samplerLibraryLabel.text = samplePlayer != null ? samplePlayer.DawSampleFolder : "SAMPLE LIBRARY";
+            if (samplerSelectedMarker != null)
+                samplerSelectedMarker.text = samplePlayer != null ? samplePlayer.DawSelectedMarkerLabel : "NO MARKER SELECTED";
         }
         private void ShowSampler(bool value)
         {
@@ -381,6 +523,7 @@ namespace ZPunk.DAW
                     (value ? DisplayStyle.None : DisplayStyle.Flex);
             if (!value) return;
             FindSampler();
+            samplePlayer?.DawEnableManualMarkers();
             if (samplerWave != null && samplerWave.childCount == 0)
             {
                 var doc = FindObjectOfType<UIDocument>();
@@ -391,11 +534,160 @@ namespace ZPunk.DAW
                     oldHost.style.height = 140;
                     oldHost.style.flexGrow = 1;
                     samplerWave.Add(oldHost);
+                    var waveform = oldHost.Q<KMusic.UI.WaveformView>();
+                    if (waveform != null)
+                    {
+                        waveform.VerticalDragDelta -= ScrollSamplerFromWaveform;
+                        waveform.VerticalDragDelta += ScrollSamplerFromWaveform;
+                    }
                 }
             }
             RefreshSampler();
         }
+        private void ScrollSamplerFromWaveform(float deltaY)
+        {
+            if (!showingSampler || samplerScroll == null) return;
+            samplerScroll.scrollOffset = new Vector2(samplerScroll.scrollOffset.x,
+                Mathf.Max(0, samplerScroll.scrollOffset.y - deltaY));
+        }
         private void OpenSampler() { ShowSampler(true); }
+
+        // A saved set of waveform markers defines playable slices, but not MIDI-style
+        // step events. Copy the applied sample assignment into the DAW Chops track
+        // so a painted S01-S16 cell can actually trigger that saved slice.
+        private void ApplySamplerChops()
+        {
+            FindSampler();
+            if (samplePlayer == null) return;
+            samplePlayer.DawApplySlices();
+            RefreshSampler();
+
+            if (projects == null) projects = FindObjectOfType<KMusicProjectManager>();
+            if (projects == null) return;
+            var edited = projects.GetSongForArrangementEditor();
+            if (edited == null || edited.tracks == null) return;
+            if (!KMusic.KMusicChopState.TryLoadApplied(out string path, out float[] starts, out float[] ends))
+                return;
+            if (!ReferenceEquals(projects.CurrentSong, edited))
+                edited = ArrangementEditing.IndependentCopy(edited);
+            if (edited == null) return;
+            foreach (var track in edited.tracks)
+            {
+                if (track == null || track.kind != TrackKind.Chops) continue;
+                if (track.instrument == null) track.instrument = new InstrumentState();
+                track.instrument.sampleResourcesPath = path;
+                track.instrument.sliceStart01 = (float[])starts.Clone();
+                track.instrument.sliceEnd01 = (float[])ends.Clone();
+                projects.AcceptArrangementEdit(edited);
+                song = edited;
+                LoadClip(); // Rebind references after copying the document.
+                OnClipChanged?.Invoke();
+                break;
+            }
+        }
+
+        // A saved chop kit may have no sequenced steps yet. The legacy converter
+        // deliberately omits empty clips, which used to leave CHOPS with no piano
+        // roll at all: Redraw() returned before registering the paint callbacks.
+        // Open a single editable clip for that track without auto-firing all slices.
+        // If a saved 16-step pattern exists, restore its cells once on creation.
+        private void EnsureChopsEditable()
+        {
+            if (projects == null || song == null || song.tracks == null ||
+                trackIndex < 0 || trackIndex >= song.tracks.Count) return;
+            var track = song.tracks[trackIndex];
+            if (track == null || track.kind != TrackKind.Chops) return;
+            bool hasApplied = KMusic.KMusicChopState.TryLoadApplied(
+                out string path, out float[] starts, out float[] ends);
+            bool updateSample = hasApplied && (track.instrument == null ||
+                track.instrument.sampleResourcesPath != path ||
+                !SameSlices(track.instrument.sliceStart01, starts) ||
+                !SameSlices(track.instrument.sliceEnd01, ends));
+            if (clip != null && content != null && !updateSample) return;
+
+            if (!ReferenceEquals(projects.CurrentSong, song))
+                song = ArrangementEditing.IndependentCopy(song);
+            if (song == null) return;
+            track = song.tracks[trackIndex];
+            if (track == null) return;
+            if (track.instrument == null) track.instrument = new InstrumentState();
+
+            if (hasApplied)
+            {
+                track.instrument.sampleResourcesPath = path;
+                track.instrument.sliceStart01 = (float[])starts.Clone();
+                track.instrument.sliceEnd01 = (float[])ends.Clone();
+            }
+
+            // Repair an existing clip with missing content rather than creating
+            // overlapping placements on an imported or partially saved project.
+            if (clip != null && content == null)
+            {
+                clip = ArrangementEditing.FindClip(song, clipId, out _);
+                if (clip != null)
+                {
+                    if (song.contents == null) song.contents = new List<ClipContentData>();
+                    content = new ClipContentData {
+                        id = ArrangementEditing.Id("content"),
+                        kind = ClipKind.Chops,
+                        lengthTicks = Math.Max(SongData.TicksPerSixteenth, clip.lengthTicks)
+                    };
+                    song.contents.Add(content);
+                    clip.contentId = content.id;
+                }
+            }
+            else if (clip == null)
+            {
+                // The track may have saved slices but no arrangement events yet.
+                long start = ArrangementEditing.NextFreeStart(track, 0, SongData.TicksPerBar4);
+                clip = ArrangementEditing.CreateClip(song, track, start);
+                content = clip == null ? null : ArrangementEditing.FindContent(song, clip.contentId);
+                if (content != null)
+                {
+                    // Restore already sequenced legacy chops if present. Slice
+                    // markers alone never become automatic note-on events.
+                    int[] steps = null;
+                    var sampler = FindObjectOfType<KMusicSampleSequencerUI>();
+                    if (sampler != null) steps = sampler.CaptureSampleStepsFlat();
+                    if (!HasChopSteps(steps))
+                    {
+                        FindDrumEngine();
+                        if (drumEngine != null) steps = drumEngine.CaptureSampleStepsFlat();
+                    }
+                    if (steps != null)
+                    {
+                        if (content.chops == null) content.chops = new List<ChopEvent>();
+                        for (int step = 0; step < Math.Min(16, steps.Length); step++)
+                            if (steps[step] >= 1 && steps[step] <= 16)
+                                content.chops.Add(new ChopEvent {
+                                    sliceId = steps[step],
+                                    startTick = step * SongData.TicksPerSixteenth,
+                                    velocity = 100
+                                });
+                    }
+                }
+            }
+            if (clip != null) clipId = clip.id;
+            projects.AcceptArrangementEdit(song);
+            OnClipChanged?.Invoke();
+        }
+
+        private static bool SameSlices(float[] current, float[] applied)
+        {
+            if (ReferenceEquals(current, applied)) return true;
+            if (current == null || applied == null || current.Length != applied.Length) return false;
+            for (int i = 0; i < current.Length; i++)
+                if (Mathf.Abs(current[i] - applied[i]) > 0.00001f) return false;
+            return true;
+        }
+
+        private static bool HasChopSteps(int[] steps)
+        {
+            if (steps == null) return false;
+            for (int i = 0; i < Math.Min(16, steps.Length); i++)
+                if (steps[i] >= 1 && steps[i] <= 16) return true;
+            return false;
+        }
 
         public void OnShown(int requestedTrack=-1, string requestedClip=null)
         {
@@ -409,6 +701,7 @@ namespace ZPunk.DAW
             trackIndex = Mathf.Clamp(trackIndex,0,song.tracks.Count-1);
             if (!string.IsNullOrEmpty(requestedClip)) clipId = requestedClip;
             LoadClip();
+            EnsureChopsEditable();
             // Open existing melodies near their actual pitch rather than at the
             // top of the 128-row keyboard where most tracks have no notes.
             if (content != null && content.kind == ClipKind.Midi &&
@@ -487,6 +780,7 @@ namespace ZPunk.DAW
             trackIndex = index;
             clipId = null;
             LoadClip();
+            EnsureChopsEditable();
             Redraw();
             ScrollToOctave();
         }
@@ -616,23 +910,28 @@ namespace ZPunk.DAW
             // Refreshing note rectangles must not throw the user back to MIDI 127.
             // OCT +/- and initial track selection can still reposition afterwards.
             Vector2 previousOffset = scroller != null ? scroller.scrollOffset : Vector2.zero;
+            float chipX = trackScroller != null ? trackScroller.scrollOffset.x : 0f;
             chips.Clear();
             if (song == null || song.tracks == null) return;
             for (int i=0;i<song.tracks.Count;i++)
             {
                 int index=i;
-                var item=Btn(song.tracks[i].name.ToUpperInvariant(),()=>SelectTrack(index),72);
+                var item=Btn(song.tracks[i].name.ToUpperInvariant(),()=>SelectTrack(index),83);
                 item.style.backgroundColor=i==trackIndex ? colors[Mathf.Min(i,4)] : Raised;
                 item.style.color=i==trackIndex ? new Color(.03f,.07f,.10f) : Ink;
                 chips.Add(item);
             }
-            chips.Add(Btn("SAMPLER", OpenSampler, 90));
+            chips.Add(Btn("SAMPLER", OpenSampler, 91));
+            if (trackScroller != null)
+                trackScroller.schedule.Execute(() => { if (trackScroller != null) trackScroller.scrollOffset = new Vector2(chipX, 0); }).ExecuteLater(0);
+            RefreshKitSelector();
             if (title != null) title.text = song.tracks[trackIndex].name.ToUpperInvariant()+"  /  " + (clip != null ? clip.name : "NO CLIP");
             if (info != null) info.text= clip == null ? "NO CLIP  /  Tap + NEW CLIP to begin" :
                 (IsMidi ? "PIANO ROLL" : content != null && content.kind==ClipKind.Drums ? "DRUM STEP EDITOR" : "SAMPLE STEP EDITOR")+
                 "  /  Bar " + (clip.startTick / SongData.TicksPerBar4 + 1) + "  /  LIVE EDIT";
             gridScrollContainer.Clear();
             editorPlayhead = null;
+            lastPlayheadX = -1f;
             if (clip==null || content==null) return;
             long editLength=Math.Max(clip.lengthTicks,content.lengthTicks);
             steps=Mathf.Clamp(Mathf.CeilToInt((float)editLength/quantum),16,128);
@@ -731,14 +1030,22 @@ namespace ZPunk.DAW
                     DrawEvent(plane,n.startTick,n.durationTicks,row,i,selectedNote==i);
                 }
             }
-            else if(content.kind==ClipKind.Drums && content.drums != null)
-                foreach(var hit in content.drums)
-                    if(hit != null && hit.lane >=0 && hit.lane<RowCount)
-                        DrawEvent(plane,hit.startTick,quantum,hit.lane,-1,false);
-            else if(content.kind==ClipKind.Chops && content.chops != null)
-                foreach(var chop in content.chops)
-                    if(chop != null && chop.sliceId>=1 && chop.sliceId<=RowCount)
-                        DrawEvent(plane,chop.startTick,quantum,chop.sliceId-1,-1,false);
+            else if (content.kind == ClipKind.Drums && content.drums != null)
+            {
+                foreach (var hit in content.drums)
+                {
+                    if (hit != null && hit.lane >= 0 && hit.lane < RowCount)
+                        DrawEvent(plane, hit.startTick, quantum, hit.lane, -1, false);
+                }
+            }
+            else if (content.kind == ClipKind.Chops && content.chops != null)
+            {
+                foreach (var chop in content.chops)
+                {
+                    if (chop != null && chop.sliceId >= 1 && chop.sliceId <= RowCount)
+                        DrawEvent(plane, chop.startTick, quantum, chop.sliceId - 1, -1, false);
+                }
+            }
             editorPlayhead = new VisualElement { name = "ZPunkEditorPlayhead" };
             editorPlayhead.style.position = Position.Absolute;
             editorPlayhead.style.top = 0;
@@ -828,19 +1135,25 @@ namespace ZPunk.DAW
             if (!songTransport.IsPlaying)
             {
                 editorPlayhead.style.display = DisplayStyle.None;
+                lastPlayheadX = -1f;
                 return;
             }
             long relative = songTransport.CurrentTick - clip.startTick;
             if (relative < 0 || relative >= clip.lengthTicks)
             {
                 editorPlayhead.style.display = DisplayStyle.None;
+                lastPlayheadX = -1f;
                 return;
             }
             if (clip.loopEnabled && content.lengthTicks > 0)
                 relative = (relative + clip.sourceOffsetTick) % content.lengthTicks;
             else relative += clip.sourceOffsetTick;
+            float x = (float)relative / quantum * StepW;
+            if (Time.unscaledTime < nextPlayheadPaint || Mathf.Abs(x-lastPlayheadX)<.4f) return;
+            nextPlayheadPaint = Time.unscaledTime + 1f / 30f;
+            lastPlayheadX = x;
             editorPlayhead.style.display = DisplayStyle.Flex;
-            editorPlayhead.style.left = (float)relative / quantum * StepW;
+            editorPlayhead.style.left = x;
         }
 
         private void DrawEvent(VisualElement plane,long tick,long duration,int row,int index,bool selected)

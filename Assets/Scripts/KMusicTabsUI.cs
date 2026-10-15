@@ -29,7 +29,39 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private KMusicProjectManager projects;
     private string workspace="arrange";
     private bool isReady, compact;
-    private float previousWidth=-1f;
+    private float previousWidth=-1f, previousHeight=-1f;
+    private PanelSettings workspacePanel;
+    private Vector2Int originalReferenceResolution;
+    private float originalPanelMatch;
+    private bool panelMetricsSaved, tabletMetrics;
+    private bool pendingLiveEdit;
+    private float nextLiveEditApply;
+
+    // The stock panel is 1080 x 2280, height-matched for phones. Keeping those
+    // metrics on a 4:3 tablet makes the DAW occupy a tiny fraction of the screen.
+    // Switch the same panel to tablet-native coordinates, without scaling every
+    // child or changing how existing phone builds look.
+    private void ConfigureDisplayMetrics()
+    {
+        if(doc==null || doc.panelSettings==null)return;
+        if(workspacePanel!=doc.panelSettings)
+        {
+            workspacePanel=doc.panelSettings;
+            panelMetricsSaved=false;
+        }
+        if(!panelMetricsSaved)
+        {
+            originalReferenceResolution=workspacePanel.referenceResolution;
+            originalPanelMatch=workspacePanel.match;
+            panelMetricsSaved=true;
+        }
+        bool tablet=Screen.width>=650 && Screen.height>=650;
+        if(tablet==tabletMetrics && panelMetricsSaved && previousWidth>=0)return;
+        tabletMetrics=tablet;
+        workspacePanel.referenceResolution=tablet ? new Vector2Int(1024,768) : originalReferenceResolution;
+        workspacePanel.match=tablet ? 0.5f : originalPanelMatch;
+    }
+
     private int lastSlot=-1;
     private static readonly Color Ink=new Color(.91f,.95f,.98f);
     private static readonly Color Dim=new Color(.58f,.66f,.76f);
@@ -37,7 +69,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private static readonly Color NavBg=new Color(.080f,.115f,.165f);
     private static readonly Color Selected=new Color(.12f,.32f,.33f);
 
-    private void Awake(){if(doc==null)doc=GetComponent<UIDocument>();}
+    private void Awake(){if(doc==null)doc=GetComponent<UIDocument>(); ConfigureDisplayMetrics();}
     private void OnEnable()
     {
         // The old workspace created the pad Audio Helm controller dynamically.
@@ -51,12 +83,24 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private void OnDisable()
     {
         if(uiRoot!=null)uiRoot.UnregisterCallback<GeometryChangedEvent>(GeometryChanged);
+        // PanelSettings is a shared ScriptableObject; do not retain temporary
+        // tablet coordinates after the workspace closes or Editor Play stops.
+        if(workspacePanel!=null && panelMetricsSaved)
+        {
+            workspacePanel.referenceResolution=originalReferenceResolution;
+            workspacePanel.match=originalPanelMatch;
+        }
+        panelMetricsSaved=false;
+        tabletMetrics=false;
+        previousWidth=-1f;
+        previousHeight=-1f;
         isReady=false;
     }
     private IEnumerator Setup()
     {
         if(doc==null)doc=GetComponent<UIDocument>();
         if(doc==null)yield break;
+        ConfigureDisplayMetrics();
         while(doc.rootVisualElement==null || doc.rootVisualElement.Q<VisualElement>("Pages")==null)
             yield return null;
         if(isReady)yield break;
@@ -90,11 +134,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
         mixer.Initialize(pageMixer);
         transport=FindObjectOfType<ZPunkSongTransport>();
         arrangement.EditRequested=(index,id)=>NavigateCreate(index,id);
-        editor.OnClipChanged=()=>{
-            if(projects==null)projects=FindObjectOfType<KMusicProjectManager>();
-            if(transport==null)transport=FindObjectOfType<ZPunkSongTransport>();
-            if(projects!=null && transport!=null)transport.ApplyLiveSong(projects.CurrentSong);
-        };
+        // Coalesce rapid step edits/velocity drags. Rebuilding the entire event
+        // plan per pointer event competes with audio scheduling and UI rendering.
+        editor.OnClipChanged=()=>{pendingLiveEdit=true;};
         BuildShell();
         isReady=true;
         Navigate("arrange");
@@ -470,19 +512,28 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void GeometryChanged(GeometryChangedEvent evt)
     {
-        if(Mathf.Abs(previousWidth-evt.newRect.width)>2)Responsive(evt.newRect.width);
+        if(Mathf.Abs(previousWidth-evt.newRect.width)>2 ||
+            Mathf.Abs(previousHeight-evt.newRect.height)>2)Responsive(evt.newRect.width);
     }
     private void Responsive(float width)
     {
         if(width<=0 || shell==null)return;
         previousWidth=width;
-        compact=Screen.height>Screen.width || width<620;
+        previousHeight=uiRoot.resolvedStyle.height;
+        compact=Screen.height>Screen.width || width<720;
+        bool shortViewport=previousHeight>0 && previousHeight<760;
+        if(context!=null) context.style.height=shortViewport?32:42;
+        if(header!=null)
+        {
+            header.style.paddingTop=shortViewport?3:7;
+            header.style.paddingBottom=shortViewport?3:8;
+        }
         shell.style.flexDirection=compact?FlexDirection.Column:FlexDirection.Row;
         dock.RemoveFromHierarchy();
         if(compact)shell.Add(dock);
         else shell.Insert(0,dock);
         dock.style.flexDirection=compact?FlexDirection.Row:FlexDirection.Column;
-        if(compact){dock.style.width=StyleKeyword.Auto;dock.style.height=66;}
+        if(compact){dock.style.width=StyleKeyword.Auto;dock.style.height=shortViewport?53:60;}
         else {dock.style.width=112;dock.style.height=StyleKeyword.Auto;}
         dock.style.justifyContent=compact?Justify.SpaceAround:Justify.FlexStart;
         dock.style.flexShrink=0;
@@ -490,20 +541,39 @@ public sealed class KMusicTabsUI : MonoBehaviour
         foreach(var button in new[]{arrangeButton,createButton,soundButton,mixButton})
         {
             button.style.flexGrow=compact?1:0;
-            button.style.height=compact?47:49;
+            button.style.height=compact?(shortViewport?41:47):49;
             button.style.flexShrink=0;
             button.style.minWidth=0;
             button.style.marginBottom=compact?0:8;
             button.style.fontSize=compact?11:11;
         }
-        header.style.minHeight=compact?86:47;
+        header.style.minHeight=compact?(shortViewport?72:82):47;
     }
     private void Update()
     {
-        if(!isReady || projects==null)return;
+        if(!isReady)return;
+        // Rotation and split-screen resize must not leave a tall-phone coordinate
+        // system on a tablet. Reconfigure only if the device class changes.
+        bool tabletNow=Screen.width>=650 && Screen.height>=650;
+        if(tabletNow!=tabletMetrics)
+        {
+            ConfigureDisplayMetrics();
+            Responsive(uiRoot.resolvedStyle.width);
+        }
+        if(projects==null)return;
+        if(pendingLiveEdit && Time.unscaledTime>=nextLiveEditApply)
+        {
+            pendingLiveEdit=false;
+            nextLiveEditApply=Time.unscaledTime+0.06f;
+            if(transport==null)transport=FindObjectOfType<ZPunkSongTransport>();
+            if(transport!=null)transport.ApplyLiveSong(projects.CurrentSong);
+        }
         var live=projects.CurrentSong;
         if(live!=null && tempoDisplay!=null)
-            tempoDisplay.text=Mathf.RoundToInt(live.bpm)+" BPM";
+        {
+            string bpmText=Mathf.RoundToInt(live.bpm)+" BPM";
+            if(tempoDisplay.text!=bpmText)tempoDisplay.text=bpmText;
+        }
         if(lastSlot!=projects.CurrentSlot)
         {
             lastSlot=projects.CurrentSlot;

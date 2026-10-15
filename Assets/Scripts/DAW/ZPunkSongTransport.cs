@@ -5,6 +5,7 @@ using KMusic;
 using KMusic.Core;
 using UnityEngine;
 using UnityEngine.UIElements;
+using UnityEngine.Audio;
 
 namespace ZPunk.DAW
 {
@@ -28,6 +29,8 @@ namespace ZPunk.DAW
         private HelmController pads;
         private readonly List<HelmSequencer> suspendedSequencers = new List<HelmSequencer>();
         private readonly Dictionary<int, HelmController> trackControllers = new Dictionary<int, HelmController>();
+        private readonly Dictionary<int, AudioMixer> outputMixers = new Dictionary<int, AudioMixer>();
+        private static readonly string[] HelmTrackGainParameters = { "", "ZPunkBassTrackGain", "ZPunkSynthTrackGain", "ZPunkPadsTrackGain", "" };
         private SongData song;
         private SongEventPlanner.Plan plan;
         private Label statusLabel;
@@ -164,6 +167,7 @@ namespace ZPunk.DAW
                 return false;
             }
             ResolveControllers();
+            ApplyAllTrackGains();
             bpm = Mathf.Clamp(song.bpm, 1f, 400f);
             secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
             long length = Math.Max(1L, plan.lengthTicks);
@@ -218,7 +222,10 @@ namespace ZPunk.DAW
         public void ApplyLiveMix(SongData updated, bool stopSustains = false)
         {
             if (updated != null) song = updated;
-            if (stopSustains && playing) StopAllSynthNotes();
+            // Unity AudioMixer attenuation affects active/held Helm voices immediately.
+            // Do not kill sustained notes just to update the fader.
+            if (trackControllers.Count == 0) ResolveControllers();
+            ApplyAllTrackGains();
         }
 
         public void ApplyLiveSong(SongData updated)
@@ -226,6 +233,8 @@ namespace ZPunk.DAW
             if (updated == null) return;
             Resolve();
             song = updated;
+            if (trackControllers.Count == 0) ResolveControllers();
+            ApplyAllTrackGains();
             if (!playing || plan == null) return;
             SongEventPlanner.Plan next;
             try { next = SongEventPlanner.Build(song); }
@@ -275,7 +284,7 @@ namespace ZPunk.DAW
                 if (TrackAudible(entry.trackIndex) &&
                     trackControllers.TryGetValue(entry.trackIndex, out HelmController active) && active != null)
                     active.NoteOn(entry.value, Mathf.Clamp01(
-                        entry.velocity / 127f * song.tracks[entry.trackIndex].volume));
+                        entry.velocity / 127f));
             }
             liveRevision++;
             // If the loop is shortened past the playhead, jump to its beginning.
@@ -298,6 +307,7 @@ namespace ZPunk.DAW
         private void ResolveControllers()
         {
             trackControllers.Clear();
+            outputMixers.Clear();
             var painter = FindObjectOfType<KMusic.UI.KMusicPianoRollStepPainter>();
             var padRuntime = FindObjectOfType<KMusicPadSynthRuntime>();
             var rack = FindObjectOfType<ZPunkInstrumentRack>();
@@ -313,8 +323,34 @@ namespace ZPunk.DAW
                 if (track.kind == TrackKind.Bass && rack != null && rack.BassController != null)
                     trackControllers[i] = rack.BassController;
             }
+            foreach (var item in trackControllers)
+            {
+                var source = item.Value != null ? item.Value.GetComponent<AudioSource>() : null;
+                if (source != null && source.outputAudioMixerGroup != null)
+                    outputMixers[item.Key] = source.outputAudioMixerGroup.audioMixer;
+            }
             if (synth == null) Debug.LogWarning("[ZPunk DAW] Main synth unavailable. Synth track will be silent.");
             if (pads == null) Debug.LogWarning("[ZPunk DAW] Pad synth unavailable. Pads track will be silent.");
+        }
+
+        /// <summary>True mixer attenuation, independent of the current Helm preset and NoteOn velocity.</summary>
+        private void ApplyAllTrackGains()
+        {
+            if (song == null || song.tracks == null) return;
+            foreach (var entry in outputMixers)
+            {
+                int index = entry.Key;
+                if (index < 0 || index >= song.tracks.Count || entry.Value == null ||
+                    index >= HelmTrackGainParameters.Length) continue;
+                string exposed = HelmTrackGainParameters[index];
+                if (string.IsNullOrEmpty(exposed)) continue;
+                var track = song.tracks[index];
+                float gain = track != null && TrackAudible(index) ? Mathf.Clamp01(track.volume) : 0f;
+                // 100%=0dB, 50%=-6dB, 0%=-80dB. Changes affect held voices.
+                float decibels = gain <= 0.0001f ? -80f : Mathf.Clamp(20f * Mathf.Log10(gain), -80f, 0f);
+                if (!entry.Value.SetFloat(exposed, decibels) && verbose)
+                    Debug.LogWarning("[ZPunk MIX] Missing AudioMixer exposed parameter: " + exposed);
+            }
         }
 
         private bool TrackAudible(int index)
@@ -385,7 +421,7 @@ namespace ZPunk.DAW
                 if (!trackControllers.TryGetValue(e.trackIndex, out HelmController controller) || controller == null) continue;
                 if (e.type == SongEventPlanner.EventType.NoteOff) controller.NoteOff(e.value);
                 else if (TrackAudible(e.trackIndex))
-                    controller.NoteOn(e.value, Mathf.Clamp01((e.velocity / 127f) * song.tracks[e.trackIndex].volume));
+                    controller.NoteOn(e.value, Mathf.Clamp01(e.velocity / 127f));
             }
 
             if (now >= endDsp)

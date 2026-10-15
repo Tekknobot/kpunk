@@ -15,7 +15,9 @@ AudioMixerController:
   m_SuspendThreshold: -80
   m_EnableSuspend: 1
   m_UpdateMode: 0
-  m_ExposedParameters: []
+  m_ExposedParameters:
+  - guid: cb4535c1118925949beaeb0ffd242b85
+    name: ZPunkSynthTrackGain
   m_AudioMixerGroupViews:
   - guids:
     - f3a535fe4a2167946a8f89374c865f80

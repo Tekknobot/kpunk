@@ -71,6 +71,7 @@ namespace KMusic
         public event Action<int, string> PresetApplied;
 
         public int CurrentPresetIndex => _index;
+        public int PresetCount => _all.Count;
 
         public string CurrentPresetRelPath
         {
@@ -267,6 +268,14 @@ public void ApplyMasterVolume(float normalized)
                 RefreshToggleButtons();
             }
 
+            // The DAW Sound page is now the main patch selector. Loading must not
+            // depend on the hidden legacy Pad page still existing in the UXML.
+            if (_runtimePatch == null)
+            {
+                var go = new GameObject("_RuntimePadSynthPatch");
+                go.hideFlags = HideFlags.HideAndDontSave;
+                _runtimePatch = go.AddComponent<HelmPatch>();
+            }
             var padPage = root.Q<VisualElement>(padPageName);
             if (padPage != null)
             {
@@ -278,12 +287,8 @@ public void ApplyMasterVolume(float normalized)
                 if (_prevBtn != null) _prevBtn.clicked += OnPrev;
                 if (_nextBtn != null) _nextBtn.clicked += OnNext;
 
-                var go = new GameObject("_RuntimePadSynthPatch");
-                go.hideFlags = HideFlags.HideAndDontSave;
-                _runtimePatch = go.AddComponent<HelmPatch>();
-
-                yield return LoadIndexThenAutoLoadCurrent();
             }
+            yield return LoadIndexThenAutoLoadCurrent();
         }
 
         private float GetParameterPercentSafe(AudioHelm.Param param)
@@ -687,7 +692,11 @@ public void ApplyMasterVolume(float normalized)
 
         public void StepPreset(int delta)
         {
-            if (_all == null || _all.Count == 0) return;
+            if (_all == null || _all.Count == 0)
+            {
+                Debug.LogWarning("[ZPunk Pads] No preset index loaded yet; check HelmPresets/presets_index.txt.");
+                return;
+            }
             int next = ((_index + delta) % _all.Count + _all.Count) % _all.Count;
             ApplyPresetChoice(next, null);
         }
@@ -784,7 +793,11 @@ public void ApplyMasterVolume(float normalized)
             foreach (var relLine in lines)
             {
                 var clean = relLine.Trim().Replace("\\", "/");
-                if (string.IsNullOrEmpty(clean) || !clean.EndsWith(".helm", StringComparison.OrdinalIgnoreCase))
+                // Sound > Pads should cycle actual Pad presets, not unrelated
+                // Bass, percussion, or arpeggiator patches.
+                if (string.IsNullOrEmpty(clean) ||
+                    !clean.EndsWith(".helm", StringComparison.OrdinalIgnoreCase) ||
+                    !clean.StartsWith("Pad/", StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 _all.Add(new PresetEntry

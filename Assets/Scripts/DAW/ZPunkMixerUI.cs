@@ -51,7 +51,7 @@ namespace ZPunk.DAW
             heading.style.unityFontStyleAndWeight = FontStyle.Bold;
             heading.style.marginBottom = 3;
             root.Add(heading);
-            var sub = Text("LIVE CHANNEL GAIN  /  DRUM BUS",10,Dim);
+            var sub = Text("LIVE AUDIO GAIN  /  HELD NOTES RESPOND",10,Dim);
             sub.style.marginBottom = 10;
             root.Add(sub);
             var scroll = new ScrollView(ScrollViewMode.Vertical);
@@ -210,12 +210,12 @@ namespace ZPunk.DAW
                     top.Add(name);
                     Button mute=null, solo=null;
                     mute=Action(track.mute?"MUTE ON":"M",()=>{
-                        ChangeTrack(index,t=>t.mute=!t.mute,true);
+                        ChangeTrack(index,t=>t.mute=!t.mute);
                         var t=projects.CurrentSong.tracks[index];
                         mute.text=t.mute?"MUTE ON":"M";
                     });
                     solo=Action(track.solo?"SOLO ON":"S",()=>{
-                        ChangeTrack(index,t=>t.solo=!t.solo,true);
+                        ChangeTrack(index,t=>t.solo=!t.solo);
                         var t=projects.CurrentSong.tracks[index];
                         solo.text=t.solo?"SOLO ON":"S";
                     });

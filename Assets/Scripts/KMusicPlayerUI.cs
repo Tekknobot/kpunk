@@ -9,6 +9,7 @@ using UnityEngine.UIElements;
 using KMusic.UI;
 using KMusic;
 using KMusic.Core;
+using ZPunk.DAW;
 using KMusic.Android;
 #if UNITY_IOS && !UNITY_EDITOR
 using KMusic.iOS;
@@ -66,7 +67,16 @@ public class KMusicPlayerUI : MonoBehaviour
     private int _clipIndex = -1;
 
     private AudioClip _clip;
+    private AudioClip _warpedClip;
     private string _clipResourcesPath = null;
+    private bool _autoWarpEnabled = true;
+    private float _sourceBpm;
+    private float _lastSongBpm;
+    private float _nextWarpCheck;
+    private float _warpPendingAt = -1f;
+    private string _warpStatus = "NO SAMPLE";
+    private KMusicProjectManager _warpProjects;
+    private const string WarpEnabledKey = "zpunk.sampler.warp.enabled";
 
     // Last known playhead position from scrubbing/UI.
     // Used when dropping markers via buttons even if audio isn't playing.
@@ -91,11 +101,24 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private readonly List<ImportedTrackInfo> _importedTracks = new();
 
-    private static string ImportedSamplesDir =>
-        Path.Combine(Application.persistentDataPath, "ImportedSamples");
-
-    private static string SharedSamplesDir =>
-        Application.persistentDataPath;
+    // Unity Editor: Assets/ZPunkSamples; iOS: Files > On My iPhone > ZPunk;
+    // Android: public Music folder is queried through scoped-storage MediaStore.
+    private static string PreferredSamplesDir
+    {
+        get
+        {
+#if UNITY_EDITOR
+            return Path.Combine(Application.dataPath, "ZPunkSamples");
+#elif UNITY_IOS
+            return Path.Combine(Application.persistentDataPath, "ZPunk");
+#else
+            return Path.Combine(Application.persistentDataPath, "ZPunk");
+#endif
+        }
+    }
+    private static string LegacySamplesDir => Path.Combine(Application.persistentDataPath, "ImportedSamples");
+    private static string ImportedSamplesDir => PreferredSamplesDir;
+    private static string SharedSamplesDir => Application.persistentDataPath;
 
     private static void EnsureImportFolders()
     {
@@ -256,16 +279,20 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         _importedTracks.Clear();
 
-        string dir = ImportedSamplesDir;
-        if (!Directory.Exists(dir))
-            return;
-
-        string[] files = Directory.GetFiles(dir);
-        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
-
-        for (int i = 0; i < files.Length; i++)
+        string[] dirs = { ImportedSamplesDir, LegacySamplesDir,
+#if UNITY_EDITOR
+            Path.Combine(Application.streamingAssetsPath, "Tracks"),
+#endif
+        };
+        var candidates = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string dir in dirs)
         {
-            string path = files[i];
+            if (!Directory.Exists(dir)) continue;
+            foreach (string file in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+                candidates.Add(file);
+        }
+        foreach (string path in candidates)
+        {
             string ext = Path.GetExtension(path)?.ToLowerInvariant();
             if (ext != ".wav" && ext != ".mp3" && ext != ".ogg" && ext != ".m4a" && ext != ".aac" && ext != ".mp4")
                 continue;
@@ -274,7 +301,7 @@ public class KMusicPlayerUI : MonoBehaviour
             {
                 absolutePath = path,
                 title = Path.GetFileNameWithoutExtension(path),
-                subtitle = "Imported • " + Path.GetFileName(path)
+                subtitle = "ZPUNK SAMPLE  /  " + Path.GetFileName(path)
             });
         }
     }
@@ -339,6 +366,7 @@ public class KMusicPlayerUI : MonoBehaviour
         RestoreMarkersFromAppliedState();
         UpdateTimeLabels(0f, _clip.length);
         UpdateTrackTitle(Path.GetFileNameWithoutExtension(absolutePath));
+        OnSourceSampleReady();
         RefreshTrackBrowserList();
     }
 
@@ -362,6 +390,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (!doc) doc = GetComponent<UIDocument>();
         EnsureDedicatedPlayerAudioSource();
         EnsureImportFolders();
+        _autoWarpEnabled = ProjectPrefs.GetInt(WarpEnabledKey, 1) != 0;
     }
 
     private void EnsureDedicatedPlayerAudioSource()
@@ -447,8 +476,12 @@ public class KMusicPlayerUI : MonoBehaviour
 
         _wave.UserPointer01 -= OnWavePointer01;
         _wave.UserPointer01 += OnWavePointer01;
+        _wave.UserTap01 -= OnWaveTap01;
+        _wave.UserTap01 += OnWaveTap01;
         _wave.MarkerDrag01 -= OnWaveMarkerDrag01;
         _wave.MarkerDrag01 += OnWaveMarkerDrag01;
+        _wave.MarkerSelected -= OnWaveMarkerSelected;
+        _wave.MarkerSelected += OnWaveMarkerSelected;
         _wave.MarkersDraggable = _chopArmed;
 
         if (_btnPlay != null) _btnPlay.clicked += OnPlayClicked;
@@ -461,9 +494,11 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_btnApply != null) _btnApply.clicked += ApplyChops;
         if (_btnSend != null) _btnSend.clicked += SendChops;
 
-        if (_btnAuto4 != null) _btnAuto4.clicked += () => AutoChop(4);
-        if (_btnAuto8 != null) _btnAuto8.clicked += () => AutoChop(8);
-        if (_btnAuto16 != null) _btnAuto16.clicked += () => AutoChop(16);
+        // Auto slice generation is retired from the DAW workflow. Existing
+        // legacy buttons are hidden rather than triggering automatic markers.
+        if (_btnAuto4 != null) _btnAuto4.style.display = DisplayStyle.None;
+        if (_btnAuto8 != null) _btnAuto8.style.display = DisplayStyle.None;
+        if (_btnAuto16 != null) _btnAuto16.style.display = DisplayStyle.None;
 
         WirePointerDownButton(_btnAddMode, OnAddMarkerButton, "km-add-btn--pointerdown");
 
@@ -653,7 +688,9 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_wave != null)
         {
             _wave.UserPointer01 -= OnWavePointer01;
+            _wave.UserTap01 -= OnWaveTap01;
             _wave.MarkerDrag01 -= OnWaveMarkerDrag01;
+            _wave.MarkerSelected -= OnWaveMarkerSelected;
         }
 
         if (_markerPreviewCoroutine != null)
@@ -744,6 +781,7 @@ public class KMusicPlayerUI : MonoBehaviour
         RestoreMarkersFromAppliedState();
         UpdateTimeLabels(0f, _clip.length);
         UpdateTrackTitle(_clip.name);
+        OnSourceSampleReady();
         RefreshTrackBrowserList();
     }
 
@@ -809,6 +847,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _wave.SetPlayhead01(0f);
         RestoreMarkersFromAppliedState();
         UpdateTimeLabels(0f, _clip.length);
+        OnSourceSampleReady();
         RefreshTrackBrowserList();
         _loadDeviceCoroutine = null;
     }
@@ -825,12 +864,215 @@ public class KMusicPlayerUI : MonoBehaviour
 
     // Clean DAW sampler surface: retain the existing player, waveform and chop engine.
     public string DawSampleName => _clip != null ? _clip.name : "NO SAMPLE";
+    public bool DawAutoWarp => _autoWarpEnabled;
+    public string DawWarpStatus => _warpStatus;
+    public float DawSourceBpm => _sourceBpm;
+    public string DawSampleFolder
+    {
+        get
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            return "ANDROID / Music (MediaStore)";
+#elif UNITY_IOS && !UNITY_EDITOR
+            return "FILES / On My iPhone / ZPunk";
+#else
+            return "UNITY / Assets/ZPunkSamples";
+#endif
+        }
+    }
+    public void DawToggleAutoWarp()
+    {
+        _autoWarpEnabled = !_autoWarpEnabled;
+        ProjectPrefs.SetInt(WarpEnabledKey, _autoWarpEnabled ? 1 : 0);
+        ProjectPrefs.Save();
+        QueueWarp(true);
+    }
+    public void DawAdjustSourceBpm(float delta)
+    {
+        if (_clip == null) return;
+        _sourceBpm = Mathf.Clamp((_sourceBpm > 0 ? _sourceBpm : CurrentSongTempo()) + delta, 40f, 240f);
+        _sourceBpm = Mathf.Round(_sourceBpm * 10f) / 10f;
+        QueueWarp(true);
+    }
+    private float CurrentSongTempo()
+    {
+        if (_warpProjects == null) _warpProjects = FindObjectOfType<KMusicProjectManager>();
+        var song = _warpProjects != null ? _warpProjects.CurrentSong : null;
+        if (song != null && song.bpm > 0f) return song.bpm;
+        var app = FindObjectOfType<KMusic.KMusicApp>();
+        return app != null && app.Bus != null ? Mathf.Max(1f, app.Bus.GetValue("tempo")) : 120f;
+    }
+    private void OnSourceSampleReady()
+    {
+        // Cancel any unfinished conversion of the previous sample; an old
+        // stretch must never replace the newly selected source.
+        _warpGeneration++;
+        // Let the old coroutine notice its generation change and release its
+        // in-progress AudioClip. StopCoroutine bypasses its cleanup and leaked
+        // megabytes of native audio memory when tempo/source changed repeatedly.
+        _warpJob = null;
+        if (_warpedClip != null && _warpedClip != _clip) Destroy(_warpedClip, 5f);
+        _warpedClip = null;
+        _sourceBpm = ZPunkSampleWarp.EstimateLoopBpm(_clip, CurrentSongTempo());
+        _wave?.SetMusicalRuler(CurrentSongTempo(), _clip != null ? _clip.length : 0f);
+        _lastSongBpm = -1f;
+        QueueWarp(true);
+    }
+    private void QueueWarp(bool immediate = false)
+    {
+        _warpPendingAt = Time.unscaledTime + (immediate ? 0.05f : 0.35f);
+    }
+    private void Update()
+    {
+        if (_clip == null) return;
+        if (Time.unscaledTime >= _nextWarpCheck)
+        {
+            _nextWarpCheck = Time.unscaledTime + .40f;
+            float tempo = CurrentSongTempo();
+            if (Mathf.Abs(tempo - _lastSongBpm) > .5f)
+            {
+                _lastSongBpm = tempo;
+                _wave?.SetMusicalRuler(tempo, _clip.length);
+                QueueWarp();
+            }
+        }
+        if (_warpPendingAt > 0 && Time.unscaledTime >= _warpPendingAt)
+        {
+            _warpPendingAt = -1f;
+            ApplyWarp();
+        }
+    }
+    private Coroutine _warpJob;
+    private int _warpGeneration;
+
+    private void ApplyWarp()
+    {
+        if (_clip == null) return;
+        int generation = ++_warpGeneration;
+        // A stale worker aborts on its next chunk and destroys its temporary clip.
+        // Do NOT hard-stop it here: that skips StretchAsync's native memory cleanup.
+        _warpJob = StartCoroutine(RunWarp(generation));
+    }
+
+    private IEnumerator RunWarp(int generation)
+    {
+        AudioClip next = null;
+        string result = "OFF / ORIGINAL AUDIO";
+        if (_autoWarpEnabled)
+        {
+            _warpStatus = "WARPING / PLEASE WAIT";
+            yield return StartCoroutine(ZPunkSampleWarp.StretchAsync(_clip,
+                _sourceBpm, CurrentSongTempo(), (clip, status) =>
+                {
+                    next = clip;
+                    result = status;
+                }, () => generation != _warpGeneration || this == null));
+            if (generation != _warpGeneration)
+            {
+                if (next != null && next != _clip) Destroy(next);
+                yield break;
+            }
+            if (next == null) result = "ORIGINAL / " + result;
+        }
+        AudioClip oldWarp = _warpedClip;
+        _warpedClip = next != _clip ? next : null;
+        _warpStatus = result;
+        AudioClip active = _warpedClip != null ? _warpedClip : _clip;
+        if (audioSource != null && active != null)
+        {
+            bool wasPlaying = audioSource.isPlaying;
+            float ratio = audioSource.clip != null && audioSource.clip.length > 0f
+                ? audioSource.time / audioSource.clip.length : 0f;
+            audioSource.clip = active;
+            audioSource.time = Mathf.Clamp01(ratio) * Mathf.Max(0f, active.length - .001f);
+            if (wasPlaying) audioSource.Play();
+        }
+        if (!string.IsNullOrEmpty(_clipResourcesPath))
+            KMusicChopState.SetCachedClip(_clipResourcesPath, active);
+        if (_wave != null)
+        {
+            float start01 = _wave.ViewStart01, len01 = _wave.ViewLen01;
+            _wave.SetClip(active);
+            _wave.RestoreWindow(start01, len01);
+            _wave.SetMusicalRuler(CurrentSongTempo(), active != null ? active.length : 0f);
+            SyncMarkersToWave();
+        }
+        if (oldWarp != null && oldWarp != _clip && oldWarp != active)
+            Destroy(oldWarp, 5f);
+        if (generation == _warpGeneration) _warpJob = null;
+    }
+
     public void DawPreviousSample() { CyclePrevTrack(); }
     public void DawNextSample() { CycleNextTrack(); }
     public void DawPlaySample() { OnPlayClicked(); }
     public void DawStopSample() { OnStopClicked(); }
-    public void DawAutoSlice(int count) { AutoChop(Mathf.Clamp(count, 1, 16)); }
+    // Manual marker editing is authoritative; automatic slice counts are retired
+    // from the new Create workspace. Snap happens on actual beat subdivisions.
+    public void DawEnableManualMarkers()
+    {
+        _chopArmed = true;
+        _markerAddMode = true;
+        _snapEnabled = true;
+        if (_wave != null)
+        {
+            _wave.MarkersDraggable = true;
+            _wave.SetMusicalRuler(CurrentSongTempo(), _clip != null ? _clip.length : 0f);
+        }
+    }
+    public void DawAddMarker() { DawEnableManualMarkers(); DropChopMarkerAt01(_scrub01); }
+    public void DawDeleteMarker()
+    {
+        if (_chops01.Count == 0) return;
+        if (_selectedMarkerIndex >= 0 && _selectedMarkerIndex < _chops01.Count)
+            DeleteNearestMarkerTo01(_chops01[_selectedMarkerIndex]);
+        else
+            DeleteNearestMarkerTo01(_scrub01);
+    }
+    public void DawSelectMarker(int direction)
+    {
+        if (direction < 0) SelectPreviousMarker();
+        else SelectNextMarker();
+    }
+    public void DawNudgeSelectedMarker(int direction)
+    {
+        if (direction != 0) NudgeSelectedMarkerSeconds(direction < 0 ? -.01f : .01f);
+    }
+    public string DawSelectedMarkerLabel
+    {
+        get
+        {
+            if (_selectedMarkerIndex < 0 || _selectedMarkerIndex >= _chops01.Count || _clip == null)
+                return "TAP A MARKER TO SELECT / DRAG TO ADJUST";
+            return "SELECTED M" + (_selectedMarkerIndex + 1).ToString("00") +
+                "  /  " + (_chops01[_selectedMarkerIndex] * _clip.length).ToString("0.000") +
+                "s  /  DRAG OR NUDGE 10 MS";
+        }
+    }
+    public void DawZoomSample(bool zoomIn)
+    {
+        if (_wave == null) return;
+        if (zoomIn) _wave.ZoomIn();
+        else _wave.ZoomOut();
+    }
     public void DawApplySlices() { ApplyChops(); }
+    private void ApplyBrowserSafeArea()
+    {
+        if (_trackBrowserOverlay == null || doc == null || doc.rootVisualElement == null ||
+            Screen.width <= 0 || Screen.height <= 0) return;
+        var root = doc.rootVisualElement;
+        float width = root.resolvedStyle.width;
+        float height = root.resolvedStyle.height;
+        if (float.IsNaN(width) || width <= 1) width = Screen.width;
+        if (float.IsNaN(height) || height <= 1) height = Screen.height;
+        Rect safe = Screen.safeArea;
+        float scaleX = width / Screen.width;
+        float scaleY = height / Screen.height;
+        _trackBrowserOverlay.style.left = 6f + safe.xMin * scaleX;
+        _trackBrowserOverlay.style.right = 6f + (Screen.width - safe.xMax) * scaleX;
+        _trackBrowserOverlay.style.top = 6f + (Screen.height - safe.yMax) * scaleY;
+        _trackBrowserOverlay.style.bottom = 6f + safe.yMin * scaleY;
+    }
+
     public void DawOpenBrowser()
     {
         if (_trackBrowserOverlay != null && doc != null && doc.rootVisualElement != null)
@@ -840,6 +1082,7 @@ public class KMusicPlayerUI : MonoBehaviour
             _trackBrowserOverlay.RemoveFromHierarchy();
             doc.rootVisualElement.Add(_trackBrowserOverlay);
         }
+        ApplyBrowserSafeArea();
         OpenTrackBrowser();
     }
 
@@ -848,6 +1091,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_trackBrowserOverlay == null)
             return;
 
+        ApplyBrowserSafeArea();
         RefreshTrackBrowserList();
         _trackBrowserOverlay.style.display = DisplayStyle.Flex;
         _trackBrowserSearch?.Focus();
@@ -876,14 +1120,40 @@ public class KMusicPlayerUI : MonoBehaviour
         _trackBrowserOverlay.style.right = 0;
         _trackBrowserOverlay.style.bottom = 0;
         _trackBrowserOverlay.style.display = DisplayStyle.None;
+        _trackBrowserOverlay.style.alignItems = Align.Center;
+        _trackBrowserOverlay.style.justifyContent = Justify.Center;
+        _trackBrowserOverlay.style.paddingTop = 12;
+        _trackBrowserOverlay.style.paddingBottom = 12;
+        _trackBrowserOverlay.style.paddingLeft = 12;
+        _trackBrowserOverlay.style.paddingRight = 12;
+        _trackBrowserOverlay.style.backgroundColor = new Color(.018f,.033f,.057f,.95f);
 
         var card = new VisualElement();
         card.name = "TrackBrowserCard";
         card.AddToClassList("km-card");
         card.AddToClassList("km-project-card");
         card.AddToClassList("km-track-card");
-        card.style.flexGrow = 1f;
-        card.style.maxHeight = Length.Percent(92);
+        card.style.position = Position.Relative;
+        card.style.left = StyleKeyword.Auto;
+        card.style.top = StyleKeyword.Auto;
+        card.style.right = StyleKeyword.Auto;
+        card.style.bottom = StyleKeyword.Auto;
+        card.style.flexGrow = 0;
+        card.style.flexShrink = 1;
+        card.style.width = Length.Percent(100);
+        card.style.maxWidth = 520;
+        card.style.height = Length.Percent(88);
+        card.style.maxHeight = 750;
+        card.style.minHeight = 220;
+        card.style.paddingLeft = 12;
+        card.style.paddingRight = 12;
+        card.style.paddingTop = 12;
+        card.style.paddingBottom = 12;
+        card.style.backgroundColor = new Color(.075f,.112f,.160f);
+        card.style.borderTopLeftRadius = 6;
+        card.style.borderTopRightRadius = 6;
+        card.style.borderBottomLeftRadius = 6;
+        card.style.borderBottomRightRadius = 6;
 
         var header = new VisualElement();
         header.AddToClassList("km-track-header");
@@ -903,6 +1173,19 @@ public class KMusicPlayerUI : MonoBehaviour
         _btnImport.AddToClassList("km-project-toolbar-btn");
         _btnImport.AddToClassList("km-track-import");
 
+        header.style.flexDirection = FlexDirection.Row;
+        header.style.alignItems = Align.Center;
+        header.style.height = 48;
+        header.style.flexShrink = 0;
+        title.style.fontSize = 16;
+        title.style.color = new Color(.91f,.95f,.99f);
+        _btnImport.style.height = 36;
+        _btnImport.style.minWidth = 66;
+        _btnImport.style.flexShrink = 0;
+        _btnImport.style.marginRight = 5;
+        closeBtn.style.height = 36;
+        closeBtn.style.minWidth = 65;
+        closeBtn.style.flexShrink = 0;
         header.Add(title);
         header.Add(_btnImport);
         header.Add(closeBtn);
@@ -914,8 +1197,8 @@ public class KMusicPlayerUI : MonoBehaviour
         _trackBrowserSearch.AddToClassList("km-project-rename-field");
         _trackBrowserSearch.AddToClassList("km-track-search");
         // Use dark text on a light input surface, independent of Unity's theme.
-        var searchInk = new Color(.055f,.09f,.14f);
-        var searchSurface = new Color(.88f,.93f,.97f);
+        var searchInk = new Color(.87f,.94f,.98f);
+        var searchSurface = new Color(.105f,.165f,.235f);
         _trackBrowserSearch.style.color = searchInk;
         _trackBrowserSearch.style.backgroundColor = searchSurface;
         _trackBrowserSearch.RegisterCallback<AttachToPanelEvent>(_ =>
@@ -927,17 +1210,27 @@ public class KMusicPlayerUI : MonoBehaviour
                 inner.style.backgroundColor = searchSurface;
             }
         });
+        _trackBrowserSearch.style.height = 40;
+        _trackBrowserSearch.style.minHeight = 40;
+        _trackBrowserSearch.style.maxHeight = 40;
+        _trackBrowserSearch.style.marginTop = 5;
+        _trackBrowserSearch.style.marginBottom = 8;
         _trackBrowserSearch.RegisterValueChangedCallback(_ => RefreshTrackBrowserList());
 
         _trackBrowserCountLabel = new Label("0 items");
         _trackBrowserCountLabel.AddToClassList("km-track-count");
+        _trackBrowserCountLabel.style.fontSize = 10;
+        _trackBrowserCountLabel.style.color = new Color(.57f,.76f,.84f);
+        _trackBrowserCountLabel.style.marginBottom = 7;
 
         _trackBrowserList = new ScrollView();
         _trackBrowserList.name = "TrackScroll";
         _trackBrowserList.AddToClassList("km-project-scroll");
         _trackBrowserList.AddToClassList("km-track-scroll");
         _trackBrowserList.style.flexGrow = 1f;
-        _trackBrowserList.style.minHeight = 220;
+        _trackBrowserList.style.minHeight = 0;
+        _trackBrowserList.verticalScrollerVisibility = ScrollerVisibility.Auto;
+        _trackBrowserList.style.flexShrink = 1;
 
         card.Add(header);
         card.Add(_trackBrowserSearch);
@@ -972,14 +1265,31 @@ public class KMusicPlayerUI : MonoBehaviour
                 CloseTrackBrowser();
             });
             row.AddToClassList("km-track-row");
+            row.style.minHeight = 64;
+            row.style.height = StyleKeyword.Auto;
+            row.style.marginBottom = 6;
+            row.style.paddingLeft = 10;
+            row.style.paddingRight = 10;
+            row.style.paddingTop = 7;
+            row.style.paddingBottom = 7;
+            row.style.borderTopLeftRadius = 4;
+            row.style.borderTopRightRadius = 4;
+            row.style.borderBottomLeftRadius = 4;
+            row.style.borderBottomRightRadius = 4;
+            row.style.backgroundColor = new Color(.125f,.175f,.237f);
             if (item.IsCurrent)
                 row.AddToClassList("km-track-row--current");
 
             var title = new Label(item.IsCurrent ? "● " + item.Title : item.Title);
             title.AddToClassList("km-track-row-title");
+            title.style.fontSize = 13;
+            title.style.color = new Color(.91f,.95f,.99f);
+            title.style.whiteSpace = WhiteSpace.Normal;
 
             var subtitle = new Label(item.Subtitle ?? string.Empty);
             subtitle.AddToClassList("km-track-row-subtitle");
+            subtitle.style.fontSize = 10;
+            subtitle.style.color = new Color(.61f,.73f,.81f);
 
             row.Add(title);
             if (!string.IsNullOrEmpty(item.Subtitle))
@@ -1112,7 +1422,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null || audioSource == null) return;
 
         audioSource.Stop();
-        audioSource.clip = _clip;
+        audioSource.clip = _warpedClip != null ? _warpedClip : _clip;
         audioSource.loop = false;
         audioSource.pitch = Mathf.Max(0.01f, GetCurrentSamplePitchRate());
         audioSource.Play();
@@ -1145,16 +1455,16 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (_clip == null || _clip.length <= 0f || audioSource == null) return;
 
-        if (_chopArmed)
-        {
-            if (isDrag) { SeekTo01(t01); return; }
-
-            if (_markerAddMode) DropChopMarkerAt01(t01);
-            else DeleteNearestMarkerTo01(t01);
-            return;
-        }
-
+        // Markers are committed only on pointer-up taps. Swipes and pinch zoom
+        // must never create/delete slice boundaries.
         SeekTo01(t01);
+    }
+
+    private void OnWaveTap01(float t01)
+    {
+        if (!_chopArmed || _clip == null) return;
+        if (_markerAddMode) DropChopMarkerAt01(t01);
+        else DeleteNearestMarkerTo01(t01);
     }
 
     private void SeekTo01(float t01)
@@ -1171,6 +1481,16 @@ public class KMusicPlayerUI : MonoBehaviour
         UpdateTimeLabels(audioSource.time, _clip.length);
     }
 
+    private void OnWaveMarkerSelected(int index)
+    {
+        if (index < 0 || index >= _chops01.Count) return;
+        _selectedMarkerIndex = index;
+        _scrub01 = _chops01[index];
+        _wave?.SetSelectedMarker(index);
+        _wave?.SetPlayhead01(_scrub01);
+        UpdateMarkerNavigatorUI();
+    }
+
     private void OnWaveMarkerDrag01(int markerIndex, float t01, bool isDrag)
     {
         if (_clip == null || _clip.length <= 0f || audioSource == null) return;
@@ -1178,7 +1498,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (markerIndex < 0 || markerIndex >= _chops01.Count) return;
 
         float newT01 = GetClampedMarkerPosition01(markerIndex, t01);
-        if (_snapEnabled) newT01 = GetClampedMarkerPosition01(markerIndex, Snap01(newT01, _snapDiv));
+        if (_snapEnabled) newT01 = GetClampedMarkerPosition01(markerIndex, SnapMusical01(newT01));
 
         if (Mathf.Abs(_chops01[markerIndex] - newT01) <= 0.0001f && isDrag)
             return;
@@ -1260,7 +1580,9 @@ public class KMusicPlayerUI : MonoBehaviour
         float startTime = Mathf.Clamp(start01 * _clip.length, 0f, Mathf.Max(0f, _clip.length - 0.001f));
 
         float pitchRate = Mathf.Max(0.01f, GetCurrentSamplePitchRate());
-        float rawSliceDur = Mathf.Clamp((end01 - start01) * _clip.length, 0.03f, _clip.length);
+        float activeLength = (_warpedClip != null ? _warpedClip : _clip).length;
+        startTime = Mathf.Clamp(start01 * activeLength, 0f, Mathf.Max(0f, activeLength - .001f));
+        float rawSliceDur = Mathf.Clamp((end01 - start01) * activeLength, 0.03f, activeLength);
         float pitchedDur = Mathf.Max(0.02f, rawSliceDur / pitchRate);
 
         if (_markerPreviewCoroutine != null)
@@ -1277,7 +1599,8 @@ public class KMusicPlayerUI : MonoBehaviour
         float pitchRate = Mathf.Max(0.01f, GetCurrentSamplePitchRate());
 
         audioSource.Stop();
-        audioSource.clip = _clip;
+        AudioClip sampleToPlay = _warpedClip != null ? _warpedClip : _clip;
+        audioSource.clip = sampleToPlay;
         audioSource.loop = false;
         audioSource.pitch = pitchRate;
         audioSource.time = Mathf.Clamp(startTime, 0f, Mathf.Max(0f, _clip.length - 0.001f));
@@ -1285,7 +1608,7 @@ public class KMusicPlayerUI : MonoBehaviour
 
         yield return new WaitForSecondsRealtime(duration);
 
-        if (audioSource != null && audioSource.clip == _clip)
+        if (audioSource != null && (audioSource.clip == _clip || audioSource.clip == _warpedClip))
         {
             audioSource.Stop();
             audioSource.pitch = 1f;
@@ -1346,13 +1669,22 @@ public class KMusicPlayerUI : MonoBehaviour
         DeleteNearestMarkerTo01(t01);
     }
 
+    private float SnapMusical01(float position)
+    {
+        if (_clip == null || _clip.length <= 0f) return Mathf.Clamp01(position);
+        float secondsPerSixteenth = 15f / Mathf.Max(1f, CurrentSongTempo());
+        float time = Mathf.Clamp01(position) * _clip.length;
+        float snapped = Mathf.Round(time / secondsPerSixteenth) * secondsPerSixteenth;
+        return Mathf.Clamp01(snapped / _clip.length);
+    }
+
     private void DropChopMarkerAt01(float t01)
     {
         if (_clip == null || _clip.length <= 0f) return;
         if (_chops01.Count >= 17) return;
 
         t01 = Mathf.Clamp01(t01);
-        if (_snapEnabled) t01 = Snap01(t01, _snapDiv);
+        if (_snapEnabled) t01 = SnapMusical01(t01);
 
         for (int i = 0; i < _chops01.Count; i++)
             if (_snapEnabled)
@@ -1530,6 +1862,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private void UpdateMarkerNavigatorUI()
     {
         ClampSelectedMarkerIndex();
+        _wave?.SetSelectedMarker(_selectedMarkerIndex);
 
         if (_markerNavLabel != null)
         {
@@ -1599,31 +1932,46 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private void SyncMarkersToWave()
     {
-        _wave?.SetMarkers01(_chops01);
+        if (_wave == null) return;
+        _wave.SetMarkers01(_chops01);
+        _wave.SetSelectedMarker(_selectedMarkerIndex);
     }
+
+    private int _lastTimeLabelSecond = -1, _lastDurationLabelSecond = -1;
 
     private void UpdatePlayheadUI()
     {
-        if (_clip == null || _clip.length <= 0f || audioSource == null || audioSource.clip != _clip)
+        AudioClip active = _warpedClip != null ? _warpedClip : _clip;
+        if (active == null || active.length <= 0f || audioSource == null || audioSource.clip != active)
         {
             _wave?.SetPlayhead01(_scrub01);
-            UpdateTimeLabels((_clip != null) ? (_scrub01 * _clip.length) : 0f, _clip != null ? _clip.length : 0f);
+            UpdateTimeLabels(active != null ? (_scrub01 * active.length) : 0f,
+                active != null ? active.length : 0f);
             return;
         }
-
         float t = audioSource.time;
-        float t01 = Mathf.Clamp01(t / _clip.length);
-
+        float t01 = Mathf.Clamp01(t / active.length);
         _scrub01 = t01;
-
         _wave?.SetPlayhead01(t01);
-        UpdateTimeLabels(t, _clip.length);
+        UpdateTimeLabels(t, active.length);
     }
 
     private void UpdateTimeLabels(float t, float dur)
     {
-        if (_timeLabel != null) _timeLabel.text = FormatTime(t);
-        if (_durLabel != null) _durLabel.text = FormatTime(dur);
+        // Scheduled at 30Hz, but clock text changes at most once per second.
+        // Avoid two new strings and two UI text/layout invalidations per tick.
+        int tSecond = Mathf.FloorToInt(Mathf.Max(0f,t));
+        int dSecond = Mathf.FloorToInt(Mathf.Max(0f,dur));
+        if (_timeLabel != null && tSecond != _lastTimeLabelSecond)
+        {
+            _lastTimeLabelSecond = tSecond;
+            _timeLabel.text = FormatTime(t);
+        }
+        if (_durLabel != null && dSecond != _lastDurationLabelSecond)
+        {
+            _lastDurationLabelSecond = dSecond;
+            _durLabel.text = FormatTime(dur);
+        }
     }
 
     private static string FormatTime(float seconds)

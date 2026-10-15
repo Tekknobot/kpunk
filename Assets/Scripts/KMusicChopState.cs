@@ -34,8 +34,10 @@ public static bool TryGetCachedClip(out AudioClip clip)
 
         public static void SetCachedClip(string id, AudioClip clip)
         {
+            bool changed = _cachedClip != clip || _cachedId != id;
             _cachedId = id;
             _cachedClip = clip;
+            if (changed) _appliedRevision++; // refresh DSP slice voices after live warp change
         }
 
         public static bool TryGetCachedClip(string id, out AudioClip clip)

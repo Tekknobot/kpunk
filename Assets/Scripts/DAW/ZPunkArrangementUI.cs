@@ -30,7 +30,9 @@ namespace ZPunk.DAW
         private VisualElement trackHeaders;
         private VisualElement canvas;
         private VisualElement playhead;
-        private ScrollView scroll;
+        private ScrollView timelineViewport;
+        private Label visibleBarLabel;
+        private int viewStartBar;
         private Label hint;
         private Label details;
         private Button loopSongButton;
@@ -104,14 +106,15 @@ namespace ZPunk.DAW
         /// space. Called by the workspace shell when device/orientation changes.</summary>
         public void SetWorkspaceScale(float scale)
         {
-            scale = Mathf.Clamp(scale, 1f, 2.4f);
+            // UI physical dimensions remain stable across tablet/phone/rotation.
+            // The timeline is paged at fixed bar widths; no horizontal scroll or resizing.
+            scale = Mathf.Clamp(scale, 1f, 1.12f);
             if (Mathf.Abs(scale - uiScale) < .025f) return;
-            float factor = scale / uiScale;
             uiScale = scale;
-            HeaderWidth = 105f * scale;
-            RowHeight = 62f * scale;
-            RulerHeight = 32f * scale;
-            pixelsPerBar = Mathf.Clamp(pixelsPerBar * factor, 42f * scale, 154f * scale);
+            HeaderWidth = 118f;
+            RowHeight = 55f;
+            RulerHeight = 26f;
+            pixelsPerBar = Mathf.Clamp(pixelsPerBar, 42f, 154f);
             if (page == null) return;
             page.style.paddingLeft = 8 * scale;
             page.style.paddingRight = 8 * scale;
@@ -215,10 +218,13 @@ namespace ZPunk.DAW
             var transportControls = MakeCommandStrip("ZPunkSongActions");
             transportControls.Add(Button("- ZOOM", () => Zoom(-14), 65));
             transportControls.Add(Button("+ ZOOM", () => Zoom(14), 65));
+
             snapButton = Button("SNAP BAR", CycleSnap, 83);
             transportControls.Add(snapButton);
+
             loopSongButton = Button("LOOP OFF", ToggleSongLoop, 78);
             transportControls.Add(loopSongButton);
+
             page.Add(transportControls);
 
             var tempoRow=new VisualElement { name="ZPunkArrangementTempo" };
@@ -349,22 +355,26 @@ namespace ZPunk.DAW
             trackHeaders.style.backgroundColor = new Color(.075f, .105f, .15f);
             arrangement.Add(trackHeaders);
 
-            scroll = new ScrollView(ScrollViewMode.Horizontal);
-            scroll.name = "ZPunkArrangementScroll";
-            scroll.style.flexGrow = 1;
-            scroll.style.flexShrink = 1;
-            scroll.style.minWidth = 1;
-            scroll.style.overflow = Overflow.Hidden;
-            scroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            scroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
-            scroll.contentContainer.style.flexDirection = FlexDirection.Row;
-            arrangement.Add(scroll);
+            // Native touch scrolling keeps bars at a fixed musical width.
+            // Both scrollbars are hidden without disabling finger swipes.
+            timelineViewport = new ScrollView(ScrollViewMode.Horizontal) { name = "ZPunkArrangementViewport" };
+            timelineViewport.style.flexGrow = 1;
+            timelineViewport.style.flexShrink = 1;
+            timelineViewport.style.minWidth = 0;
+            timelineViewport.style.position = Position.Relative;
+            timelineViewport.style.overflow = Overflow.Hidden;
+            timelineViewport.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            timelineViewport.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            timelineViewport.contentContainer.style.flexDirection = FlexDirection.Row;
+            arrangement.Add(timelineViewport);
+            timelineViewport.RegisterCallback<GeometryChangedEvent>(_ => ApplyTimelinePage());
 
             canvas = new VisualElement { name = "ZPunkTimelineCanvas" };
             canvas.style.position = Position.Relative;
+            canvas.style.top = 0;
             canvas.style.flexShrink = 0;
             canvas.style.backgroundColor = Surface;
-            scroll.Add(canvas);
+            timelineViewport.Add(canvas);
 
             details = Label("Select track, + CLIP, then EDIT to compose.", 11, Text);
             details.style.marginTop = 5 * uiScale;
@@ -425,6 +435,7 @@ namespace ZPunk.DAW
             float width = renderedBars * pixelsPerBar;
             canvas.style.width = width;
             canvas.style.height = RulerHeight + count * RowHeight;
+            ApplyTimelinePage();
 
             var corner = new VisualElement();
             corner.style.height = RulerHeight;
@@ -908,9 +919,28 @@ namespace ZPunk.DAW
                 snapButton.text = "SNAP BAR";
             }
         }
+        private void PageBars(int direction)
+        {
+            if (renderedBars <= 0 || timelineViewport == null) return;
+            float width = timelineViewport.resolvedStyle.width;
+            int step = Mathf.Max(1, Mathf.FloorToInt(Mathf.Max(1f, width) / pixelsPerBar) - 1);
+            // Start from the actual swipe position, not the last button press.
+            viewStartBar = Mathf.Clamp(Mathf.FloorToInt(timelineViewport.scrollOffset.x / pixelsPerBar)
+                + direction * step, 0, renderedBars - 1);
+            ApplyTimelinePage();
+        }
+        private void ApplyTimelinePage()
+        {
+            if (canvas == null || timelineViewport == null) return;
+            viewStartBar = Mathf.Clamp(viewStartBar, 0, Mathf.Max(0, renderedBars - 1));
+            timelineViewport.scrollOffset = new Vector2(viewStartBar * pixelsPerBar, 0f);
+            if (visibleBarLabel != null)
+                visibleBarLabel.text = "BAR " + (viewStartBar + 1);
+        }
         private void Zoom(float delta)
         {
-            pixelsPerBar = Mathf.Clamp(pixelsPerBar + delta * uiScale, 42f * uiScale, 154f * uiScale);
+            pixelsPerBar = Mathf.Clamp(pixelsPerBar + delta, 42f, 154f);
+            ApplyTimelinePage();
             Refresh();
         }
         private void UpdateAfterChange()
@@ -934,6 +964,16 @@ namespace ZPunk.DAW
             if (projects != null && (projects.CurrentSlot != projectSlot ||
                 (ownsSong && !ReferenceEquals(projects.CurrentSong, song)))) { OnShown(); return; }
             RefreshPlayhead();
+            // Reflect touch scrolling in the existing bar counter. Do not assign
+            // scrollOffset here: that would interfere with native drag inertia.
+            if (timelineViewport != null && visibleBarLabel != null)
+            {
+                int firstBar = Mathf.Clamp(Mathf.FloorToInt(
+                    Mathf.Max(0f, timelineViewport.scrollOffset.x) / pixelsPerBar), 0, renderedBars - 1);
+                viewStartBar = firstBar;
+                string label = "BAR " + (firstBar + 1);
+                if (visibleBarLabel.text != label) visibleBarLabel.text = label;
+            }
         }
     }
 }

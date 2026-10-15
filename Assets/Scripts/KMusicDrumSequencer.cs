@@ -221,11 +221,21 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (end01 <= start01) return;
         EnsureSampleVoices();
         if (_sampleVoicePool.Count == 0) return;
+        // Monophonic chops: schedule previous voices to end precisely where
+        // the incoming slice begins. Do not Stop() them early during lookahead.
         int voiceIndex = _dawChopVoiceCursor++ % _sampleVoicePool.Count;
+        for (int i = 0; i < _sampleVoicePool.Count; i++)
+        {
+            if (i == voiceIndex) continue;
+            var previous = _sampleVoicePool[i];
+            if (previous == null || previous.clip == null) continue;
+            try { previous.SetScheduledEndTime(dspTime); }
+            catch (Exception) { /* voice may already have finished */ }
+        }
         var src = _sampleVoicePool[voiceIndex];
         if (src == null) return;
         float rate = Mathf.Max(0.01f, GetSamplePitchRate());
-        double duration = Math.Max(0.01, Math.Min((end01 - start01) * _appliedClip.length / rate, 4.0));
+        double duration = Math.Max(0.01, (end01 - start01) * _appliedClip.length / rate);
         src.Stop();
         src.clip = _appliedClip;
         src.loop = false;
@@ -245,6 +255,7 @@ public class KMusicDrumSequencer : MonoBehaviour
                 if (source != null) source.Stop();
         foreach (AudioSource source in _sampleVoicePool)
             if (source != null) source.Stop();
+        _dawChopVoiceCursor = 0;
         if (_sampler != null) _sampler.AllNotesOff();
         SetAllPlayheads(-1);
     }
@@ -1722,20 +1733,14 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         _appliedResourcesPath = resPath;
         _appliedClip = null;
 
-        // If this is a Resources path, try Resources.Load
-        if (!string.IsNullOrEmpty(resPath) && !resPath.StartsWith("cached:"))
-        {
+        // Prefer the runtime clip: it may be the pitch-preserving tempo-warped
+        // version of a Resources or imported sample. Keep Resources as fallback.
+        if (KMusicChopState.TryGetCachedClip(resPath, out var cachedForId))
+            _appliedClip = cachedForId;
+        else if (!string.IsNullOrEmpty(resPath) && !resPath.StartsWith("cached:"))
             _appliedClip = Resources.Load<AudioClip>(resPath);
-        }
-
-        // If Resources failed (Android device track), fall back to runtime cached clip
-        if (_appliedClip == null)
-        {
-            if (KMusicChopState.TryGetCachedClip(resPath, out var cachedForId))
-                _appliedClip = cachedForId;
-            else if (KMusicChopState.TryGetCachedClip(out var cachedAny))
-                _appliedClip = cachedAny;
-        }
+        if (_appliedClip == null && KMusicChopState.TryGetCachedClip(out var cachedAny))
+            _appliedClip = cachedAny;
 
         if (_appliedClip == null)
         {
@@ -1760,7 +1765,9 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
 
     private void EnsureSampleVoices()
     {
-        int target = Mathf.Clamp(sampleVoices, 1, 32);
+        // Enough voices to schedule adjacent mono chops ahead without cutting
+        // currently sounding audio when the next event is being queued.
+        int target = Mathf.Max(8, Mathf.Clamp(sampleVoices, 1, 32));
 
         // If pool already exists, top up if needed.
         while (_sampleVoicePool.Count < target)
@@ -2426,6 +2433,17 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
             RefreshGridForActiveDrum();
         }
         catch { }
+    }
+
+    // Independent Create view kit navigation. Existing legacy kit controls still work.
+    public int DawKitCount => _kits != null ? _kits.Length : 0;
+    public string DawKitName => _kits != null && _kitIndex >= 0 && _kitIndex < _kits.Length && _kits[_kitIndex] != null
+        ? _kits[_kitIndex].kitName : "NO KIT";
+    public void DawStepKit(int direction)
+    {
+        if (_kits == null || _kits.Length == 0) return;
+        int next = ((_kitIndex + direction) % _kits.Length + _kits.Length) % _kits.Length;
+        ApplyKitIndex(next);
     }
 
     public int CaptureKitIndex() => _kitIndex;

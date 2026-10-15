@@ -1,0 +1,10 @@
+ZPunk 2.0 — Touch Scroll / Hidden Scrollbars
+
+Replace only these files in your existing Unity project:
+- Assets/Scripts/DAW/ZPunkArrangementUI.cs
+- Assets/Scripts/DAW/ZPunkClipEditorUI.cs
+
+Arrange: native finger-swipe horizontal scrolling with hidden scrollbar, fixed bar widths, existing BARS buttons retained. The BAR indicator follows touch navigation.
+Sampler: hides its vertical scrollbar, retaining the same vertical ScrollView and touch interactions.
+
+Unity compilation and device gesture testing have not been performed here.

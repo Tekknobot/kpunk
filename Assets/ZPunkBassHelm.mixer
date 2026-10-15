@@ -411,7 +411,9 @@ AudioMixerController:
   m_SuspendThreshold: -80
   m_EnableSuspend: 1
   m_UpdateMode: 0
-  m_ExposedParameters: []
+  m_ExposedParameters:
+  - guid: 1bd8add14c954eacac07fa1e895cccc5
+    name: ZPunkBassTrackGain
   m_AudioMixerGroupViews:
   - guids:
     - 65890d9a6c2b4cbb8e71ca141fc41129

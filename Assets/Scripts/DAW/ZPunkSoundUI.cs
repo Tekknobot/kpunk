@@ -40,6 +40,7 @@ namespace ZPunk.DAW
             public Param param;
             public VisualElement fill, thumb;
             public Label value;
+            public int lastPercent = -1;
         }
         private static Label T(string value,int size,Color color)
         {
@@ -209,16 +210,19 @@ namespace ZPunk.DAW
         private void Refresh()
         {
             var controller=Controller();
-            if(instrumentStatus!=null)instrumentStatus.text=controller==null?
+            string state=controller==null?
                 "INSTRUMENT INITIALIZING - RETRY IN A MOMENT":
                 "CHANNEL "+controller.channel+"  /  INDEPENDENT SYNTH ENGINE";
+            if(instrumentStatus!=null && instrumentStatus.text!=state)instrumentStatus.text=state;
             string name="NO PRESET";
             if(selected==TrackKind.Bass && rack!=null)name=rack.BassPresetName;
             else if(selected==TrackKind.Synth && mainPicker!=null)
                 name=DisplayPath(mainPicker.CurrentPresetRelPath);
             else if(selected==TrackKind.Pads && padRuntime!=null)
-                name=DisplayPath(padRuntime.CurrentPresetRelPath);
-            if(presetName!=null)presetName.text=name;
+                name=padRuntime.PresetCount > 0
+                    ? DisplayPath(padRuntime.CurrentPresetRelPath) + "  (" + (padRuntime.CurrentPresetIndex + 1) + "/" + padRuntime.PresetCount + ")"
+                    : "PAD PRESETS UNAVAILABLE";
+            if(presetName!=null && presetName.text!=name)presetName.text=name;
             foreach(var m in macros)
             {
                 float percent=0f;
@@ -238,7 +242,10 @@ namespace ZPunk.DAW
                     try{percent=Mathf.Clamp01(controller.GetParameterPercent(m.param));okay=true;}
                     catch(Exception){}
                 }
-                if(m.value!=null)m.value.text=okay?(percent*100f).ToString("0")+"%":"--";
+                int shown=okay?Mathf.RoundToInt(percent*100f):-1;
+                if(shown==m.lastPercent)continue;
+                m.lastPercent=shown;
+                if(m.value!=null)m.value.text=shown>=0?shown+"%":"--";
                 if(m.fill!=null)m.fill.style.width=new Length(okay?percent*100f:0f,LengthUnit.Percent);
                 if(m.thumb!=null)m.thumb.style.left=new Length(okay?percent*100f:0f,LengthUnit.Percent);
             }
@@ -264,6 +271,7 @@ namespace ZPunk.DAW
                 mainPicker.ApplyPresetChoice(mainPicker.CurrentPresetIndex+direction,null);
             else if(selected==TrackKind.Pads && padRuntime!=null)
                 padRuntime.StepPreset(direction);
+            // Async StreamingAssets preset load; Refresh() in Update picks up the new name.
             Refresh();
         }
         private void SetMacro(Macro m,float t)

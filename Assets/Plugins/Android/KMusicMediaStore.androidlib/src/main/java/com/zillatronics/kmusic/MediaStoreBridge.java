@@ -70,7 +70,7 @@ public final class MediaStoreBridge {
                 // RELATIVE_PATH can be "Music/" or "Music/Album/" etc.
                 // Some devices/cases vary in case and formatting, so we match a few patterns.
                 selection =
-                        MediaStore.Audio.Media.IS_MUSIC + "!=0 AND (" +
+                        "(" +
                         MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? OR " +   // Music/Album/
                         MediaStore.MediaColumns.RELATIVE_PATH + " LIKE ? OR " +   // MUSIC/Album/
                         MediaStore.MediaColumns.RELATIVE_PATH + " = ? OR " +      // Music/
@@ -88,7 +88,7 @@ public final class MediaStoreBridge {
                 };
             } else {
                 selection =
-                        MediaStore.Audio.Media.IS_MUSIC + "!=0 AND (" +
+                        "(" +
                         MediaStore.Audio.Media.DATA + " LIKE ? OR " +
                         MediaStore.Audio.Media.DATA + " LIKE ?" +
                         ")";

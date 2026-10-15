@@ -24,7 +24,7 @@ extern UIViewController *UnityGetGLViewController(void);
     NSURL *documentsURL = docDirs.firstObject;
     if (documentsURL == nil) return nil;
 
-    NSURL *importsURL = [documentsURL URLByAppendingPathComponent:@"ImportedSamples" isDirectory:YES];
+    NSURL *importsURL = [documentsURL URLByAppendingPathComponent:@"ZPunk" isDirectory:YES];
     NSError *dirError = nil;
     [fm createDirectoryAtURL:importsURL withIntermediateDirectories:YES attributes:nil error:&dirError];
     if (dirError != nil) return nil;

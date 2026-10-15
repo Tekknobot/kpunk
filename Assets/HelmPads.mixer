@@ -411,7 +411,9 @@ AudioMixerController:
   m_SuspendThreshold: -80
   m_EnableSuspend: 1
   m_UpdateMode: 0
-  m_ExposedParameters: []
+  m_ExposedParameters:
+  - guid: bcf4d7ebd9e5f9e4598f41a6c2eeb9bc
+    name: ZPunkPadsTrackGain
   m_AudioMixerGroupViews:
   - guids:
     - db8a64a0c5e7951449bf1461ec9dbdd4
