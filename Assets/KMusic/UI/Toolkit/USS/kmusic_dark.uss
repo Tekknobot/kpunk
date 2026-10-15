@@ -1584,3 +1584,41 @@ unity-text-align: middle-center;
 #PageSynth2 .km-synth-fader > * {
   height: 100%;
 }
+
+/* ZPunk 2.0: condensed legacy editors inside the adaptive workspace.
+   The arrangement and new dock are styled at runtime to preserve UI Toolkit
+   bindings and avoid editing dozens of synthesizer prefabs. */
+.zp-mobile .km-card {
+  margin-top: 8px;
+  padding: 9px;
+  border-radius: 12px;
+}
+.zp-mobile .km-subcard {
+  padding: 8px;
+  margin-right: 6px;
+  border-radius: 8px;
+}
+.zp-mobile .km-subtitle { font-size: 17px; }
+.zp-mobile .km-pillbtn {
+  min-width: 58px;
+  height: 43px;
+  font-size: 14px;
+  padding-left: 8px;
+  padding-right: 8px;
+  margin-left: 5px;
+  border-radius: 8px;
+}
+.zp-mobile .km-patch-name { font-size: 16px; }
+.zp-mobile .km-tab { display: none; }
+
+/* ZPUNK 2.0 — consolidated functional DAW skin */
+.km-root { background-color: #09111C; color: #EFF5FF; }
+.km-topbar { background-color: #0B1625; border-top-width: 0; border-bottom-width: 1px; border-left-width: 0; border-right-width: 0; border-bottom-color: #23374C; }
+.km-title { color: #F4F7FB; font-size: 19px; }
+.km-presetbar { background-color: #122034; border-top-width: 0; border-bottom-width: 0; border-left-width: 0; border-right-width: 0; }
+.km-presetlabel { color: #BED0E0; font-size: 12px; }
+.km-pillbtn { background-color: #192B43; color: #F4F8FF; border-left-width: 1px; border-right-width: 1px; border-top-width: 1px; border-bottom-width: 1px; border-left-color: #35506C; border-right-color: #35506C; border-top-color: #35506C; border-bottom-color: #35506C; }
+.km-pillbtn > .unity-text-element { color: #F4F8FF; font-size: 13px; }
+.km-card { background-color: #111E30; border-left-color: #283A50; border-right-color: #283A50; border-top-color: #283A50; border-bottom-color: #283A50; border-left-width: 1px; border-right-width: 1px; border-top-width: 1px; border-bottom-width: 1px; border-top-left-radius: 8px; border-top-right-radius: 8px; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; margin-top: 5px; margin-bottom: 5px; padding: 10px; }
+.km-subtitle { color: #F0B760; font-size: 13px; }
+.km-label { color: #B4C6D8; }

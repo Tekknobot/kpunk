@@ -4,6 +4,9 @@
     <!-- Pages: tabs show/hide these panels -->
     <ui:VisualElement name="Pages" style="flex-grow:1; flex-direction:column; overflow:scroll;">
 
+      <!-- ZPunk 2.0 song timeline. The workspace controller moves this under the main shell. -->
+      <ui:VisualElement name="PageArrangement" style="display:none; flex-direction:column; flex-grow:1;" />
+
       <!-- SEQ (default visible) -->
       <ui:VisualElement name="PageSeq" style="display:flex; flex-direction:column;">
         <ui:VisualElement class="km-card">

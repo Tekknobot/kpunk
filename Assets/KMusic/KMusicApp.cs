@@ -25,6 +25,11 @@ namespace KMusic
         public ParameterBus Bus => _bus;
 
         private ThemeStyleSheet _runtimeTheme;
+        private VisualElement _safeRoot;
+        private Rect _lastSafeArea;
+        private int _lastScreenWidth = -1, _lastScreenHeight = -1;
+        private PanelSettings _responsivePanel;
+
 
         // prevent stacking event handlers on enable/disable
         private Action<string, float> _onBusChanged;
@@ -55,6 +60,17 @@ namespace KMusic
 
                 ps.themeStyleSheet = _runtimeTheme;
                 _doc.panelSettings = ps;
+            }
+
+            // Use a phone-sized UI coordinate system on portrait devices, and a
+            // desktop-sized one in landscape. Clone PanelSettings so the editor asset
+            // is never permanently modified by Device Simulator/Play Mode.
+            if (_doc.panelSettings != null)
+            {
+                _responsivePanel = Instantiate(_doc.panelSettings);
+                _responsivePanel.name = "ZPunk Runtime Responsive Panel";
+                _doc.panelSettings = _responsivePanel;
+                ConfigurePanelResolution();
             }
 
             if (mainUxml != null)
@@ -122,19 +138,13 @@ namespace KMusic
                 root.Insert(0, bg);
             }
 
-            // Safe-area padding
-            var sa = Screen.safeArea;
-            float topInsetPx = Screen.height - (sa.y + sa.height);
-            float topInsetUI = 0f;
-
-            if (_doc.panelSettings != null)
-            {
-                var refRes = _doc.panelSettings.referenceResolution;
-                topInsetUI = topInsetPx * (refRes.y / Mathf.Max(1f, Screen.height));
-            }
-
-            float baseTop = 0f;
-            root.style.paddingTop = baseTop + topInsetUI;
+            // Apply a genuine 4-sided device safe area, not a top-only estimate.
+            // Keep background full-bleed while placing interactive UI inside
+            // the notch/camera/rounded-corner/home-indicator boundaries.
+            _safeRoot = root;
+            EnsureRuntimeFont(root);
+            ApplySafeArea(true);
+            root.RegisterCallback<GeometryChangedEvent>(OnSafeRootGeometry);
 
             if (darkTheme != null && !root.styleSheets.Contains(darkTheme))
                 root.styleSheets.Add(darkTheme);
@@ -163,8 +173,80 @@ namespace KMusic
             _bus.OnChanged += _onBusChanged;
         }
 
+    private void OnSafeRootGeometry(GeometryChangedEvent evt)
+    {
+        ApplySafeArea(false);
+    }
+
+    private void Update()
+    {
+        // Simulator/device safe areas can change on rotation and when the
+        // device simulation changes without recreating the UIDocument.
+        if (_safeRoot != null && (Screen.width != _lastScreenWidth ||
+            Screen.height != _lastScreenHeight || Screen.safeArea != _lastSafeArea))
+        {
+            ConfigurePanelResolution();
+            ApplySafeArea(true);
+        }
+    }
+
+    private static void EnsureRuntimeFont(VisualElement root)
+    {
+        // IMPORTANT: Do NOT override UI Toolkit's inherited runtime font with
+        // Resources.GetBuiltinResource<Font>("Arial.ttf") or OS fallback fonts.
+        // On iOS/Device Simulator that override can produce blank glyph atlases:
+        // buttons render their backgrounds, but all their text disappears.
+        // Let PanelSettings' default runtime theme resolve the platform font.
+        root.style.color = new Color(.93f, .96f, .98f);
+        root.style.fontSize = 15;
+    }
+
+    private void ConfigurePanelResolution()
+    {
+        if (_responsivePanel == null) return;
+        bool portrait = Screen.height > Screen.width;
+        _responsivePanel.scaleMode = PanelScaleMode.ScaleWithScreenSize;
+        _responsivePanel.screenMatchMode = PanelScreenMatchMode.MatchWidthOrHeight;
+        _responsivePanel.match = 0f;  // predictable logical widths
+        _responsivePanel.referenceResolution = portrait
+            ? new Vector2Int(430, 932)
+            : new Vector2Int(1280, 800);
+    }
+
+    private void ApplySafeArea(bool force)
+    {
+        if (_safeRoot == null || Screen.width < 1 || Screen.height < 1) return;
+        Rect sa = Screen.safeArea;
+        if (!force && sa == _lastSafeArea && _lastScreenWidth == Screen.width &&
+            _lastScreenHeight == Screen.height) return;
+        _lastSafeArea = sa;
+        _lastScreenWidth = Screen.width;
+        _lastScreenHeight = Screen.height;
+
+        // Convert physical pixel insets to panel logical points. PanelSettings
+        // ScaleWithScreenSize has already scaled the coordinates; never apply
+        // a second portrait multiplier to individual widgets.
+        float w = _safeRoot.resolvedStyle.width;
+        float h = _safeRoot.resolvedStyle.height;
+        if (float.IsNaN(w) || w <= 1) w = _doc.panelSettings != null ? _doc.panelSettings.referenceResolution.x : Screen.width;
+        if (float.IsNaN(h) || h <= 1) h = _doc.panelSettings != null ? _doc.panelSettings.referenceResolution.y : Screen.height;
+        float fx = w / Mathf.Max(1f, Screen.width);
+        float fy = h / Mathf.Max(1f, Screen.height);
+        float top = Mathf.Max(0, Screen.height - sa.yMax) * fy;
+        float bottom = Mathf.Max(0, sa.yMin) * fy;
+        float left = Mathf.Max(0, sa.xMin) * fx;
+        float right = Mathf.Max(0, Screen.width - sa.xMax) * fx;
+        // A little breathing room even on devices reporting no hardware inset.
+        _safeRoot.style.paddingTop = top + 7f;
+        _safeRoot.style.paddingBottom = bottom + 8f;
+        _safeRoot.style.paddingLeft = left + 7f;
+        _safeRoot.style.paddingRight = right + 7f;
+    }
+
     private void OnDisable()
     {
+        if (_safeRoot != null) _safeRoot.UnregisterCallback<GeometryChangedEvent>(OnSafeRootGeometry);
+        _safeRoot = null;
         // Save bus values (mixer/drum/sampler/mutes only)
         KMusicSaveState.SaveBus(_bus, PrefKey_Bus, id =>
             id.StartsWith("mix.") ||
@@ -182,6 +264,16 @@ namespace KMusic
             _bus.OnChanged -= _onBusChanged;
 
         _onBusChanged = null;
+    }
+
+    private void OnDestroy()
+    {
+        if (_responsivePanel != null)
+        {
+            if (Application.isPlaying) Destroy(_responsivePanel);
+            else DestroyImmediate(_responsivePanel);
+            _responsivePanel = null;
+        }
     }
 
     private void OnApplicationPause(bool pause)

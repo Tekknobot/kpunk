@@ -1,46 +1,33 @@
-:root {
-  --bg: #0F1115;
-  --panel: #171A21;
-  --panel2: #131720;
-  --border: #242938;
-  --text: #E7E9EE;
-  --muted: #9AA3B2;
-  --accent: #6AE4FF;
-  --accent2: #A78BFA;
-  --danger: #FF5A5F;
-
-  --radius-lg: 24px;
-  --radius-md: 18px;
-  --radius-sm: 14px;
-
-  --gap-1: 8px;
-  --gap-2: 12px;
-  --gap-3: 18px;
-  --gap-4: 24px;
-  --font: 16px;
-}
-
 .km-root {
   width: 1024px;
   height: 2048px;
-  background-color: var(--bg);
+  background-color: #0F1115;
   padding: 24px;
   flex-direction: column;
 }
 
 .km-topbar {
   height: 104px;
-  border-radius: 20px;
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  border-bottom-left-radius: 20px;
+  border-bottom-right-radius: 20px;
   background-color: #12141A;
-  border-width: 2px;
-  border-color: var(--border);
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
   padding: 20px 20px;
   flex-direction: row;
   align-items: center;
 }
 
 .km-title {
-  color: var(--text);
+  color: #E7E9EE;
   font-size: 44px;
   -unity-font-style: bold;
 }
@@ -49,10 +36,19 @@
   margin-left: 16px;
   flex-grow: 1;
   height: 54px;
-  border-radius: 16px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
   background-color: #1C1F28;
-  border-width: 2px;
-  border-color: var(--border);
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
   padding: 0 16px;
   align-items: center;
   justify-content: center;
@@ -60,7 +56,7 @@
 }
 
 .km-presetlabel {
-  color: var(--muted);
+  color: #9AA3B2;
   font-size: 20px;
 }
 
@@ -68,20 +64,32 @@
   height: 54px;
   width: 92px;
   margin-left: 12px;
-  border-radius: 16px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
   background-color: #1C1F28;
-  border-width: 2px;
-  border-color: var(--border);
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
   justify-content: center;
   align-items: center;
 }
 
 .km-pillbtn:hover {
-  border-color: var(--accent);
+  border-top-color: #6AE4FF;
+  border-right-color: #6AE4FF;
+  border-bottom-color: #6AE4FF;
+  border-left-color: #6AE4FF;
 }
 
 .km-pillbtn > .unity-text-element {
-  color: var(--text);
+  color: #E7E9EE;
   font-size: 18px;
   -unity-font-style: bold;
 }
@@ -95,9 +103,18 @@
 .km-tab {
   flex-grow: 1;
   margin-right: 12px;
-  border-radius: 16px;
-  border-width: 2px;
-  border-color: var(--border);
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
   background-color: #181B23;
   justify-content: center;
   align-items: center;
@@ -105,24 +122,36 @@
 
 
 .km-tab--active {
-  border-color: var(--accent);
+  border-top-color: #6AE4FF;
+  border-right-color: #6AE4FF;
+  border-bottom-color: #6AE4FF;
+  border-left-color: #6AE4FF;
   background-color: #202532;
 }
 
 .km-tab-label {
-  color: var(--muted);
+  color: #9AA3B2;
   font-size: 18px;
   -unity-font-style: bold;
 }
 
-.km-tab--active .km-tab-label { color: var(--text); }
+.km-tab--active .km-tab-label { color: #E7E9EE; }
 
 .km-card {
   margin-top: 14px;
-  border-radius: var(--radius-lg);
-  background-color: var(--panel);
-  border-width: 2px;
-  border-color: var(--border);
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  border-bottom-left-radius: 18px;
+  border-bottom-right-radius: 18px;
+  background-color: #171A21;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
   padding: 14px;
 }
 
@@ -135,17 +164,26 @@
 }
 
 .km-subcard {
-  border-radius: var(--radius-md);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
   background-color: #13161E;
-  border-width: 2px;
-  border-color: var(--border);
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
   padding: 14px;
   margin-right: 18px;
 }
 
 
 .km-subtitle {
-  color: var(--muted);
+  color: #9AA3B2;
   font-size: 18px;
   -unity-font-style: bold;
   margin-bottom: 10px;
@@ -170,17 +208,26 @@
   width: 96px;
   height: 34px;
   margin-right: 10px;
-  border-radius: 14px;
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
   background-color: #1C1F28;
-  border-width: 2px;
-  border-color: var(--border);
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
   justify-content: center;
   align-items: center;
 }
 
 
 .km-tool-label {
-  color: var(--muted);
+  color: #9AA3B2;
   font-size: 14px;
 }
 
@@ -199,17 +246,29 @@
   width: 94px;
   height: 94px;
   margin-right: 18px;
-  border-radius: 16px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
   background-color: #1E2230;
-  border-width: 2px;
-  border-color: var(--border);
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
   justify-content: center;
   align-items: center;
 }
 
 
 .km-step--active {
-  border-color: var(--accent2);
+  border-top-color: #A78BFA;
+  border-right-color: #A78BFA;
+  border-bottom-color: #A78BFA;
+  border-left-color: #A78BFA;
 }
 
 .km-tempo {
@@ -223,13 +282,13 @@
 }
 
 .km-label {
-  color: var(--muted);
+  color: #9AA3B2;
   font-size: 18px;
   -unity-font-style: bold;
 }
 
 .km-bpm {
-  color: var(--text);
+  color: #E7E9EE;
   font-size: 24px;
   -unity-font-style: bold;
   margin-left: 18px;
@@ -260,8 +319,14 @@
 
 /* Playhead highlight (current step) */
 .km-step--playhead {
-  border-color: var(--accent);
-  border-width: 3px;
+  border-top-color: #6AE4FF;
+  border-right-color: #6AE4FF;
+  border-bottom-color: #6AE4FF;
+  border-left-color: #6AE4FF;
+  border-top-width: 3px;
+  border-right-width: 3px;
+  border-bottom-width: 3px;
+  border-left-width: 3px;
   background-color: #2A3142;
 }
 
@@ -269,3 +334,51 @@
 .km-pillbtn--transport {
   width: 72px;
 }
+
+/* ZPUNK 2.0 RESPONSIVE ROOT — overrides legacy 1024x2048 fixed canvas */
+.km-root {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex-grow: 1;
+    flex-direction: column;
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
+    background-color: #0F1115;
+    color: #EDF2F7;
+    font-size: 15px;
+}
+.km-title { color: #F4F7FB; font-size: 20px; }
+.km-presetlabel { color: #BAC8D7; font-size: 12px; }
+.km-pillbtn { color: #EDF2F7; font-size: 13px; }
+.km-pillbtn--transport { color: #FFFFFF; }
+.km-subtitle, .km-tab-label, .km-label { color: #B9C8D9; }
+.km-bpm, .km-patch-name { color: #F0F5FB; }
+.km-topbar {
+    height: auto;
+    min-height: 54px;
+    flex-shrink: 0;
+    padding-top: 7px;
+    padding-bottom: 7px;
+    padding-left: 7px;
+    padding-right: 7px;
+}
+.km-presetbar { height: 30px; min-width: 0; }
+.km-card { height: auto; overflow: visible; }
+.km-subcard { height: auto; }
+.km-modules-card { height: auto; }
+
+/* ZPUNK 2.0 — consolidated functional DAW skin */
+.km-root { background-color: #09111C; color: #EFF5FF; }
+.km-topbar { background-color: #0B1625; border-top-width: 0; border-bottom-width: 1px; border-left-width: 0; border-right-width: 0; border-bottom-color: #23374C; }
+.km-title { color: #F4F7FB; font-size: 19px; }
+.km-presetbar { background-color: #122034; border-top-width: 0; border-bottom-width: 0; border-left-width: 0; border-right-width: 0; }
+.km-presetlabel { color: #BED0E0; font-size: 12px; }
+.km-pillbtn { background-color: #192B43; color: #F4F8FF; border-left-width: 1px; border-right-width: 1px; border-top-width: 1px; border-bottom-width: 1px; border-left-color: #35506C; border-right-color: #35506C; border-top-color: #35506C; border-bottom-color: #35506C; }
+.km-pillbtn > .unity-text-element { color: #F4F8FF; font-size: 13px; }
+.km-card { background-color: #111E30; border-left-color: #283A50; border-right-color: #283A50; border-top-color: #283A50; border-bottom-color: #283A50; border-left-width: 1px; border-right-width: 1px; border-top-width: 1px; border-bottom-width: 1px; border-top-left-radius: 8px; border-top-right-radius: 8px; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; margin-top: 5px; margin-bottom: 5px; padding: 10px; }
+.km-subtitle { color: #F0B760; font-size: 13px; }
+.km-label { color: #B4C6D8; }

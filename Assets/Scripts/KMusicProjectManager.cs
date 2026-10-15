@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.UIElements;
 using KMusic;
 using KMusic.Core;
+using ZPunk.DAW;
 
 /// <summary>
 /// Simple project save/load (slot-based) for Zpunk/KMusic.
@@ -45,6 +46,26 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private KMusicHelmPresetPickerUI _helm;
     private KMusicPlayerUI _player;
     private KMusicChainUI _chainUi;
+
+    // Phase 1 migration mirror. The legacy sequencers still own playback and editing.
+    public SongData CurrentSong { get; private set; }
+    /// <summary>Provide the currently edited DAW song, or a live legacy preview until the first edit.</summary>
+    public SongData GetSongForArrangementEditor()
+    {
+        if (CurrentSong != null && (CurrentSong.arrangementAuthored ||
+            (!CurrentSong.migratedFromLegacy && SongEventPlanner.HasEvents(CurrentSong))))
+            return CurrentSong;
+        return GetSongForPlayback();
+    }
+
+    /// <summary>Promote a copied song to the editable, persistent DAW document.</summary>
+    public void AcceptArrangementEdit(SongData edited)
+    {
+        if (edited == null) return;
+        edited.migratedFromLegacy = false;
+        edited.arrangementAuthored = true;
+        CurrentSong = edited;
+    }
 
     public int CurrentSlot { get; private set; }
     private string ProjectsDir => Path.Combine(Application.persistentDataPath, "Projects");
@@ -564,6 +585,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
         public ChopState chops = new();
         public PatternBank.PatternBankSave patterns = new();
         public ChainStateSave chain = new();
+        // ZPunk 2.0 song snapshot. Legacy fields remain the source of truth in phase 1.
+        public SongData song;
     }
 
     [Serializable] private class BusPair { public string id; public float v; }
@@ -666,6 +689,222 @@ public sealed class KMusicProjectManager : MonoBehaviour
         return 107f;
     }
 
+    private static byte[] DecodeLegacyBytes(string base64, int size)
+    {
+        byte[] result = new byte[size];
+        if (string.IsNullOrEmpty(base64)) return result;
+        try
+        {
+            byte[] input = Convert.FromBase64String(base64);
+            Array.Copy(input, result, Mathf.Min(input.Length, result.Length));
+        }
+        catch (FormatException) { }
+        return result;
+    }
+
+    private static PatternData CaptureLegacyLiveFrame(ProjectData data)
+    {
+        var p = new PatternData();
+        if (data.drums != null)
+        {
+            p.drumMask = DecodeLegacyBytes(data.drums.stepMaskB64, PatternData.Steps);
+            p.drumVelocityData = DecodeLegacyBytes(data.drums.stepVelocityB64, PatternData.Steps * 2);
+            p.sampleSteps = data.drums.sampleSteps ?? p.sampleSteps;
+        }
+        // The independent sample UI is authoritative where a saved grid exists.
+        if (data.sampler != null && data.sampler.stepGrid != null)
+            p.sampleSteps = data.sampler.stepGrid;
+        if (data.seq != null)
+        {
+            p.seqSteps = data.seq.stepGrid ?? p.seqSteps;
+            p.seqRuns = data.seq.runs ?? p.seqRuns;
+        }
+        if (data.pad != null)
+        {
+            p.padSteps = data.pad.stepGrid ?? p.padSteps;
+            p.padRuns = data.pad.runs ?? p.padRuns;
+            p.padChordMode = data.pad.chordMode;
+        }
+        return p;
+    }
+
+    private SongData BuildSongMirror(ProjectData data)
+    {
+        float bpm = TryGetProjectTempoBpm();
+        // On an old project load, the bus has not yet been restored, so derive tempo
+        // from the saved parameter list instead of whichever project was active.
+        if (data.bus != null)
+        {
+            for (int i = 0; i < data.bus.Count; i++)
+            {
+                if (data.bus[i] != null && data.bus[i].id == "tempo")
+                {
+                    bpm = Mathf.Max(1f, data.bus[i].v);
+                    break;
+                }
+            }
+        }
+        var options = new LegacySongConverter.Settings
+        {
+            title = data.projectName,
+            bpm = bpm,
+            kitIndex = data.drums != null ? data.drums.kitIndex : 0,
+            synthPresetPath = data.synth != null ? data.synth.presetRelPath : null,
+            synthPresetIndex = data.synth != null ? data.synth.presetIndex : 0,
+            synthVolume = data.synth != null ? data.synth.masterVolume : -1f,
+            padPresetPath = data.pad != null ? data.pad.presetRelPath : null,
+            padPresetIndex = data.pad != null ? data.pad.presetIndex : 0,
+            padVolume = data.pad != null ? data.pad.masterVolume : -1f,
+            sampleResourcesPath = data.chops != null ? data.chops.resourcesPath : null,
+            sliceStart01 = data.chops != null ? data.chops.sliceStart01 : null,
+            sliceEnd01 = data.chops != null ? data.chops.sliceEnd01 : null
+        };
+        return LegacySongConverter.Convert(data.patterns, data.chain, CaptureLegacyLiveFrame(data), options);
+    }
+
+    /// <summary>
+    /// Build a DAW playback preview directly from the currently edited legacy grids.
+    /// This does not write a project file or change the saved song document.
+    /// A real DAW-authored arrangement takes precedence over the legacy preview.
+    /// </summary>
+    public SongData GetSongForPlayback()
+    {
+        FindRuntimeRefs();
+        // Authored Phase 3 songs are authoritative even when deliberately empty.
+        // Historical Phase 2 native snapshots that were empty by accident still
+        // fall back to the live pads: this preserves the Phase 2 capture fix.
+        if (CurrentSong != null && (CurrentSong.arrangementAuthored ||
+            (!CurrentSong.migratedFromLegacy && SongEventPlanner.HasEvents(CurrentSong))))
+            return CurrentSong;
+
+        var frame = new ProjectData { projectName = GetProjectDisplayName(CurrentSlot) };
+        if (_app != null && _app.Bus != null)
+        {
+            foreach (var value in _app.Bus.All)
+                frame.bus.Add(new BusPair { id = value.Id, v = value.Value });
+        }
+        if (_drums != null)
+        {
+            // Snapshot only: if the selected drum lane is visually populated but
+            // the legacy mask was never synchronized, recover those lit cells for
+            // playback without changing the actual pattern or saved project.
+            byte[] mask = _drums.CaptureDrumMaskForDawPreview();
+            byte[] velocity = _drums.CaptureDrumVelocityData();
+            frame.drums.stepMaskB64 = mask == null ? "" : Convert.ToBase64String(mask);
+            frame.drums.stepVelocityB64 = velocity == null ? "" : Convert.ToBase64String(velocity);
+            frame.drums.sampleSteps = _drums.CaptureSampleStepsFlat();
+            frame.drums.kitIndex = _drums.CaptureKitIndex();
+        }
+        if (_samplerUi != null)
+            frame.sampler.stepGrid = _samplerUi.CaptureSampleStepsFlat();
+        if (_keys != null)
+        {
+            frame.seq.stepGrid = _keys.CaptureSeqStepsFlat();
+            frame.seq.runs = _keys.CaptureSeqRunsFlat();
+        }
+        if (_pad != null)
+        {
+            frame.pad.stepGrid = _pad.CapturePadStepsFlat();
+            frame.pad.runs = _pad.CapturePadRunsFlat();
+            frame.pad.chordMode = _pad.CaptureChordMode();
+        }
+        if (_padSynthRuntime != null)
+        {
+            frame.pad.presetRelPath = _padSynthRuntime.CurrentPresetRelPath;
+            frame.pad.presetIndex = _padSynthRuntime.CurrentPresetIndex;
+            frame.pad.masterVolume = _padSynthRuntime.CaptureMasterVolume();
+        }
+        if (_helm != null)
+        {
+            frame.synth.presetRelPath = _helm.CurrentPresetRelPath;
+            frame.synth.presetIndex = _helm.CurrentPresetIndex;
+        }
+        if (_app != null && _app.Bus != null)
+            frame.synth.masterVolume = Mathf.Clamp01(_app.Bus.GetValue("master.vol"));
+        if (KMusicChopState.TryLoadApplied(out string resourcesPath, out var starts, out var ends))
+        {
+            frame.chops.resourcesPath = resourcesPath;
+            frame.chops.sliceStart01 = starts;
+            frame.chops.sliceEnd01 = ends;
+        }
+
+        // The current grid is the only authoritative source for a live preview.
+        // Saving a pattern bank/chain slot is NOT required for auditioning DAW mode.
+        frame.patterns = PatternBank.ExportAll();
+        var chain = ChainState.LoadOrCreate();
+        bool chainEnabled = chain != null && chain.enabled;
+
+        // First compile the currently visible, edited grid. This is also a safe
+        // fallback when the chain points at empty/stale saved patterns.
+        frame.chain = null;
+        SongData livePreview = BuildSongMirror(frame);
+        SetLegacyPreviewLoop(livePreview);
+        bool liveHasEvents = SongEventPlanner.HasEvents(livePreview);
+
+        if (chainEnabled)
+        {
+            frame.chain = ChainStateSave.From(chain);
+            SongData chainPreview = BuildSongMirror(frame);
+            SetLegacyPreviewLoop(chainPreview);
+            if (SongEventPlanner.HasEvents(chainPreview))
+                return chainPreview;
+
+            if (liveHasEvents)
+            {
+                Debug.LogWarning("[ZPunk DAW] Selected chain has no playable events; " +
+                    "previewing the current live grid instead (no patterns were overwritten).");
+                return livePreview;
+            }
+        }
+
+        if (!liveHasEvents)
+        {
+            // Diagnostics are intentionally specific: if the user sees lit drum pads,
+            // these values distinguish empty runtime state from stale chain contents.
+            int drumHits = 0;
+            byte[] masks = _drums != null ? _drums.CaptureDrumMask() : null;
+            if (masks != null)
+                foreach (byte mask in masks)
+                    for (int lane = 0; lane < 8; ++lane)
+                        if ((mask & (1 << lane)) != 0) ++drumHits;
+            int synthSteps = CountFilled(frame.seq.stepGrid);
+            int padSteps = CountFilled(frame.pad.stepGrid);
+            int chopSteps = CountFilled(frame.sampler.stepGrid ?? frame.drums.sampleSteps);
+            int visibleDrumPads = _drums != null ? _drums.CountVisibleDrumSteps() : -1;
+            // Also include the actual compiled snapshot values, not just runtime
+            // state, so future reports can distinguish capture from conversion.
+            int previewDrumClips = 0;
+            if (livePreview != null && livePreview.tracks != null)
+                foreach (var track in livePreview.tracks)
+                    if (track != null && track.kind == TrackKind.Drums && track.clips != null)
+                        previewDrumClips += track.clips.Count;
+            Debug.LogWarning($"[ZPunk DAW] LIVE CAPTURE EMPTY: drumHits={drumHits}, " +
+                $"previewDrumClips={previewDrumClips}, " +
+                $"visibleDrumPads={visibleDrumPads}, synthSteps={synthSteps}, " +
+                $"padSteps={padSteps}, chopSteps={chopSteps}, chainEnabled={chainEnabled}, " +
+                $"drumsBound={_drums != null}, keysBound={_keys != null}, padBound={_pad != null}. " +
+                "If visibleDrumPads > 0 but drumHits = 0, the drum grid and sequencer state are out of sync.");
+        }
+        return livePreview;
+    }
+
+    private static void SetLegacyPreviewLoop(SongData song)
+    {
+        if (song == null) return;
+        song.arrangementLoopEnabled = true;
+        song.loopStartTick = 0;
+        song.loopEndTick = song.lengthTicks;
+    }
+
+    private static int CountFilled(int[] steps)
+    {
+        int count = 0;
+        if (steps != null)
+            foreach (int step in steps)
+                if (step > 0) ++count;
+        return count;
+    }
+
     public void SaveProject(int slot)
     {
         EnsureProjectsDir();
@@ -745,10 +984,30 @@ public sealed class KMusicProjectManager : MonoBehaviour
         data.patterns = PatternBank.ExportAll();
         data.chain = ChainStateSave.From(ChainState.LoadOrCreate());
 
+        // Non-destructive v1 -> v2 snapshot. Do not change the legacy playback path.
+        // This is regenerated on each legacy UI save until the DAW editor becomes canonical.
+        try
+        {
+            // A DAW-owned document must never be overwritten by a legacy pattern snapshot.
+            // In groovebox mode, legacy grids are still authoritative and refresh the mirror.
+            var songTransport = FindObjectOfType<ZPunkSongTransport>();
+            if (CurrentSong != null && CurrentSong.schemaVersion == SongData.CurrentSchema &&
+                (songTransport != null && songTransport.SongMode || !CurrentSong.migratedFromLegacy))
+                data.song = CurrentSong;
+            else
+                data.song = BuildSongMirror(data);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[ZPunk DAW] Song mirror failed; legacy project will still save: " + e.Message);
+            data.song = null;
+        }
+
         try
         {
             string jsonPath = SlotPath(slot);
             File.WriteAllText(jsonPath, JsonUtility.ToJson(data));
+            CurrentSong = data.song;
             KMusicMidiExporter.ExportProjectMidiBundle(jsonPath, data, TryGetProjectTempoBpm());
             _cachedProjectNames[slot] = data.projectName;
         }
@@ -781,6 +1040,25 @@ public sealed class KMusicProjectManager : MonoBehaviour
         }
 
         if (data == null) return;
+
+        var dawTransport = FindObjectOfType<ZPunkSongTransport>();
+        if (dawTransport != null && dawTransport.IsPlaying) dawTransport.StopSong();
+
+        // Read-only projection of older save slots; never rewrite files on load.
+        // A malformed or unsupported song does not prevent the v1 project opening.
+        CurrentSong = null;
+        try
+        {
+            if (data.song != null && data.song.schemaVersion == SongData.CurrentSchema &&
+                data.song.tracks != null && data.song.contents != null)
+                CurrentSong = data.song;
+            else
+                CurrentSong = BuildSongMirror(data);
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[ZPunk DAW] Could not prepare song preview: " + e.Message);
+        }
 
         if (_chainUi != null)
             _chainUi.SetSuspendLivePatternWrites(true);
@@ -962,6 +1240,7 @@ private System.Collections.IEnumerator ApplySavedSynthVolumesAfterLoad(float mai
 
     private void ResetToBlank()
     {
+        CurrentSong = null;
         if (_drums != null)
         {
             _drums.ApplyDrumMask(null);

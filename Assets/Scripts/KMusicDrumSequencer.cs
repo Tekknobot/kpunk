@@ -10,6 +10,7 @@ using KMusic.UI;
 using UnityEditor;
 #endif
 using AudioHelm;
+using ZPunk.DAW;
 
 /// <summary>
 /// Mobile-friendly drum step sequencer (16 steps = 2x8 StepGrid).
@@ -59,6 +60,8 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private bool _didLoadState = false;
     private KMusicChainUI _chainUI;
+    private ZPunkSongTransport _songTransport;
+    private int _dawChopVoiceCursor;
 
     [Header("Unity AudioMixer (optional)")]
     [Tooltip("If assigned, each drum AudioSource will be routed into these mixer groups so you can push above 0 dB and see meters in the mixer.")]
@@ -190,6 +193,62 @@ public class KMusicDrumSequencer : MonoBehaviour
         src.PlayScheduled(dspTime);
     }
 
+    /// <summary>DAW DSP event. Drum lane is 0..7, matching SongData.</summary>
+    public void ScheduleDAWDrum(int lane, double dspTime, float velocity)
+    {
+        int drumId = lane + 1;
+        if (lane < 0 || lane >= 8 || IsDrumMuted(drumId) || velocity <= 0f) return;
+        float gain = GetDrumInputGain(drumId) * Mathf.Clamp01(velocity);
+        if (routeDrumsToMixer)
+            ScheduleDrum(drumId, dspTime, gain);
+        else if (_sampler != null && _clipByDrumId.TryGetValue(drumId, out AudioClip clip) && clip != null)
+        {
+            int note = _noteByDrumId.TryGetValue(drumId, out int n) ? n : 36;
+            _sampler.NoteOnScheduled(note, GetDrumGain(drumId) * Mathf.Clamp01(velocity), dspTime,
+                dspTime + Math.Max(0.05, clip.length));
+        }
+    }
+
+    /// <summary>DAW DSP event. Uses the existing applied chop points and voice pool.</summary>
+    public void ScheduleDAWChop(int chopId, double dspTime, float velocity)
+    {
+        if (chopId < 1 || chopId > 16 || velocity <= 0f) return;
+        EnsureAppliedChopsLoaded();
+        if (_appliedClip == null || _sliceStart01 == null || _sliceEnd01 == null ||
+            _sliceStart01.Length < chopId || _sliceEnd01.Length < chopId) return;
+        float start01 = _sliceStart01[chopId - 1];
+        float end01 = _sliceEnd01[chopId - 1];
+        if (end01 <= start01) return;
+        EnsureSampleVoices();
+        if (_sampleVoicePool.Count == 0) return;
+        int voiceIndex = _dawChopVoiceCursor++ % _sampleVoicePool.Count;
+        var src = _sampleVoicePool[voiceIndex];
+        if (src == null) return;
+        float rate = Mathf.Max(0.01f, GetSamplePitchRate());
+        double duration = Math.Max(0.01, Math.Min((end01 - start01) * _appliedClip.length / rate, 4.0));
+        src.Stop();
+        src.clip = _appliedClip;
+        src.loop = false;
+        src.pitch = rate;
+        src.volume = Mathf.Pow(Mathf.Clamp01(_bus != null ? _bus.GetValue("sample.master") : sampleMasterVolume), 2.2f)
+            * Mathf.Clamp01(velocity);
+        src.timeSamples = Mathf.Clamp((int)(start01 * _appliedClip.samples), 0, _appliedClip.samples - 1);
+        src.PlayScheduled(dspTime);
+        src.SetScheduledEndTime(dspTime + duration);
+    }
+
+    /// <summary>Cancel any scheduled DAW voices on stop, seek or load.</summary>
+    public void StopDAWVoices()
+    {
+        foreach (var pool in _drumVoicePools.Values)
+            foreach (AudioSource source in pool)
+                if (source != null) source.Stop();
+        foreach (AudioSource source in _sampleVoicePool)
+            if (source != null) source.Stop();
+        if (_sampler != null) _sampler.AllNotesOff();
+        SetAllPlayheads(-1);
+    }
+
     private void PreviewDrum(int drumId, float velocityScale = 1f)
     {
         if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
@@ -199,7 +258,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (src == null) return;
 
         src.Stop();
-        src.volume = 1f;
+        src.volume = GetDrumInputGain(drumId);
         src.PlayOneShot(clip, Mathf.Clamp01(velocityScale));
     }
 
@@ -460,6 +519,18 @@ public class KMusicDrumSequencer : MonoBehaviour
         _grid?.SetPlayheadStep(current);
     }
 
+    /// <summary>
+    /// DAW transport drives the existing grids visually while legacy playback is stopped.
+    /// This is a preview playhead, not a substitute for the future arrangement timeline.
+    /// </summary>
+    public void SetDAWPlayheadStep(int step)
+    {
+        if (_playing) return; // legacy owns its grid if it is playing
+        if (_lastPlayhead == step) return;
+        _lastPlayhead = step;
+        SetAllPlayheads(step);
+    }
+
     private void SetAllPlayheads(int step)
     {
         // your main SEQ step grid
@@ -528,6 +599,10 @@ public class KMusicDrumSequencer : MonoBehaviour
         {
             Debug.LogWarning("[KMusicDrumSequencer] No drum clips loaded. For runtime builds, put clips under Assets/Resources/KMusic/Drums/ and name them with keywords (kick/snare/clap/closed/open/ride/rim/crash).");
         }
+
+        // Runtime component avoids modifying existing Unity scene/prefab references.
+        _songTransport = GetComponent<ZPunkSongTransport>();
+        if (_songTransport == null) _songTransport = gameObject.AddComponent<ZPunkSongTransport>();
     }
 
     private void OnEnable()
@@ -654,6 +729,8 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (_playBtn == null || _stopBtn == null || _gridDrum == null)
             return false;
 
+        _songTransport?.InstallModeButton(_root, _playBtn);
+
         // STOP button: short tap stops, long press randomizes whole beat.
         if (!_stopBtn.ClassListContains("km-stop-btn--wired"))
         {
@@ -668,7 +745,10 @@ public class KMusicDrumSequencer : MonoBehaviour
                 }
 
                 Debug.Log("STOP CLICK");
-                OnStopClicked();
+                if (_songTransport != null && _songTransport.SongMode)
+                    _songTransport.StopSong();
+                else
+                    OnStopClicked();
             };
 
             _stopBtn.RegisterCallback<PointerDownEvent>(_ =>
@@ -2116,6 +2196,11 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
 
     private void OnPlayClicked()
     {
+        if (_songTransport != null && _songTransport.SongMode)
+        {
+            _songTransport.PlaySong();
+            return;
+        }
         if (_playing) return;
 
         _playBpm = GetBpm();
@@ -2154,6 +2239,8 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
 
     private void OnStopClicked()
     {
+        if (_songTransport != null && _songTransport.IsPlaying)
+            _songTransport.StopSong();
         if (!_playing) return;
 
         _playing = false;
@@ -2262,7 +2349,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                         {
                             // Use per-drum AudioSources so Unity AudioMixer meters/gain work per channel.
                             if (!IsDrumMuted(drumId))
-                                ScheduleDrum(drumId, _nextStepDspTime, GetDrumGain(drumId) * GetVelocityGain(step, lane));
+                                ScheduleDrum(drumId, _nextStepDspTime, GetDrumInputGain(drumId) * GetVelocityGain(step, lane));
                         }
                         else
                         {
@@ -2337,6 +2424,51 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
     {
         _kitIndex = Mathf.Max(0, kitIndex);
         try { ApplyKit(_kitIndex); } catch { }
+    }
+
+    /// <summary>
+    /// Diagnostic only: counts occupied cells currently displayed for the selected drum.
+    /// Does not read or modify the authoritative 8-lane pattern mask.
+    /// </summary>
+    public int CountVisibleDrumSteps()
+    {
+        if (_gridDrum == null) return -1;
+        int count = 0;
+        for (int step = 0; step < 16; ++step)
+            if (_gridDrum.GetValue(step / 8, step % 8) != 0) ++count;
+        return count;
+    }
+
+    /// <summary>
+    /// Read-only drum snapshot for an unsaved DAW preview. In a healthy legacy
+    /// project _stepMask is authoritative. If it is completely empty but the
+    /// selected lane visibly contains steps, recover those steps from the UI.
+    /// This does NOT mutate _stepMask, change velocities, or save pattern data.
+    /// It intentionally never overwrites a nonempty authoritative mask.
+    /// </summary>
+    public byte[] CaptureDrumMaskForDawPreview()
+    {
+        byte[] snapshot = CaptureDrumMask();
+        if (_gridDrum == null || snapshot == null) return snapshot;
+
+        // Avoid merging potentially stale UI values into a valid pattern.
+        for (int i = 0; i < snapshot.Length; ++i)
+            if (snapshot[i] != 0) return snapshot;
+
+        int lane = Mathf.Clamp(_activeDrumId - 1, 0, 7);
+        byte bit = (byte)(1 << lane);
+        int recovered = 0;
+        for (int step = 0; step < Mathf.Min(16, snapshot.Length); ++step)
+        {
+            if (_gridDrum.GetValue(step / 8, step % 8) == 0) continue;
+            snapshot[step] |= bit;
+            recovered++;
+        }
+        if (recovered > 0)
+            Debug.LogWarning($"[ZPunk DAW] Recovered {recovered} lit drum cells " +
+                $"from the visible lane {lane + 1} for playback. " +
+                "The sequencer mask is empty; original pattern data was not changed.");
+        return snapshot;
     }
 
     public byte[] CaptureDrumMask()
@@ -3006,24 +3138,21 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         if (t01 <= 0.0001f)
             return -80f;
 
-        // Normalize so the UI range actually reaches +6
-        float normalized = Mathf.InverseLerp(0f, 1f, t01);
+        // Logarithmic amplitude taper: 0.8 = unity, 0.5 ~= -4 dB (not -37.5 dB).
+        // Keep +6 dB available at max for quiet source samples; avoid default boosting.
+        if (t01 <= 0.8f)
+            return Mathf.Clamp(20f * Mathf.Log10(t01 / 0.8f), -80f, 0f);
+        return Mathf.Lerp(0f, 6f, (t01 - 0.8f) / 0.2f);
+    }
 
-        // Mixer-style taper
-        float db;
-
-        if (normalized < 0.8f)
-        {
-            float u = normalized / 0.8f;
-            db = Mathf.Lerp(-80f, 0f, u);
-        }
-        else
-        {
-            float u = (normalized - 0.8f) / 0.2f;
-            db = Mathf.Lerp(0f, 6f, u);
-        }
-
-        return db;
+    // Mixer mode applies the fader at the mixer only; never attenuate twice.
+    private float GetDrumInputGain(int drumId)
+    {
+        if (IsDrumMuted(drumId)) return 0f;
+        if (routeDrumsToMixer && drumMixer != null && driveMixerFromBus &&
+            GetMixerGroupForDrum(drumId) != null)
+            return 1f;
+        return GetDrumGain(drumId);
     }
 
     private float GetDrumGain(int drumId)

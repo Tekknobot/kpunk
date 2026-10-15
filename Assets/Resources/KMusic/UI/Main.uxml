@@ -14,7 +14,8 @@
 
     <!-- Pages: tabs show/hide these panels -->
     <ui:VisualElement name="Pages"
-                      style="flex-grow:1; flex-direction:column; overflow:scroll;">
+                      style="flex-grow:1; flex-direction:column; overflow:hidden; min-height:0;">
+      <ui:VisualElement name="PageArrangement" style="display:none; flex-direction:column; flex-grow:1;" />
 
       <!-- SEQ (default visible) -->
       <ui:VisualElement name="PageSeq" style="display:flex; flex-direction:column;">

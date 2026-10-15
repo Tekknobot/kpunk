@@ -42,6 +42,7 @@ namespace KMusic.UI
         private PianoRollGrid _lastPiano;
 
         private HelmController _helm;
+        public HelmController ActiveHelmController => _helm;
 
         // CHAIN support: suppress writes while importing patterns
         private bool _allowSaving = true;
@@ -157,7 +158,7 @@ namespace KMusic.UI
                     RebuildHelmSequenceFromGrid();
 
                     helmSequencer.enabled = false;
-                    helmSequencer.enabled = true;
+                    helmSequencer.enabled = !ZPunk.DAW.ZPunkSongTransport.IsSongModeActive;
                 }).Every(30);
 
                 CacheAllPaletteValues();
@@ -173,7 +174,7 @@ namespace KMusic.UI
                 _preferCachedOnNextBind = false;
                 RebuildHelmSequenceFromGrid();
                 helmSequencer.enabled = false;
-                helmSequencer.enabled = true;
+                helmSequencer.enabled = !ZPunk.DAW.ZPunkSongTransport.IsSongModeActive;
                 _sequenceBuilt = true;
 
                 _lastTransportStep = -999;
@@ -1548,7 +1549,7 @@ namespace KMusic.UI
             if (helmSequencer == null) return;
             RebuildHelmSequenceFromGrid();
             helmSequencer.enabled = false;
-            helmSequencer.enabled = true;
+            helmSequencer.enabled = !ZPunk.DAW.ZPunkSongTransport.IsSongModeActive;
         }
     }
 }

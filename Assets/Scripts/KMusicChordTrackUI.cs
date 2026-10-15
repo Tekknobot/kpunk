@@ -884,7 +884,7 @@ namespace KMusic
             }
 
             helmSequencer.enabled = false;
-            helmSequencer.enabled = true;
+            helmSequencer.enabled = !ZPunk.DAW.ZPunkSongTransport.IsSongModeActive;
         }
 
         private void ResolvePadSynthRefs()

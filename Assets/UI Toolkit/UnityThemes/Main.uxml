@@ -4,6 +4,9 @@
     <!-- Pages: tabs show/hide these panels -->
     <ui:VisualElement name="Pages" style="flex-grow:1; flex-direction:column; overflow:scroll;">
 
+      <!-- DAW ARRANGEMENT - Phase 3A/B (UI is constructed at runtime) -->
+      <ui:VisualElement name="PageArrangement" style="display:none; flex-direction:column; flex-grow:1;" />
+
       <!-- SEQ (default visible) -->
       <ui:VisualElement name="PageSeq" style="display:flex; flex-direction:column;">
         <ui:VisualElement class="km-card">
@@ -678,6 +681,7 @@
 
     <!-- Tabs -->
     <ui:VisualElement class="km-tabs">
+      <ui:VisualElement name="TabArrangement" class="km-tab"><ui:Label class="km-tab-label" text="ARRANGE"/></ui:VisualElement>
       <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="DRUMS | CHOPS"/></ui:VisualElement>
       <ui:VisualElement name="TabSeq" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="KEYS"/></ui:VisualElement>
       <ui:VisualElement name="TabSynth" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH"/></ui:VisualElement>
