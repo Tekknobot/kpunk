@@ -503,7 +503,11 @@ namespace KMusic
 
         private static bool IsInHierarchy(GameObject go, GameObject root)
         {
-            if (go == null || root == null) return false;
+            if (go == null) return false;
+            // Bass is a new independent native synth, never the legacy MAIN synth.
+            // All historical main-synth lookups exclude it, including preset loading.
+            if (go.transform.root != null && go.transform.root.name == "ZPunkBassSynth") return true;
+            if (root == null) return false;
             var tr = go.transform;
             while (tr != null)
             {

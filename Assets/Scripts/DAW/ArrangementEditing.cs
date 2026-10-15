@@ -154,7 +154,7 @@ namespace ZPunk.DAW
             {
                 bool loopWasAtEnd = song.loopEndTick >= song.lengthTicks;
                 song.lengthTicks = end;
-                if (loopWasAtEnd) song.loopEndTick = end;
+                if (loopWasAtEnd && !song.loopLengthCustom) song.loopEndTick = end;
             }
         }
 

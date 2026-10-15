@@ -192,6 +192,7 @@ namespace ZPunk.DAW
             trackControllers.Clear();
             var painter = FindObjectOfType<KMusic.UI.KMusicPianoRollStepPainter>();
             var padRuntime = FindObjectOfType<KMusicPadSynthRuntime>();
+            var rack = FindObjectOfType<ZPunkInstrumentRack>();
             synth = painter != null ? painter.ActiveHelmController : null;
             pads = padRuntime != null ? padRuntime.ActiveHelmController : null;
             if (song == null || song.tracks == null) return;
@@ -201,7 +202,8 @@ namespace ZPunk.DAW
                 if (track == null) continue;
                 if (track.kind == TrackKind.Synth && synth != null) trackControllers[i] = synth;
                 if (track.kind == TrackKind.Pads && pads != null) trackControllers[i] = pads;
-                // Bass remains silent until a third, independent Audio Helm instance is added.
+                if (track.kind == TrackKind.Bass && rack != null && rack.BassController != null)
+                    trackControllers[i] = rack.BassController;
             }
             if (synth == null) Debug.LogWarning("[ZPunk DAW] Main synth unavailable. Synth track will be silent.");
             if (pads == null) Debug.LogWarning("[ZPunk DAW] Pad synth unavailable. Pads track will be silent.");

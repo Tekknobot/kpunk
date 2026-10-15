@@ -31,6 +31,7 @@ namespace KMusic
         [SerializeField] private string padSynthRootName = "PadSynth";
         [SerializeField] private HelmController helm;
         public HelmController ActiveHelmController => helm;
+        public ParameterBus SoundBus => _bus;
         [SerializeField] private HelmSequencer helmSequencer;
 
         [Header("StreamingAssets")]

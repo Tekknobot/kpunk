@@ -35,7 +35,9 @@ namespace ZPunk.DAW
         private Label details;
         private Button loopSongButton;
         private Button snapButton;
-        private FloatField bpmField;
+        private Label loopBarsLabel;
+        private VisualElement bpmRail, bpmFill, bpmThumb;
+        private Label bpmValue;
         private float pixelsPerBar = 78f;
         private long snapQuantum = SongData.TicksPerBar4;
         private SongData song;
@@ -145,6 +147,8 @@ namespace ZPunk.DAW
             if (song == null) return false;
             // The inherited one-bar preview loop should not unexpectedly truncate an arrangement.
             if (song.migratedFromLegacy) song.arrangementLoopEnabled = false;
+            if (!song.loopLengthCustom)
+                song.loopEndTick = AutomaticLoopEnd(song);
             projects.AcceptArrangementEdit(song);
             ownsSong = true;
             return true;
@@ -156,6 +160,7 @@ namespace ZPunk.DAW
         {
             var b = new Button(click) { text = label };
             b.style.minWidth = minWidth * uiScale;
+            b.style.flexShrink = 0;
             b.style.height = 34 * uiScale;
             b.style.marginRight = 5 * uiScale;
             b.style.marginBottom = 2 * uiScale;
@@ -215,6 +220,118 @@ namespace ZPunk.DAW
             loopSongButton = Button("LOOP OFF", ToggleSongLoop, 78);
             transportControls.Add(loopSongButton);
             page.Add(transportControls);
+
+            var tempoRow=new VisualElement { name="ZPunkArrangementTempo" };
+            tempoRow.style.flexDirection=FlexDirection.Row;
+            tempoRow.style.alignItems=Align.Center;
+            tempoRow.style.height=37;
+            tempoRow.style.flexShrink=0;
+            tempoRow.style.marginTop=5;
+            var tempoLabel=Label("TEMPO",10,MutedText);
+            tempoLabel.style.width=52;
+            tempoRow.Add(tempoLabel);
+            bpmRail=new VisualElement { name="ZPunkTempoRail" };
+            bpmRail.style.height=32;
+            bpmRail.style.position=Position.Relative;
+            bpmRail.style.flexGrow=1;
+            bpmRail.style.minWidth=0;
+            bpmRail.style.justifyContent=Justify.Center;
+            var railBg=new VisualElement();
+            railBg.style.height=7;
+            railBg.style.backgroundColor=new Color(.055f,.079f,.118f);
+            railBg.style.borderTopLeftRadius=3;
+            railBg.style.borderTopRightRadius=3;
+            railBg.style.borderBottomLeftRadius=3;
+            railBg.style.borderBottomRightRadius=3;
+            railBg.pickingMode=PickingMode.Ignore;
+            bpmRail.Add(railBg);
+            bpmFill=new VisualElement();
+            bpmFill.style.position=Position.Absolute;
+            bpmFill.style.left=0;
+            bpmFill.style.top=12;
+            bpmFill.style.height=7;
+            bpmFill.style.backgroundColor=Highlight;
+            bpmFill.style.borderTopLeftRadius=3;
+            bpmFill.style.borderTopRightRadius=3;
+            bpmFill.pickingMode=PickingMode.Ignore;
+            bpmRail.Add(bpmFill);
+            bpmThumb=new VisualElement();
+            bpmThumb.style.position=Position.Absolute;
+            bpmThumb.style.top=6;
+            bpmThumb.style.width=13;
+            bpmThumb.style.height=19;
+            bpmThumb.style.backgroundColor=Text;
+            bpmThumb.style.borderTopLeftRadius=4;
+            bpmThumb.style.borderTopRightRadius=4;
+            bpmThumb.style.borderBottomLeftRadius=4;
+            bpmThumb.style.borderBottomRightRadius=4;
+            bpmThumb.pickingMode=PickingMode.Ignore;
+            bpmRail.Add(bpmThumb);
+            Action<Vector2> moveTempo=pos=>
+            {
+                float t=Mathf.Clamp01(bpmRail.WorldToLocal(pos).x/Mathf.Max(1f,bpmRail.contentRect.width));
+                SetTempo(60f + t*140f);
+            };
+            bpmRail.RegisterCallback<PointerDownEvent>(evt=>
+            {
+                if(evt.button!=0)return;
+                bpmRail.CapturePointer(evt.pointerId);
+                moveTempo(evt.position);
+                evt.StopPropagation();
+            });
+            bpmRail.RegisterCallback<PointerMoveEvent>(evt=>
+            {
+                if(!bpmRail.HasPointerCapture(evt.pointerId))return;
+                moveTempo(evt.position);
+                evt.StopPropagation();
+            });
+            bpmRail.RegisterCallback<PointerUpEvent>(evt=>
+            {
+                if(!bpmRail.HasPointerCapture(evt.pointerId))return;
+                moveTempo(evt.position);
+                bpmRail.ReleasePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            bpmRail.RegisterCallback<PointerCancelEvent>(evt=>
+            {
+                if(bpmRail.HasPointerCapture(evt.pointerId))bpmRail.ReleasePointer(evt.pointerId);
+            });
+            tempoRow.Add(bpmRail);
+            bpmValue=Label("120 BPM",11,Highlight);
+            bpmValue.style.width=68;
+            bpmValue.style.unityTextAlign=TextAnchor.MiddleRight;
+            tempoRow.Add(bpmValue);
+            page.Add(tempoRow);
+
+            // Independent loop length: the arrangement may contain more clips or
+            // trailing empty bars than the section the musician wants repeated.
+            var loopRow = new VisualElement { name = "ZPunkLoopLengthControls" };
+            loopRow.style.flexDirection = FlexDirection.Row;
+            loopRow.style.alignItems = Align.Center;
+            loopRow.style.height = 39;
+            loopRow.style.flexShrink = 0;
+            loopRow.style.marginTop = 3;
+            var loopCaption = Label("LOOP BARS", 10, MutedText);
+            loopCaption.style.flexGrow = 1;
+            loopCaption.style.minWidth = 0;
+            loopRow.Add(loopCaption);
+            var decrease = Button("-", () => AdjustLoopBars(-1), 35);
+            decrease.style.minWidth = 35;
+            decrease.style.width = 35;
+            decrease.style.paddingLeft = 0;
+            decrease.style.paddingRight = 0;
+            loopRow.Add(decrease);
+            loopBarsLabel = Label("4", 12, Highlight);
+            loopBarsLabel.style.width = 46;
+            loopBarsLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+            loopRow.Add(loopBarsLabel);
+            var increase = Button("+", () => AdjustLoopBars(1), 35);
+            increase.style.minWidth = 35;
+            increase.style.width = 35;
+            increase.style.paddingLeft = 0;
+            increase.style.paddingRight = 0;
+            loopRow.Add(increase);
+            page.Add(loopRow);
 
             var arrangement = new VisualElement { name = "ZPunkArrangementBoard" };
             arrangement.style.flexDirection = FlexDirection.Row;
@@ -429,8 +546,15 @@ namespace ZPunk.DAW
             canvas.Add(playhead);
             RefreshPlayhead();
             UpdateDetails();
+            if (song.arrangementLoopEnabled && !song.loopLengthCustom)
+                song.loopEndTick = AutomaticLoopEnd(song);
             if (loopSongButton != null) loopSongButton.text = song.arrangementLoopEnabled ? "LOOP ON" : "LOOP OFF";
-            if (bpmField != null) bpmField.SetValueWithoutNotify(song.bpm);
+            if (loopBarsLabel != null)
+            {
+                long loopTicks = song.loopLengthCustom ? song.loopEndTick : AutomaticLoopEnd(song);
+                loopBarsLabel.text = Math.Max(1L, (loopTicks + SongData.TicksPerBar4 - 1) / SongData.TicksPerBar4).ToString();
+            }
+            RefreshTempoRail(song.bpm);
         }
 
         private void AddClipView(VisualElement lane, ClipData clip, Color color)
@@ -701,12 +825,62 @@ namespace ZPunk.DAW
             song.tracks[index].solo = !song.tracks[index].solo;
             UpdateAfterChange();
         }
+        private void RefreshTempoRail(float value)
+        {
+            float t=Mathf.Clamp01((value-60f)/140f);
+            if(bpmFill!=null)bpmFill.style.width=new Length(t*100f,LengthUnit.Percent);
+            if(bpmThumb!=null)bpmThumb.style.left=new Length(t*100f,LengthUnit.Percent);
+            if(bpmValue!=null)bpmValue.text=Mathf.RoundToInt(value)+" BPM";
+        }
+        private void SetTempo(float tempo)
+        {
+            if(song==null || projects==null)return;
+            float value=Mathf.Round(Mathf.Clamp(tempo,60f,200f));
+            RefreshTempoRail(value);
+            if(Mathf.Approximately(value,song.bpm))return;
+            if(!MakeEditable())return;
+            song.bpm=value;
+            projects.AcceptArrangementEdit(song);
+            // Phase 2 takes its timing snapshot on Play; restart to hear BPM changes.
+            SetHint("Tempo set to "+value.ToString("0")+" BPM. Restart Play to apply.");
+        }
+
+        private static long AutomaticLoopEnd(SongData document)
+        {
+            long end = SongData.TicksPerBar4;
+            if (document != null && document.tracks != null)
+                foreach (var track in document.tracks)
+                    if (track != null && track.clips != null)
+                        foreach (var clip in track.clips)
+                            if (clip != null && clip.lengthTicks > 0)
+                                end = Math.Max(end, clip.startTick + clip.lengthTicks);
+            return end;
+        }
+
+        private void AdjustLoopBars(int direction)
+        {
+            if (song == null || !MakeEditable()) return;
+            long baseEnd = song.loopLengthCustom ? song.loopEndTick : AutomaticLoopEnd(song);
+            int bars = Mathf.Clamp((int)Math.Max(1L,
+                (baseEnd + SongData.TicksPerBar4 - 1) / SongData.TicksPerBar4) + direction,
+                1, MaxVisibleBars);
+            song.loopLengthCustom = true;
+            song.arrangementLoopEnabled = true;
+            song.loopStartTick = 0;
+            song.loopEndTick = (long)bars * SongData.TicksPerBar4;
+            // The planner must span the complete looping window, even when the
+            // last portion contains deliberate silence rather than clips.
+            song.lengthTicks = Math.Max(song.lengthTicks, song.loopEndTick);
+            UpdateAfterChange();
+            SetHint("Song loops exactly " + bars + " bars. Restart Play to apply.");
+        }
+
         private void ToggleSongLoop()
         {
             if (!MakeEditable()) return;
             song.arrangementLoopEnabled = !song.arrangementLoopEnabled;
             song.loopStartTick = 0;
-            song.loopEndTick = song.lengthTicks;
+            if (!song.loopLengthCustom) song.loopEndTick = AutomaticLoopEnd(song);
             UpdateAfterChange();
         }
         private void SaveSong()

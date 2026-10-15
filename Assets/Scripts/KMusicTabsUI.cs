@@ -17,7 +17,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private VisualElement pageArrangement, pageEditor, pageSound;
     private VisualElement context, content;
     private Label heading, subheading, projectInfo;
-    private FloatField bpmField;
+    private Label tempoDisplay;
+    private Coroutine menuAnimation;
+    private bool menuIsOpen;
     private Button arrangeButton, createButton, soundButton, menuToggle;
     private ZPunkArrangementUI arrangement;
     private ZPunkClipEditorUI editor;
@@ -38,6 +40,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
     {
         // The old workspace created the pad Audio Helm controller dynamically.
         // Keep that runtime service even though its legacy UI is hidden.
+        if(GetComponent<ZPunkInstrumentRack>()==null)
+            gameObject.AddComponent<ZPunkInstrumentRack>();
         if(GetComponent<KMusicPadSynthRuntime>()==null)
             gameObject.AddComponent<KMusicPadSynthRuntime>();
         StartCoroutine(Setup());
@@ -172,7 +176,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
             title.style.unityFontStyleAndWeight=FontStyle.Bold;
             row1.Add(title);
         }
-        menuToggle=Button("",()=>menu.style.display=menu.resolvedStyle.display==DisplayStyle.None?DisplayStyle.Flex:DisplayStyle.None);
+        menuToggle=Button("",ToggleMenu);
         menuToggle.name="ZPunkMenuToggle";
         menuToggle.style.width=42;
         menuToggle.style.height=34;
@@ -210,80 +214,68 @@ public sealed class KMusicTabsUI : MonoBehaviour
             SetTransport(stop);
             transportRow.Add(stop);
         }
-        var bpmLabel=Label("BPM",10,Dim);
-        bpmLabel.style.marginLeft=10;
-        bpmLabel.style.marginRight=5;
-        transportRow.Add(bpmLabel);
-        bpmField=new FloatField(){value=120};
-        bpmField.name="ZPunkTempo";
-        bpmField.style.width=75;
-        bpmField.style.height=36;
-        bpmField.style.fontSize=14;
-        bpmField.style.color=Ink;
-        bpmField.style.backgroundColor=NavBg;
-        bpmField.RegisterValueChangedCallback(evt=>
-        {
-            if(projects==null)return;
-            float bpm=Mathf.Clamp(evt.newValue,20,300);
-            var current=projects.GetSongForArrangementEditor();
-            if(current==null || Mathf.Approximately(current.bpm,bpm))return;
-            if(!ReferenceEquals(projects.CurrentSong,current))current=ArrangementEditing.IndependentCopy(current);
-            current.bpm=bpm;
-            projects.AcceptArrangementEdit(current);
-            if(arrangement!=null && workspace=="arrange")arrangement.OnShown();
-        });
-        transportRow.Add(bpmField);
+        // No BPM input or readout in the transport. Tempo lives in Arrange.
         var signature=Label("4/4",11,Dim);
         signature.style.marginLeft=8;
         transportRow.Add(signature);
         var space=new VisualElement();space.style.flexGrow=1;transportRow.Add(space);
         var save=Button("SAVE",Save);
         save.style.height=35;
+        save.style.borderTopLeftRadius=3;
+        save.style.borderTopRightRadius=3;
+        save.style.borderBottomLeftRadius=3;
+        save.style.borderBottomRightRadius=3;
         transportRow.Add(save);
         header.Add(transportRow);
 
         menu=new VisualElement{name="ZPunkProjectMenu"};
         menu.style.display=DisplayStyle.None;
-        menu.style.position=Position.Absolute;
-        menu.style.right=8;
-        menu.style.top=48;
-        menu.style.width=228;
+        menu.style.position=Position.Relative;
+        menu.style.width=new Length(100,LengthUnit.Percent);
+        menu.style.height=0;
+        menu.style.overflow=Overflow.Hidden;
+        menu.style.marginTop=0;
         menu.style.paddingLeft=12;
         menu.style.paddingRight=12;
         menu.style.paddingTop=12;
         menu.style.paddingBottom=10;
         menu.style.backgroundColor=new Color(.115f,.153f,.211f);
-        menu.style.borderTopLeftRadius=10;
-        menu.style.borderTopRightRadius=10;
-        menu.style.borderBottomLeftRadius=10;
-        menu.style.borderBottomRightRadius=10;
+        menu.style.borderTopLeftRadius=4;
+        menu.style.borderTopRightRadius=4;
+        menu.style.borderBottomLeftRadius=4;
+        menu.style.borderBottomRightRadius=4;
         if(projectInfo!=null)
         {
             projectInfo.RemoveFromHierarchy();
             projectInfo.style.whiteSpace=WhiteSpace.Normal;
             projectInfo.style.color=Ink;
             projectInfo.style.fontSize=11;
-            projectInfo.style.height=42;
+            projectInfo.style.height=35;
+            projectInfo.style.marginBottom=8;
             menu.Add(projectInfo);
         }
         if(preset!=null){preset.RemoveFromHierarchy();preset.style.display=DisplayStyle.None;}
         if(newer!=null)
         {
-            newer.RemoveFromHierarchy();newer.text="NEW PROJECT";
+            newer.RemoveFromHierarchy();newer.text="NEW";
             StyleMenuItem(newer);
-            newer.clicked+=()=>menu.style.display=DisplayStyle.None;
+            newer.clicked+=()=>SetMenuOpen(false);
             menu.Add(newer);
         }
         if(open!=null)
         {
-            open.RemoveFromHierarchy();open.text="OPEN PROJECT";
+            open.RemoveFromHierarchy();open.text="OPEN";
             StyleMenuItem(open);
-            open.clicked+=()=>menu.style.display=DisplayStyle.None;
+            open.clicked+=()=>SetMenuOpen(false);
             menu.Add(open);
         }
-        var saveItem=Button("SAVE PROJECT",()=>{Save();menu.style.display=DisplayStyle.None;});
+        var saveItem=Button("SAVE PROJECT",()=>{Save();SetMenuOpen(false);});
         StyleMenuItem(saveItem);menu.Add(saveItem);
-        menu.Add(Button("CLOSE",()=>menu.style.display=DisplayStyle.None));
+        // The header grows to reveal this panel. It does not overlay music controls.
+        var closeProject=Button("CLOSE MENU",()=>SetMenuOpen(false));
+        StyleMenuItem(closeProject);
+        menu.Add(closeProject);
+        header.Add(menu);
 
         shell=new VisualElement{name="ZPunkWorkspaceFrame"};
         shell.style.flexDirection=FlexDirection.Column;
@@ -330,8 +322,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         createButton=AddDestination("CREATE",()=>Navigate("create"));
         soundButton=AddDestination("SOUND",()=>Navigate("sound"));
         shell.Add(dock);
-        // Last root child paints the hamburger overlay above the workspace.
-        uiRoot.Add(menu);
+        // Hamburger remains inline in the header, sliding down above Arrange.
         // Existing project/preset popups must paint over our new DAW shell.
         var projectModal=uiRoot.Q<VisualElement>("ProjectModal");
         if(projectModal!=null){projectModal.RemoveFromHierarchy();uiRoot.Add(projectModal);}
@@ -339,7 +330,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(presetBrowser!=null){presetBrowser.RemoveFromHierarchy();uiRoot.Add(presetBrowser);}
         uiRoot.style.paddingLeft=4;
         uiRoot.style.paddingRight=4;
-        uiRoot.style.paddingBottom=3;
+        uiRoot.style.paddingBottom=9;
         uiRoot.style.minHeight=0;
     }
     private void StyleMenuItem(Button b)
@@ -349,6 +340,38 @@ public sealed class KMusicTabsUI : MonoBehaviour
         b.style.backgroundColor=NavBg;
         b.style.fontSize=12;
         b.style.color=Ink;
+        b.style.borderTopLeftRadius=3;
+        b.style.borderTopRightRadius=3;
+        b.style.borderBottomLeftRadius=3;
+        b.style.borderBottomRightRadius=3;
+    }
+    private void ToggleMenu(){SetMenuOpen(!menuIsOpen);}
+    private void SetMenuOpen(bool isOpen)
+    {
+        if(menu==null)return;
+        menuIsOpen=isOpen;
+        if(menuAnimation!=null)StopCoroutine(menuAnimation);
+        menuAnimation=StartCoroutine(AnimateMenu(isOpen));
+    }
+    private IEnumerator AnimateMenu(bool open)
+    {
+        if(menu==null)yield break;
+        float start=menu.resolvedStyle.height;
+        if(open)menu.style.display=DisplayStyle.Flex;
+        float target=open?270f:0f;
+        const float seconds=.20f;
+        float elapsed=0f;
+        while(elapsed<seconds)
+        {
+            elapsed+=Time.unscaledDeltaTime;
+            float t=Mathf.Clamp01(elapsed/seconds);
+            t=t*t*(3f-2f*t);
+            menu.style.height=Mathf.Lerp(start,target,t);
+            yield return null;
+        }
+        menu.style.height=target;
+        if(!open)menu.style.display=DisplayStyle.None;
+        menuAnimation=null;
     }
     private void SetTransport(Button b)
     {
@@ -392,7 +415,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(target=="arrange") arrangement.OnShown();
         else if(target=="create") editor.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:0,
                 arrangement!=null?arrangement.SelectedClipId:null);
-        else if(target=="sound")sound.OnShown();
+        else if(target=="sound")sound.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:-1);
     }
     private void ApplyPages()
     {
@@ -408,7 +431,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         StyleNav(arrangeButton,workspace=="arrange");
         StyleNav(createButton,workspace=="create");
         StyleNav(soundButton,workspace=="sound");
-        if(menu!=null)menu.style.display=DisplayStyle.None;
+        if(menuIsOpen)SetMenuOpen(false);
     }
     private void StyleNav(Button b,bool active)
     {
@@ -432,13 +455,17 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(compact)shell.Add(dock);
         else shell.Insert(0,dock);
         dock.style.flexDirection=compact?FlexDirection.Row:FlexDirection.Column;
-        if(compact){dock.style.width=StyleKeyword.Auto;dock.style.height=58;}
+        if(compact){dock.style.width=StyleKeyword.Auto;dock.style.height=66;}
         else {dock.style.width=112;dock.style.height=StyleKeyword.Auto;}
         dock.style.justifyContent=compact?Justify.SpaceAround:Justify.FlexStart;
+        dock.style.flexShrink=0;
+        dock.style.overflow=Overflow.Visible;
         foreach(var button in new[]{arrangeButton,createButton,soundButton})
         {
             button.style.flexGrow=compact?1:0;
-            button.style.height=compact?45:49;
+            button.style.height=compact?47:49;
+            button.style.flexShrink=0;
+            button.style.minWidth=0;
             button.style.marginBottom=compact?0:8;
             button.style.fontSize=compact?12:11;
         }
@@ -447,14 +474,18 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private void Update()
     {
         if(!isReady || projects==null)return;
+        var live=projects.CurrentSong;
+        if(live!=null && tempoDisplay!=null)
+            tempoDisplay.text=Mathf.RoundToInt(live.bpm)+" BPM";
         if(lastSlot!=projects.CurrentSlot)
         {
             lastSlot=projects.CurrentSlot;
             var current=projects.GetSongForArrangementEditor();
-            if(current!=null && bpmField!=null)bpmField.SetValueWithoutNotify(current.bpm);
+            if(current!=null && tempoDisplay!=null)tempoDisplay.text=Mathf.RoundToInt(current.bpm)+" BPM";
             if(workspace=="arrange")arrangement.OnShown();
             else if(workspace=="create")editor.OnShown();
+            else if(workspace=="sound")sound.OnShown();
         }
-        // A user-edited BPM is applied to SongData; timeline refreshes on navigation.
+        // BPM is set exclusively with the Arrange slider.
     }
 }

@@ -893,6 +893,20 @@ public class KMusicPlayerUI : MonoBehaviour
         _trackBrowserSearch.value = "";
         _trackBrowserSearch.AddToClassList("km-project-rename-field");
         _trackBrowserSearch.AddToClassList("km-track-search");
+        // Use dark text on a light input surface, independent of Unity's theme.
+        var searchInk = new Color(.055f,.09f,.14f);
+        var searchSurface = new Color(.88f,.93f,.97f);
+        _trackBrowserSearch.style.color = searchInk;
+        _trackBrowserSearch.style.backgroundColor = searchSurface;
+        _trackBrowserSearch.RegisterCallback<AttachToPanelEvent>(_ =>
+        {
+            var inner = _trackBrowserSearch.Q<VisualElement>(className: "unity-text-input");
+            if (inner != null)
+            {
+                inner.style.color = searchInk;
+                inner.style.backgroundColor = searchSurface;
+            }
+        });
         _trackBrowserSearch.RegisterValueChangedCallback(_ => RefreshTrackBrowserList());
 
         _trackBrowserCountLabel = new Label("0 items");

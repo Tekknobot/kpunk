@@ -26,6 +26,9 @@ namespace ZPunk.DAW
         public bool arrangementLoopEnabled = false;
         public long loopStartTick = 0;
         public long loopEndTick = TicksPerBar4;
+        // A user-defined loop length must not be overwritten when clips grow.
+        // Older song JSON files deserialize this to false (automatic mode).
+        public bool loopLengthCustom = false;
         public bool migratedFromLegacy = false;
         // Phase 3: distinguishes a deliberately edited (possibly empty) DAW song
         // from older Phase 2 snapshots that could be empty accidentally.

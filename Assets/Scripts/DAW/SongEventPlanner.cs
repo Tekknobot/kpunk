@@ -114,7 +114,7 @@ namespace ZPunk.DAW
             {
                 foreach (ChopEvent chop in content.chops)
                 {
-                    if (chop == null || chop.sliceId < 1 ||
+                    if (chop == null || chop.sliceId < 1 || chop.sliceId > 16 ||
                         chop.startTick < sourceStart || chop.startTick >= sourceEnd) continue;
                     plan.samples.Add(New(songStart + chop.startTick - sourceStart, trackIndex,
                         EventType.Chop, chop.sliceId, chop.velocity));
