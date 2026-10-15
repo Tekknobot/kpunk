@@ -48,6 +48,10 @@ namespace ZPunk.DAW
         private int midiCursor;
         private long cycle;
         private float bpm;
+        // An edited song can replace the active plan without resetting the transport.
+        // DSP voices already queued within the lookahead interval cannot be recalled.
+        private int liveRevision;
+        public int LiveRevision => liveRevision;
 
         public bool SongMode => songMode;
         public bool IsPlaying => playing;
@@ -144,7 +148,7 @@ namespace ZPunk.DAW
             }
             // Never run a silent transport and make the user think playback succeeded.
             // Snapshot selection already attempted a safe live-grid fallback.
-            if (plan.samples.Count == 0 && plan.midi.Count == 0)
+            if (plan.samples.Count == 0 && plan.midi.Count == 0 && !song.arrangementAuthored)
             {
                 drums.SetDAWPlayheadStep(-1);
                 int maskedHits = 0;
@@ -185,6 +189,110 @@ namespace ZPunk.DAW
             if (verbose)
                 Debug.Log($"[ZPunk DAW] PLAY events: {plan.samples.Count} samples, {plan.midi.Count} MIDI, from tick {startTick}");
             return true;
+        }
+
+        /// <summary>
+        /// Apply edits while the DAW plays. Keep the playhead in musical ticks; recompute
+        /// future events and retime the DSP anchor when BPM changes. Audio Helm note
+        /// events are immediate/frame timed, and already queued samples can finish.
+        /// </summary>
+        /// <summary>Retimes the current DSP position without dropping held MIDI voices.</summary>
+        public void SetLiveTempo(float nextBpm, SongData updated)
+        {
+            if (updated != null) song = updated;
+            if (!playing) return;
+            double now = AudioSettings.dspTime;
+            long atTick = CurrentTick;
+            bpm = Mathf.Clamp(nextBpm, 1f, 400f);
+            secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
+            anchorDsp = now - (atTick - startTick) * secondsPerTick;
+            if (clock != null) clock.bpm = bpm;
+            // Drums/chops already queued within the short lookahead may retain old timing.
+            long safeTick = atTick + (long)Math.Ceiling((audioLookahead + .02f) / secondsPerTick);
+            while (plan != null && sampleCursor < plan.samples.Count &&
+                   plan.samples[sampleCursor].tick < safeTick) sampleCursor++;
+            prefetchedLoopSamples = 0;
+            liveRevision++;
+        }
+
+        public void ApplyLiveMix(SongData updated, bool stopSustains = false)
+        {
+            if (updated != null) song = updated;
+            if (stopSustains && playing) StopAllSynthNotes();
+        }
+
+        public void ApplyLiveSong(SongData updated)
+        {
+            if (updated == null) return;
+            Resolve();
+            song = updated;
+            if (!playing || plan == null) return;
+            SongEventPlanner.Plan next;
+            try { next = SongEventPlanner.Build(song); }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[ZPunk DAW] Live edit rejected: " + ex.Message);
+                return;
+            }
+            double now = AudioSettings.dspTime;
+            long position = CurrentTick;
+            bool tempoChanged = Math.Abs(song.bpm - bpm) > .01f;
+            if (tempoChanged)
+            {
+                bpm = Mathf.Clamp(song.bpm, 1f, 400f);
+                secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
+                // Keep the current tick at the current DSP time rather than restarting.
+                anchorDsp = now - (position - startTick) * secondsPerTick;
+                if (clock != null) clock.bpm = bpm;
+            }
+            plan = next;
+            long length = Math.Max(1L, plan.lengthTicks);
+            loopStart = song.arrangementLoopEnabled ? Math.Max(0L, Math.Min(length - 1, song.loopStartTick)) : 0;
+            loopEnd = song.arrangementLoopEnabled ? Math.Max(loopStart + 1, Math.Min(length, song.loopEndTick)) : length;
+            sampleCursor = 0;
+            midiCursor = 0;
+            prefetchedLoopSamples = 0;
+            // Don't schedule duplicate drum voices in the already-filled DSP window.
+            long safeSampleTick = position + (long)Math.Ceiling((audioLookahead + .02f) / secondsPerTick);
+            while (sampleCursor < plan.samples.Count && plan.samples[sampleCursor].tick < safeSampleTick)
+                sampleCursor++;
+            while (midiCursor < plan.midi.Count && plan.midi[midiCursor].tick < position)
+                midiCursor++;
+            ResolveControllers();
+            // A removed/moved note must not hang. Resume any unchanged sustained
+            // pitches that began before the current playhead but are still held.
+            StopAllSynthNotes();
+            var held = new Dictionary<string, SongEventPlanner.Event>();
+            foreach (var midiEvent in plan.midi)
+            {
+                if (midiEvent.tick > position) break;
+                string key = midiEvent.trackIndex + ":" + midiEvent.value;
+                if (midiEvent.type == SongEventPlanner.EventType.NoteOn) held[key] = midiEvent;
+                else held.Remove(key);
+            }
+            foreach (var entry in held.Values)
+            {
+                if (TrackAudible(entry.trackIndex) &&
+                    trackControllers.TryGetValue(entry.trackIndex, out HelmController active) && active != null)
+                    active.NoteOn(entry.value, Mathf.Clamp01(
+                        entry.velocity / 127f * song.tracks[entry.trackIndex].volume));
+            }
+            liveRevision++;
+            // If the loop is shortened past the playhead, jump to its beginning.
+            if (position >= loopEnd) SeekLive(loopStart);
+        }
+
+        private void SeekLive(long newTick)
+        {
+            double now = AudioSettings.dspTime;
+            startTick = newTick;
+            anchorDsp = now + Math.Max(.035f, audioLookahead);
+            CurrentTick = newTick;
+            sampleCursor = 0;
+            midiCursor = 0;
+            prefetchedLoopSamples = 0;
+            if (plan != null) SkipBefore(newTick);
+            if (drums != null) drums.StopDAWVoices();
         }
 
         private void ResolveControllers()

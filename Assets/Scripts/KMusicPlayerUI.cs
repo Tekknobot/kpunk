@@ -823,6 +823,26 @@ public class KMusicPlayerUI : MonoBehaviour
         public Action OnPick;
     }
 
+    // Clean DAW sampler surface: retain the existing player, waveform and chop engine.
+    public string DawSampleName => _clip != null ? _clip.name : "NO SAMPLE";
+    public void DawPreviousSample() { CyclePrevTrack(); }
+    public void DawNextSample() { CycleNextTrack(); }
+    public void DawPlaySample() { OnPlayClicked(); }
+    public void DawStopSample() { OnStopClicked(); }
+    public void DawAutoSlice(int count) { AutoChop(Mathf.Clamp(count, 1, 16)); }
+    public void DawApplySlices() { ApplyChops(); }
+    public void DawOpenBrowser()
+    {
+        if (_trackBrowserOverlay != null && doc != null && doc.rootVisualElement != null)
+        {
+            // Original browser lived inside hidden PagePlayer. Move it to the root
+            // so it is genuinely visible when the new sampler is open.
+            _trackBrowserOverlay.RemoveFromHierarchy();
+            doc.rootVisualElement.Add(_trackBrowserOverlay);
+        }
+        OpenTrackBrowser();
+    }
+
     private void OpenTrackBrowser()
     {
         if (_trackBrowserOverlay == null)

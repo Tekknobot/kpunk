@@ -685,6 +685,13 @@ public void ApplyMasterVolume(float normalized)
             ProjectPrefs.Save();
         }
 
+        public void StepPreset(int delta)
+        {
+            if (_all == null || _all.Count == 0) return;
+            int next = ((_index + delta) % _all.Count + _all.Count) % _all.Count;
+            ApplyPresetChoice(next, null);
+        }
+
         public void ApplyPresetChoice(int index, string relPath)
         {
             _pendingPresetIndex = index;

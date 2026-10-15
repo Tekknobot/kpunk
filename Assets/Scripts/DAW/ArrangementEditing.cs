@@ -58,6 +58,7 @@ namespace ZPunk.DAW
                 sourceOffsetTick = 0, loopEnabled = false };
             song.contents.Add(content);
             track.clips.Add(clip);
+            RenumberClips(track);
             ExtendSong(song, tick + clip.lengthTicks);
             return clip;
         }
@@ -100,8 +101,24 @@ namespace ZPunk.DAW
                 contentId = copy.id, startTick = start, lengthTicks = source.lengthTicks,
                 sourceOffsetTick = source.sourceOffsetTick, loopEnabled = source.loopEnabled };
             track.clips.Add(clip);
+            RenumberClips(track);
             ExtendSong(song, start + clip.lengthTicks);
             return clip;
+        }
+
+        /// <summary>Keep sequential, clear labels after create, duplication or deletion.</summary>
+        public static void RenumberClips(TrackData track)
+        {
+            if (track == null || track.clips == null) return;
+            var ordered = new List<ClipData>();
+            foreach (var clip in track.clips) if (clip != null) ordered.Add(clip);
+            ordered.Sort((a, b) => {
+                int result = a.startTick.CompareTo(b.startTick);
+                return result != 0 ? result : string.CompareOrdinal(a.id, b.id);
+            });
+            string name = string.IsNullOrEmpty(track.name) ? track.kind.ToString() : track.name;
+            for (int i = 0; i < ordered.Count; ++i)
+                ordered[i].name = name + " " + (i + 1);
         }
 
         public static bool Move(SongData song, ClipData clip, long newStart)
@@ -110,6 +127,9 @@ namespace ZPunk.DAW
             newStart = Math.Max(0L, Math.Min(MaxSongTicks - clip.lengthTicks, newStart));
             if (clip.startTick == newStart) return false;
             clip.startTick = newStart;
+            TrackData owner;
+            FindClip(song, clip.id, out owner);
+            RenumberClips(owner);
             ExtendSong(song, clip.startTick + clip.lengthTicks);
             return true;
         }
@@ -132,6 +152,7 @@ namespace ZPunk.DAW
         {
             if (song == null || clip == null || owner == null || owner.clips == null) return false;
             if (!owner.clips.Remove(clip)) return false;
+            RenumberClips(owner);
             // Remove unreferenced content only, respecting links in imported v1 patterns.
             bool inUse = false;
             foreach (var track in song.tracks)

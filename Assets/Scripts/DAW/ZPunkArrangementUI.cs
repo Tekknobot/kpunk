@@ -841,8 +841,8 @@ namespace ZPunk.DAW
             if(!MakeEditable())return;
             song.bpm=value;
             projects.AcceptArrangementEdit(song);
-            // Phase 2 takes its timing snapshot on Play; restart to hear BPM changes.
-            SetHint("Tempo set to "+value.ToString("0")+" BPM. Restart Play to apply.");
+            if (transport != null) transport.SetLiveTempo(value, song);
+            SetHint("Tempo " + value.ToString("0") + " BPM  /  LIVE");
         }
 
         private static long AutomaticLoopEnd(SongData document)
@@ -872,7 +872,7 @@ namespace ZPunk.DAW
             // last portion contains deliberate silence rather than clips.
             song.lengthTicks = Math.Max(song.lengthTicks, song.loopEndTick);
             UpdateAfterChange();
-            SetHint("Song loops exactly " + bars + " bars. Restart Play to apply.");
+            SetHint("Loop length: " + bars + " bars  /  LIVE");
         }
 
         private void ToggleSongLoop()
@@ -888,7 +888,7 @@ namespace ZPunk.DAW
             if (projects == null) return;
             if (song != null && !ownsSong && MakeEditable()) { /* Save a snapshot, not a live preview. */ }
             projects.SaveProject(projects.CurrentSlot);
-            SetHint("Saved. Restart playback to hear arrangement changes.");
+            SetHint("Project saved.");
         }
         private void CycleSnap()
         {
@@ -917,7 +917,9 @@ namespace ZPunk.DAW
         {
             if (song == null) return;
             Refresh();
-            SetHint("Arrangement updated. Restart playback to hear edits.");
+            if (transport == null) transport = FindObjectOfType<ZPunkSongTransport>();
+            if (transport != null) transport.ApplyLiveSong(song);
+            SetHint("Arrangement updated  /  LIVE");
         }
         private void RefreshPlayhead()
         {

@@ -14,16 +14,18 @@ public sealed class KMusicTabsUI : MonoBehaviour
 {
     [SerializeField] private UIDocument doc;
     private VisualElement uiRoot, pages, shell, header, transportRow, menu, dock;
-    private VisualElement pageArrangement, pageEditor, pageSound;
+    private VisualElement pageArrangement, pageEditor, pageSound, pageMixer;
     private VisualElement context, content;
     private Label heading, subheading, projectInfo;
     private Label tempoDisplay;
     private Coroutine menuAnimation;
     private bool menuIsOpen;
-    private Button arrangeButton, createButton, soundButton, menuToggle;
+    private Button arrangeButton, createButton, soundButton, mixButton, menuToggle;
     private ZPunkArrangementUI arrangement;
     private ZPunkClipEditorUI editor;
     private ZPunkSoundUI sound;
+    private ZPunkMixerUI mixer;
+    private ZPunkSongTransport transport;
     private KMusicProjectManager projects;
     private string workspace="arrange";
     private bool isReady, compact;
@@ -70,6 +72,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
         }
         pageEditor=pages.Q<VisualElement>("ZPunkClipPage");
         if(pageEditor==null){pageEditor=new VisualElement{name="ZPunkClipPage"};pages.Add(pageEditor);}
+        pageMixer=pages.Q<VisualElement>("ZPunkMixerPage");
+        if(pageMixer==null){pageMixer=new VisualElement{name="ZPunkMixerPage"};pages.Add(pageMixer);}
         pageSound=pages.Q<VisualElement>("ZPunkSoundPage");
         if(pageSound==null){pageSound=new VisualElement{name="ZPunkSoundPage"};pages.Add(pageSound);}
         arrangement=GetComponent<ZPunkArrangementUI>();
@@ -81,8 +85,16 @@ public sealed class KMusicTabsUI : MonoBehaviour
         sound=GetComponent<ZPunkSoundUI>();
         if(sound==null)sound=gameObject.AddComponent<ZPunkSoundUI>();
         sound.Initialize(pageSound,uiRoot);
+        mixer=GetComponent<ZPunkMixerUI>();
+        if(mixer==null)mixer=gameObject.AddComponent<ZPunkMixerUI>();
+        mixer.Initialize(pageMixer);
+        transport=FindObjectOfType<ZPunkSongTransport>();
         arrangement.EditRequested=(index,id)=>NavigateCreate(index,id);
-        editor.OnClipChanged=()=>{};
+        editor.OnClipChanged=()=>{
+            if(projects==null)projects=FindObjectOfType<KMusicProjectManager>();
+            if(transport==null)transport=FindObjectOfType<ZPunkSongTransport>();
+            if(projects!=null && transport!=null)transport.ApplyLiveSong(projects.CurrentSong);
+        };
         BuildShell();
         isReady=true;
         Navigate("arrange");
@@ -255,20 +267,31 @@ public sealed class KMusicTabsUI : MonoBehaviour
             menu.Add(projectInfo);
         }
         if(preset!=null){preset.RemoveFromHierarchy();preset.style.display=DisplayStyle.None;}
+        var projectActions=new VisualElement { name="ZPunkProjectActions" };
+        projectActions.style.flexDirection=FlexDirection.Row;
+        projectActions.style.height=43;
+        projectActions.style.marginBottom=7;
+        projectActions.style.alignItems=Align.Center;
         if(newer!=null)
         {
             newer.RemoveFromHierarchy();newer.text="NEW";
             StyleMenuItem(newer);
             newer.clicked+=()=>SetMenuOpen(false);
-            menu.Add(newer);
+            newer.style.flexGrow=1;
+            newer.style.minWidth=0;
+            newer.style.marginRight=5;
+            projectActions.Add(newer);
         }
         if(open!=null)
         {
             open.RemoveFromHierarchy();open.text="OPEN";
             StyleMenuItem(open);
             open.clicked+=()=>SetMenuOpen(false);
-            menu.Add(open);
+            open.style.flexGrow=1;
+            open.style.minWidth=0;
+            projectActions.Add(open);
         }
+        menu.Add(projectActions);
         var saveItem=Button("SAVE PROJECT",()=>{Save();SetMenuOpen(false);});
         StyleMenuItem(saveItem);menu.Add(saveItem);
         // The header grows to reveal this panel. It does not overlay music controls.
@@ -321,6 +344,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         arrangeButton=AddDestination("ARRANGE",()=>Navigate("arrange"));
         createButton=AddDestination("CREATE",()=>Navigate("create"));
         soundButton=AddDestination("SOUND",()=>Navigate("sound"));
+        mixButton=AddDestination("MIX",()=>Navigate("mix"));
         shell.Add(dock);
         // Hamburger remains inline in the header, sliding down above Arrange.
         // Existing project/preset popups must paint over our new DAW shell.
@@ -358,7 +382,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(menu==null)yield break;
         float start=menu.resolvedStyle.height;
         if(open)menu.style.display=DisplayStyle.Flex;
-        float target=open?270f:0f;
+        float target=open?225f:0f;
         const float seconds=.20f;
         float elapsed=0f;
         while(elapsed<seconds)
@@ -416,6 +440,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         else if(target=="create") editor.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:0,
                 arrangement!=null?arrangement.SelectedClipId:null);
         else if(target=="sound")sound.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:-1);
+        else if(target=="mix")mixer.OnShown();
     }
     private void ApplyPages()
     {
@@ -425,12 +450,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(pageArrangement!=null)pageArrangement.style.display=workspace=="arrange"?DisplayStyle.Flex:DisplayStyle.None;
         if(pageEditor!=null)pageEditor.style.display=workspace=="create"?DisplayStyle.Flex:DisplayStyle.None;
         if(pageSound!=null)pageSound.style.display=workspace=="sound"?DisplayStyle.Flex:DisplayStyle.None;
-        if(heading!=null)heading.text=workspace=="arrange"?"ARRANGE":workspace=="create"?"CREATE":"SOUND";
+        if(pageMixer!=null)pageMixer.style.display=workspace=="mix"?DisplayStyle.Flex:DisplayStyle.None;
+        if(heading!=null)heading.text=workspace=="arrange"?"ARRANGE":workspace=="create"?"CREATE":workspace=="sound"?"SOUND":"MIX";
         if(subheading!=null)subheading.text=workspace=="arrange"?"  /  SONG TIMELINE":
-            workspace=="create"?"  /  NOTE EDITOR":"  /  PRESET SHAPER";
+            workspace=="create"?"  /  NOTE EDITOR":workspace=="sound"?"  /  PRESET SHAPER":"  /  LEVELS";
         StyleNav(arrangeButton,workspace=="arrange");
         StyleNav(createButton,workspace=="create");
         StyleNav(soundButton,workspace=="sound");
+        StyleNav(mixButton,workspace=="mix");
         if(menuIsOpen)SetMenuOpen(false);
     }
     private void StyleNav(Button b,bool active)
@@ -460,14 +487,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
         dock.style.justifyContent=compact?Justify.SpaceAround:Justify.FlexStart;
         dock.style.flexShrink=0;
         dock.style.overflow=Overflow.Visible;
-        foreach(var button in new[]{arrangeButton,createButton,soundButton})
+        foreach(var button in new[]{arrangeButton,createButton,soundButton,mixButton})
         {
             button.style.flexGrow=compact?1:0;
             button.style.height=compact?47:49;
             button.style.flexShrink=0;
             button.style.minWidth=0;
             button.style.marginBottom=compact?0:8;
-            button.style.fontSize=compact?12:11;
+            button.style.fontSize=compact?11:11;
         }
         header.style.minHeight=compact?86:47;
     }
@@ -485,6 +512,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
             if(workspace=="arrange")arrangement.OnShown();
             else if(workspace=="create")editor.OnShown();
             else if(workspace=="sound")sound.OnShown();
+            else if(workspace=="mix")mixer.OnShown();
         }
         // BPM is set exclusively with the Arrange slider.
     }

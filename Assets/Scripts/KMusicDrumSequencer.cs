@@ -2402,6 +2402,16 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         RefreshMuteUI();
     }
 
+    // Live DAW mixer. Applies mixer attenuation at once rather than on the next pattern step.
+    public void SetDAWDrumMute(int lane, bool muted)
+    {
+        if (lane < 0 || lane >= _drumMute.Length) return;
+        _drumMute[lane] = muted;
+        RefreshMuteUI();
+        ApplyDrumMixerFromBus();
+        SaveDrumState();
+    }
+
     public int CaptureActiveDrumId() => _activeDrumId;
 
     public void ApplyActiveDrumId(int drumId)

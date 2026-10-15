@@ -263,7 +263,7 @@ namespace ZPunk.DAW
             else if(selected==TrackKind.Synth && mainPicker!=null)
                 mainPicker.ApplyPresetChoice(mainPicker.CurrentPresetIndex+direction,null);
             else if(selected==TrackKind.Pads && padRuntime!=null)
-                padRuntime.ApplyPresetChoice(padRuntime.CurrentPresetIndex+direction,null);
+                padRuntime.StepPreset(direction);
             Refresh();
         }
         private void SetMacro(Macro m,float t)

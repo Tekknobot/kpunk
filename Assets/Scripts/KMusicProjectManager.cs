@@ -165,6 +165,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
         card.style.position = Position.Absolute;
         card.style.left = 12;
         card.style.right = 12;
+        card.style.minWidth = 0;
+        card.style.overflow = Overflow.Hidden;
         card.style.top = new Length(7,LengthUnit.Percent);
         card.style.bottom = new Length(7,LengthUnit.Percent);
         card.style.backgroundColor = new Color(.072f, .106f, .15f, 1f);
@@ -231,6 +233,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
         _modalList.AddToClassList("km-project-scroll");
         _modalList.style.flexGrow = 1;
         _modalList.style.minHeight = 0;
+        _modalList.style.minWidth = 0;
+        _modalList.style.width = Length.Percent(100);
+        _modalList.contentContainer.style.width = Length.Percent(100);
+        _modalList.contentContainer.style.minWidth = 0;
+        _modalList.style.overflow = Overflow.Hidden;
         _modalList.verticalScrollerVisibility=ScrollerVisibility.Hidden;
         card.Add(_modalList);
 
@@ -409,6 +416,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (slot == CurrentSlot)
                 row.AddToClassList("km-project-row--current");
             row.style.flexDirection = FlexDirection.Column;
+            row.style.width = Length.Percent(100);
+            row.style.minWidth = 0;
+            row.style.flexShrink = 0;
             row.style.marginBottom = 7;
             row.style.paddingLeft = 9;
             row.style.paddingRight = 9;
@@ -426,11 +436,15 @@ public sealed class KMusicProjectManager : MonoBehaviour
             headerRow.style.flexDirection = FlexDirection.Row;
             headerRow.style.justifyContent = Justify.SpaceBetween;
             headerRow.style.alignItems = Align.Center;
+            headerRow.style.minWidth = 0;
             row.Add(headerRow);
 
             var slotLabel = new Label(GetProjectDisplayName(slot));
             slotLabel.AddToClassList("km-project-slot");
             slotLabel.style.fontSize=13;
+            slotLabel.style.flexGrow = 1;
+            slotLabel.style.minWidth = 0;
+            slotLabel.style.whiteSpace = WhiteSpace.Normal;
             slotLabel.style.color=new Color(.92f,.97f,.99f);
             slotLabel.style.unityFontStyleAndWeight=FontStyle.Bold;
             headerRow.Add(slotLabel);
@@ -454,9 +468,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
             btnRow.AddToClassList("km-project-actions");
             btnRow.style.flexDirection = FlexDirection.Row;
             btnRow.style.marginTop = 7;
-            btnRow.style.flexWrap=Wrap.Wrap;
-            row.Add(btnRow);
-
+            btnRow.style.flexWrap=Wrap.NoWrap;
+            btnRow.style.minWidth=0;
+            btnRow.style.width=Length.Percent(100);
             if (has)
             {
                 if (slot == CurrentSlot)
@@ -467,6 +481,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
                     renameRow.style.alignItems = Align.Center;
                     renameRow.style.justifyContent = Justify.FlexStart;
                     renameRow.style.width = Length.Percent(100);
+                    renameRow.style.minWidth=0;
+                    renameRow.style.overflow=Overflow.Hidden;
                     renameRow.style.marginTop = 10;
 
                     var renameField = new TextField();
@@ -475,7 +491,12 @@ public sealed class KMusicProjectManager : MonoBehaviour
                     renameField.AddToClassList("km-project-rename-field");
                     renameField.style.flexGrow = 1;
                     renameField.style.minWidth = 0;
-                    renameField.style.marginRight = 5;
+                    renameField.style.marginRight = 6;
+                    renameField.style.height=36;
+                    renameField.style.minHeight=36;
+                    renameField.style.paddingLeft=5;
+                    renameField.style.paddingRight=3;
+                    renameField.style.fontSize=12;
                     // TextField contains a nested text-input element. Style both
                     // levels with dark ink on a light field so typed names never
                     // disappear as white text on Unity's default white input.
@@ -504,8 +525,12 @@ public sealed class KMusicProjectManager : MonoBehaviour
                     btnRename.AddToClassList("km-project-action-btn");
                     btnRename.AddToClassList("km-project-rename-btn");
                     btnRename.style.flexShrink = 0;
-                    btnRename.style.width = 67;
-                    btnRename.style.minWidth = 67;
+                    btnRename.style.width = 76;
+                    btnRename.style.minWidth = 76;
+                    btnRename.style.borderTopLeftRadius=3;
+                    btnRename.style.borderTopRightRadius=3;
+                    btnRename.style.borderBottomLeftRadius=3;
+                    btnRename.style.borderBottomRightRadius=3;
                     btnRename.style.height=36;
                     renameRow.Add(btnRename);
 
@@ -538,7 +563,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
                     LoadProject(slot);
                     HideModal();
                 })
-                { text = "LOAD (NO SAVE)" };
+                { text = "OPEN DIRECT" };
                 btnNoSave.AddToClassList("km-pillbtn");
                 btnNoSave.AddToClassList("km-project-action-btn");
                 btnNoSave.AddToClassList("km-project-action-btn--secondary");
@@ -592,6 +617,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 btnRow.Add(btnCreate);
             }
 
+            row.Add(btnRow);
             _modalList.Add(row);
         }
     }

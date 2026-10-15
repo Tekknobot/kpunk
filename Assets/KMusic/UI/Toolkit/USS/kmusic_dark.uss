@@ -1622,3 +1622,18 @@ unity-text-align: middle-center;
 .km-card { background-color: #111E30; border-left-color: #283A50; border-right-color: #283A50; border-top-color: #283A50; border-bottom-color: #283A50; border-left-width: 1px; border-right-width: 1px; border-top-width: 1px; border-bottom-width: 1px; border-top-left-radius: 8px; border-top-right-radius: 8px; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; margin-top: 5px; margin-bottom: 5px; padding: 10px; }
 .km-subtitle { color: #F0B760; font-size: 13px; }
 .km-label { color: #B4C6D8; }
+
+/* ZPunk 2.0 mobile project browser: override legacy desktop card rules. */
+.km-project-modal { justify-content: center; align-items: stretch; }
+.km-project-card { padding: 12px; }
+.km-project-scroll { border-radius: 4px; padding: 0; }
+.km-project-row { width: 100%; padding: 9px; border-radius: 4px; }
+.km-project-slot { font-size: 13px; }
+.km-project-name { font-size: 10px; }
+.km-project-actions { gap: 5px; }
+.km-project-action-btn { min-width: 0; font-size: 10px; padding-left: 3px; padding-right: 3px; }
+.km-project-rename-row { gap: 5px; margin-top: 8px; margin-bottom: 2px; }
+.km-project-rename-field { width: auto; min-height: 36px; font-size: 12px; padding-left: 6px; padding-right: 4px; background-color: #DDE8F2; color: #142131; border-radius: 3px; }
+.km-project-rename-field .unity-base-text-field__input { color: #142131; background-color: #DDE8F2; font-size: 12px; }
+.km-project-rename-field .unity-text-element { color: #142131; }
+.km-project-rename-btn { width: 76px; min-width: 76px; font-size: 10px; border-radius: 3px; }
