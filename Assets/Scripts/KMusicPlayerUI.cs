@@ -76,6 +76,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private float _warpPendingAt = -1f;
     private string _warpStatus = "NO SAMPLE";
     private KMusicProjectManager _warpProjects;
+    private KMusicApp _pitchApp;
     private KMusicDrumSequencer _chopEngine;
     private const string WarpEnabledKey = "zpunk.sampler.warp.enabled";
 
@@ -147,28 +148,18 @@ public class KMusicPlayerUI : MonoBehaviour
     // Project save/load hooks
     public string GetLastTrackId() => LoadLastTrackId();
 
+    private KMusicApp PitchApp()
+    {
+        if (_pitchApp == null) _pitchApp = FindObjectOfType<KMusicApp>();
+        return _pitchApp;
+    }
+
     private float GetCurrentSamplePitchSemitones()
     {
-        try
-        {
-            var app = FindObjectOfType<KMusic.KMusicApp>();
-            if (app != null && app.Bus != null)
-            {
-                float v = Mathf.Clamp(app.Bus.GetValue("sample.pitch"), -12f, 12f);
-
-                // center detent
-                if (Mathf.Abs(v) < 0.35f)
-                    return 0f;
-
-                // snap to semitone
-                return Mathf.Round(v);
-            }
-        }
-        catch
-        {
-        }
-
-        return 0f;
+        var app = PitchApp();
+        return app != null && app.Bus != null
+            ? Mathf.Round(Mathf.Clamp(app.Bus.GetValue("sample.pitch"), -12f, 12f))
+            : 0f;
     }
 
     private float GetCurrentSamplePitchRate()
@@ -874,6 +865,23 @@ public class KMusicPlayerUI : MonoBehaviour
 
     // Clean DAW sampler surface: retain the existing player, waveform and chop engine.
     public string DawSampleName => _clip != null ? _clip.name : "NO SAMPLE";
+    public int DawPitchSemitones => Mathf.RoundToInt(GetCurrentSamplePitchSemitones());
+    public void DawAdjustPitchSemitones(int steps)
+    {
+        DawSetPitchSemitones(DawPitchSemitones + steps);
+    }
+    public void DawSetPitchSemitones(int semitones)
+    {
+        var app = PitchApp();
+        if (app == null || app.Bus == null) return;
+        int snapped = Mathf.Clamp(semitones, -12, 12);
+        // The shared sample.pitch bus also transposes live CHOPS voice pools.
+        app.Bus.SetValue("sample.pitch", snapped);
+        // AudioSource.pitch must be pushed while preview audio is playing;
+        // otherwise the new setting is only heard after tapping PLAY again.
+        if (audioSource != null && audioSource.isPlaying)
+            audioSource.pitch = Mathf.Pow(2f, snapped / 12f);
+    }
     public bool DawAutoWarp => _autoWarpEnabled;
     public string DawWarpStatus => _warpStatus;
     public float DawSourceBpm => _sourceBpm;

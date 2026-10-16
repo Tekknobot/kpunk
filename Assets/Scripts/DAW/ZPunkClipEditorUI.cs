@@ -25,7 +25,7 @@ namespace ZPunk.DAW
         private VisualElement samplerPage, samplerWave;
         private ScrollView samplerScroll;
         private Label samplerSelectedMarker;
-        private Label samplerTitle, samplerWarpLabel, samplerLibraryLabel;
+        private Label samplerTitle, samplerWarpLabel, samplerLibraryLabel, samplerPitchLabel;
         private Button samplerWarpButton;
         private bool showingSampler;
         private KMusicPlayerUI samplePlayer;
@@ -205,8 +205,6 @@ namespace ZPunk.DAW
             row.Add(Btn("LEN -", () => ChangeLength(-1), 56));
             row.Add(Btn("LEN +", () => ChangeLength(1), 56));
             row.Add(Btn("NOTE DEL", DeleteSelectedNote, 77));
-            row.Add(Btn("SAMPLE", OpenSampler, 76));
-            row.Add(Btn("SAVE", Save, 53));
             var controls = new ScrollView(ScrollViewMode.Horizontal);
             controls.style.height = 54;
             controls.style.flexShrink = 0;
@@ -366,6 +364,29 @@ namespace ZPunk.DAW
             samplerWarpLabel = Txt("SOURCE BPM / WAITING",11,Accent);
             samplerWarpLabel.style.whiteSpace = WhiteSpace.Normal;
             warpCard.Add(samplerWarpLabel);
+
+            // Integer-only pitch transport. Step buttons make accidental cents / 
+            // in-between pitches impossible, including on touchscreens.
+            var pitchCaption = Txt("PITCH  /  SEMITONES (-12 TO +12)",10,Muted);
+            pitchCaption.style.marginTop = 8;
+            pitchCaption.style.marginBottom = 3;
+            warpCard.Add(pitchCaption);
+            var pitchRow = new VisualElement();
+            pitchRow.style.flexDirection = FlexDirection.Row;
+            pitchRow.style.alignItems = Align.Center;
+            pitchRow.style.height = 44;
+            pitchRow.style.flexShrink = 0;
+            pitchRow.Add(Btn("-1", () => { FindSampler(); samplePlayer?.DawAdjustPitchSemitones(-1); RefreshSampler(); }, 52));
+            samplerPitchLabel = Txt("0 ST",13,Accent);
+            samplerPitchLabel.style.minWidth = 68;
+            samplerPitchLabel.style.flexGrow = 1;
+            samplerPitchLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+            samplerPitchLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            pitchRow.Add(samplerPitchLabel);
+            pitchRow.Add(Btn("+1", () => { FindSampler(); samplePlayer?.DawAdjustPitchSemitones(1); RefreshSampler(); }, 52));
+            pitchRow.Add(Btn("RESET", () => { FindSampler(); samplePlayer?.DawSetPitchSemitones(0); RefreshSampler(); }, 68));
+            warpCard.Add(pitchRow);
+
             samplerLibraryLabel = Txt("SAMPLE LIBRARY",10,Muted);
             samplerLibraryLabel.style.whiteSpace = WhiteSpace.Normal;
             samplerLibraryLabel.style.marginTop = 4;
@@ -508,6 +529,11 @@ namespace ZPunk.DAW
                 samplerWarpLabel.text = samplePlayer != null ?
                     "SOURCE BPM EST. " + samplePlayer.DawSourceBpm.ToString("0.#") + "  /  " + samplePlayer.DawWarpStatus :
                     "NO SAMPLE";
+            if (samplerPitchLabel != null)
+            {
+                int semitones = samplePlayer != null ? samplePlayer.DawPitchSemitones : 0;
+                samplerPitchLabel.text = (semitones > 0 ? "+" : "") + semitones + " ST";
+            }
             if (samplerLibraryLabel != null)
                 samplerLibraryLabel.text = samplePlayer != null ? samplePlayer.DawSampleFolder : "SAMPLE LIBRARY";
             if (samplerSelectedMarker != null)

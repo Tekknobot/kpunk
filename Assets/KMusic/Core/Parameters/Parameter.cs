@@ -18,7 +18,13 @@ namespace KMusic.Core
         public float Value
         {
             get => _value;
-            set => _value = Mathf.Clamp(value, Min, Max);
+            set
+            {
+                // All writers (touch knobs, sampler buttons and saved presets)
+                // use the same integer semitone detents for sample transposition.
+                if (Id == "sample.pitch") value = Mathf.Round(value);
+                _value = Mathf.Clamp(value, Min, Max);
+            }
         }
 
         public Parameter(string id, float min, float max, float def, bool log=false, string unit="")
