@@ -44,6 +44,11 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private static readonly Color NavBg=new Color(.080f,.115f,.165f);
     private static readonly Color Selected=new Color(.12f,.32f,.33f);
 
+    // Rendered icons rather than Unicode glyphs. Mobile platform fonts do not
+    // consistently contain the play/stop symbols that appear in the Editor.
+    private static Texture2D playTransportTexture;
+    private static Texture2D stopTransportTexture;
+
     private void Awake(){if(doc==null)doc=GetComponent<UIDocument>();}
     private void OnEnable()
     {
@@ -203,18 +208,18 @@ public sealed class KMusicTabsUI : MonoBehaviour
         headerStop=stop;
         if(headerPlay!=null)
         {
-            headerPlay.text="▶";
             headerPlay.tooltip="Play";
             SetTransport(headerPlay);
             headerPlay.style.backgroundColor=Accent;
             headerPlay.style.color=new Color(.02f,.08f,.10f);
+            SetTransportIcon(headerPlay,true);
             headerRow.Add(headerPlay);
         }
         if(headerStop!=null)
         {
-            headerStop.text="■";
             headerStop.tooltip="Stop";
             SetTransport(headerStop);
+            SetTransportIcon(headerStop,false);
             headerRow.Add(headerStop);
         }
         headerSignature=Label("4/4",12,Dim);
@@ -410,6 +415,74 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(!open)menu.style.display=DisplayStyle.None;
         menuAnimation=null;
     }
+    // Keep the original named Button elements and their transport callbacks.
+    // Only their visual content is replaced; the icons ignore pointer input.
+    private static void SetTransportIcon(Button button,bool play)
+    {
+        button.text=string.Empty;
+        var previous=button.Q<Image>("ZPunkTransportIcon");
+        if(previous!=null)previous.RemoveFromHierarchy();
+        button.style.alignItems=Align.Center;
+        button.style.justifyContent=Justify.Center;
+        button.style.paddingLeft=0;
+        button.style.paddingRight=0;
+        button.style.paddingTop=0;
+        button.style.paddingBottom=0;
+
+        var icon=new Image
+        {
+            name="ZPunkTransportIcon",
+            image=GetTransportTexture(play),
+            scaleMode=ScaleMode.ScaleToFit,
+            pickingMode=PickingMode.Ignore
+        };
+        icon.style.width=28;
+        icon.style.height=28;
+        icon.style.flexShrink=0;
+        button.Add(icon);
+    }
+
+    // Tiny runtime-generated RGBA shapes require no font glyphs, packages,
+    // imported sprites or platform-specific resources.
+    private static Texture2D GetTransportTexture(bool play)
+    {
+        var cached=play?playTransportTexture:stopTransportTexture;
+        if(cached!=null)return cached;
+
+        const int size=32;
+        var pixels=new Color32[size*size];
+        Color32 ink=play?new Color32(5,20,26,255):new Color32(232,242,250,255);
+        for(int y=0;y<size;y++)
+        {
+            for(int x=0;x<size;x++)
+            {
+                bool filled;
+                if(play)
+                {
+                    // Right-pointing triangle: left edge at x=8, tip at x=27.
+                    float reach=27f-Mathf.Abs(y-15.5f)*1.95f;
+                    filled=y>=6 && y<=25 && x>=8 && x<=reach;
+                }
+                else
+                {
+                    filled=x>=8 && x<24 && y>=8 && y<24;
+                }
+                pixels[y*size+x]=filled?ink:new Color32(0,0,0,0);
+            }
+        }
+
+        var texture=new Texture2D(size,size,TextureFormat.RGBA32,false);
+        texture.name=play?"ZPunk Play Icon":"ZPunk Stop Icon";
+        texture.hideFlags=HideFlags.DontSave;
+        texture.wrapMode=TextureWrapMode.Clamp;
+        texture.filterMode=FilterMode.Bilinear;
+        texture.SetPixels32(pixels);
+        texture.Apply(false,true);
+        if(play)playTransportTexture=texture;
+        else stopTransportTexture=texture;
+        return texture;
+    }
+
     private void SetTransport(Button b)
     {
         b.style.width=47;
