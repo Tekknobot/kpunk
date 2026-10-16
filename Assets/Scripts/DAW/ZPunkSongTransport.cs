@@ -38,6 +38,7 @@ namespace ZPunk.DAW
         private bool songMode;
         private bool playing;
         private bool paused;
+        private bool exportingOneShot;
         private long pausedAtTick;
         private int prefetchedLoopSamples;
 
@@ -59,6 +60,7 @@ namespace ZPunk.DAW
         public bool SongMode => songMode;
         public bool IsPlaying => playing;
         public long CurrentTick { get; private set; }
+        public double SongAnchorDsp => anchorDsp;
 
         private void Resolve()
         {
@@ -119,7 +121,7 @@ namespace ZPunk.DAW
             RefreshButton();
         }
 
-        public bool PlaySong(long fromTick = 0)
+        public bool PlaySong(long fromTick = 0, bool oneShotExport = false)
         {
             Resolve();
             if (playing) StopSong();
@@ -137,6 +139,12 @@ namespace ZPunk.DAW
             {
                 Debug.LogError("[ZPunk DAW] Cannot capture current song: " + e.Message);
                 return false;
+            }
+            if (song != null && oneShotExport)
+            {
+                // Never modify the user's loop setting or editable live document.
+                song = SongData.FromJson(song.ToJson());
+                song.arrangementLoopEnabled = false;
             }
             if (song == null)
             {
@@ -190,6 +198,7 @@ namespace ZPunk.DAW
                 clock.pause = false; // Keep native synth output alive; old HelmSequencers are disabled.
             }
             playing = true;
+            exportingOneShot = oneShotExport;
             if (verbose)
                 Debug.Log($"[ZPunk DAW] PLAY events: {plan.samples.Count} samples, {plan.midi.Count} MIDI, from tick {startTick}");
             return true;
@@ -203,6 +212,7 @@ namespace ZPunk.DAW
         /// <summary>Retimes the current DSP position without dropping held MIDI voices.</summary>
         public void SetLiveTempo(float nextBpm, SongData updated)
         {
+            if (exportingOneShot) return;
             if (updated != null) song = updated;
             if (!playing) return;
             double now = AudioSettings.dspTime;
@@ -221,6 +231,7 @@ namespace ZPunk.DAW
 
         public void ApplyLiveMix(SongData updated, bool stopSustains = false)
         {
+            if (exportingOneShot) return;
             if (updated != null) song = updated;
             // Unity AudioMixer attenuation affects active/held Helm voices immediately.
             // Do not kill sustained notes just to update the fader.
@@ -230,6 +241,7 @@ namespace ZPunk.DAW
 
         public void ApplyLiveSong(SongData updated)
         {
+            if (exportingOneShot) return;
             if (updated == null) return;
             Resolve();
             song = updated;
@@ -480,6 +492,7 @@ namespace ZPunk.DAW
         {
             if (!playing) return;
             playing = false;
+            exportingOneShot = false;
             StopAllSynthNotes();
             if (drums != null)
             {

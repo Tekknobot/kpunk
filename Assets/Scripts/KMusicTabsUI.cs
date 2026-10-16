@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.IO;
 using UnityEngine;
 using UnityEngine.UIElements;
 using KMusic;
@@ -19,6 +20,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private Label heading, subheading, projectInfo, headerTitle, headerSignature;
     private Label tempoDisplay;
     private Coroutine menuAnimation;
+    private Coroutine wavExportRoutine;
+    private Label exportStatus;
+    private Button exportWavButton, exportMidiButton;
     private bool menuIsOpen;
     private Button arrangeButton, createButton, soundButton, mixButton, menuToggle, headerSave, headerPlay, headerStop;
     private ZPunkArrangementUI arrangement;
@@ -62,6 +66,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void OnDisable()
     {
+        if(wavExportRoutine!=null)
+        {
+            StopCoroutine(wavExportRoutine);
+            wavExportRoutine=null;
+            var capture=FindObjectOfType<ZPunkWavCapture>();
+            if(capture!=null)capture.Abort();
+            if(transport!=null && transport.IsPlaying)transport.StopSong();
+        }
         if(uiRoot!=null)uiRoot.UnregisterCallback<GeometryChangedEvent>(GeometryChanged);
         previousWidth=-1f;
         previousHeight=-1f;
@@ -312,6 +324,31 @@ public sealed class KMusicTabsUI : MonoBehaviour
         var saveItem=Button("SAVE PROJECT",()=>{Save();SetMenuOpen(false);});
         StyleMenuItem(saveItem);menu.Add(saveItem);
         // The header grows to reveal this panel. It does not overlay music controls.
+        var exportRow=new VisualElement{name="ZPunkExportActions"};
+        exportRow.style.flexDirection=FlexDirection.Row;
+        exportRow.style.height=46;
+        exportRow.style.marginBottom=6;
+        exportWavButton=Button("EXPORT WAV",ExportWav);
+        exportMidiButton=Button("EXPORT MIDI",ExportMidi);
+        StyleMenuItem(exportWavButton); StyleMenuItem(exportMidiButton);
+        exportWavButton.style.flexGrow=1;
+        exportMidiButton.style.flexGrow=1;
+        exportWavButton.style.flexShrink=1;
+        exportMidiButton.style.flexShrink=1;
+        exportWavButton.style.minWidth=0;
+        exportMidiButton.style.minWidth=0;
+        exportWavButton.style.marginRight=5;
+        exportWavButton.style.marginBottom=0;
+        exportMidiButton.style.marginBottom=0;
+        exportWavButton.style.fontSize=12;
+        exportMidiButton.style.fontSize=12;
+        exportRow.Add(exportWavButton); exportRow.Add(exportMidiButton);
+        menu.Add(exportRow);
+        exportStatus=Label("WAV: real-time playback  /  MIDI: arrangement notes",11,Dim);
+        exportStatus.style.height=27;
+        exportStatus.style.whiteSpace=WhiteSpace.Normal;
+        exportStatus.style.flexShrink=0;
+        menu.Add(exportStatus);
         var closeProject=Button("CLOSE MENU",()=>SetMenuOpen(false));
         StyleMenuItem(closeProject);
         menu.Add(closeProject);
@@ -400,7 +437,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(menu==null)yield break;
         float start=menu.resolvedStyle.height;
         if(open)menu.style.display=DisplayStyle.Flex;
-        float target=open?225f:0f;
+        float target=open?318f:0f;
         const float seconds=.20f;
         float elapsed=0f;
         while(elapsed<seconds)
@@ -513,6 +550,138 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(projects==null)projects=FindObjectOfType<KMusicProjectManager>();
         if(projects!=null)projects.SaveProject(projects.CurrentSlot);
     }
+    private void ExportMidi()
+    {
+        if(wavExportRoutine!=null){ExportMessage("Wait until WAV export finishes.",true);return;}
+        try
+        {
+            if(projects==null)projects=FindObjectOfType<KMusicProjectManager>();
+            if(projects==null)throw new InvalidOperationException("Project manager not ready.");
+            var song=projects.GetSongForPlayback();
+            if(song==null)throw new InvalidOperationException("No song to export.");
+            var bytes=ZPunkArrangementMidiExport.Create(song);
+            string file=ZPunkMobileFileExport.CreatePrivateFilePath(song.title,".mid");
+            File.WriteAllBytes(file,bytes);
+            ExportMessage("MIDI: "+ZPunkMobileFileExport.Publish(file),false);
+        }
+        catch(Exception e) {Debug.LogWarning("[ZPunk MIDI] "+e);ExportMessage("MIDI: "+e.Message,true);}
+    }
+    private void ExportWav()
+    {
+        if(wavExportRoutine!=null){ExportMessage("WAV export already in progress.",true);return;}
+        wavExportRoutine=StartCoroutine(ExportWavRoutine());
+    }
+    private IEnumerator ExportWavRoutine()
+    {
+        // Avoid StartCoroutine's synchronous first MoveNext completing before
+        // wavExportRoutine gets assigned on a validation failure.
+        yield return null;
+        ZPunkWavCapture recorder=null;
+        bool started=false;
+        string file=null;
+        double endAt=0;
+        try
+        {
+            if(projects==null)projects=FindObjectOfType<KMusicProjectManager>();
+            if(transport==null)transport=FindObjectOfType<ZPunkSongTransport>();
+            if(projects==null || transport==null)
+                throw new InvalidOperationException("DAW is not ready.");
+            if(transport.IsPlaying)
+                throw new InvalidOperationException("Stop playback before exporting WAV.");
+            var song=projects.GetSongForPlayback();
+            if(song==null || !SongEventPlanner.HasEvents(song))
+                throw new InvalidOperationException("Create some notes before exporting.");
+            double duration=Math.Max(0.1, song.lengthTicks * 60.0 /
+                (Mathf.Clamp(song.bpm,1f,400f) * SongData.TicksPerQuarter));
+            if(duration > 900)throw new InvalidOperationException("WAV bounce is limited to 15 minutes.");
+            var listener=FindObjectOfType<AudioListener>();
+            if(listener==null || !listener.isActiveAndEnabled)
+                throw new InvalidOperationException("No active AudioListener is available.");
+            recorder=listener.GetComponent<ZPunkWavCapture>();
+            if(recorder==null)recorder=listener.gameObject.AddComponent<ZPunkWavCapture>();
+            file=ZPunkMobileFileExport.CreatePrivateFilePath(song.title,".wav");
+            if(!transport.PlaySong(0,true))
+                throw new InvalidOperationException("Could not start full song playback.");
+            started=true;
+            // Track exactly one traversal, with a small tail for the output mixer.
+            endAt=transport.SongAnchorDsp+duration;
+            recorder.Begin(file,transport.SongAnchorDsp,duration+0.25);
+            if(exportWavButton!=null)exportWavButton.SetEnabled(false);
+            if(exportMidiButton!=null)exportMidiButton.SetEnabled(false);
+            ExportMessage("WAV: recording in real time. Keep ZPUNK open.",false);
+        }
+        catch(Exception e)
+        {
+            Debug.LogWarning("[ZPunk WAV] "+e);
+            ExportMessage("WAV: "+e.Message,true);
+            if(recorder!=null)recorder.Abort();
+            if(started && transport!=null)transport.StopSong();
+        }
+        if(!started || recorder==null || !recorder.IsActive)
+        {
+            if(exportWavButton!=null)exportWavButton.SetEnabled(true);
+            if(exportMidiButton!=null)exportMidiButton.SetEnabled(true);
+            wavExportRoutine=null;
+            yield break;
+        }
+        double lastMessage=0;
+        // Never wait forever if the mobile audio engine stops advancing.
+        float deadline=Time.realtimeSinceStartup+(float)Math.Max(1,endAt-transport.SongAnchorDsp)+20f;
+        while(transport.IsPlaying && !recorder.HasOverflow && AudioSettings.dspTime < endAt + 3 &&
+              Time.realtimeSinceStartup < deadline)
+        {
+            if(AudioSettings.dspTime-lastMessage>1.0)
+            {
+                lastMessage=AudioSettings.dspTime;
+                int progress=Mathf.Clamp(Mathf.RoundToInt((float)((AudioSettings.dspTime-
+                    transport.SongAnchorDsp) / Math.Max(0.1,endAt-transport.SongAnchorDsp)*100)),0,100);
+                ExportMessage("WAV: recording "+progress+"% - keep ZPUNK open.",false);
+            }
+            yield return null;
+        }
+        bool reachedEnd=AudioSettings.dspTime >= endAt-0.05 &&
+                        Time.realtimeSinceStartup < deadline;
+        if(reachedEnd && !recorder.HasOverflow)
+        {
+            while(AudioSettings.dspTime<endAt+0.30)yield return null;
+        }
+        try
+        {
+            if(!reachedEnd || recorder.HasOverflow)
+            {
+                recorder.Abort();
+                ExportMessage(recorder.HasOverflow?"WAV: audio capture overrun; try again.":"WAV: canceled. No file saved.",true);
+            }
+            else
+            {
+                if(!recorder.Complete())throw new IOException("No audio was recorded.");
+                ExportMessage("WAV: "+ZPunkMobileFileExport.Publish(file),false);
+            }
+        }
+        catch(Exception e)
+        {
+            recorder.Abort();
+            Debug.LogWarning("[ZPunk WAV] "+e);
+            ExportMessage("WAV: "+e.Message,true);
+        }
+        finally
+        {
+            if(transport!=null && transport.IsPlaying)transport.StopSong();
+            if(exportWavButton!=null)exportWavButton.SetEnabled(true);
+            if(exportMidiButton!=null)exportMidiButton.SetEnabled(true);
+            wavExportRoutine=null;
+        }
+    }
+    private void ExportMessage(string message,bool error)
+    {
+        if(exportStatus!=null)
+        {
+            exportStatus.text=message;
+            exportStatus.style.color=error?new Color(1f,.59f,.45f):Accent;
+        }
+        Debug.Log("[ZPunk Export] "+message);
+    }
+
     private void NavigateCreate(int index,string selectedId)
     {
         workspace="create";

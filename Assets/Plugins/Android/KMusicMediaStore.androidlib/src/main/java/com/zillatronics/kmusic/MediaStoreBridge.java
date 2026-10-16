@@ -1,6 +1,10 @@
 package com.zillatronics.kmusic;
 
 import android.app.Activity;
+import android.content.ContentValues;
+import android.os.Environment;
+import java.io.FileInputStream;
+import java.io.OutputStream;
 import android.content.ContentResolver;
 import android.database.Cursor;
 import android.net.Uri;
@@ -33,6 +37,46 @@ public final class MediaStoreBridge {
     private static final String TAG = "KMusicMediaStore";
 
     private MediaStoreBridge() {}
+
+    /** Publish an already generated WAV/MIDI to the user's public Downloads/ZPunk directory.
+     * Android 10+ scoped storage, no storage permission and no USB connection required.
+     * Errors are returned to Unity; incomplete MediaStore entries are removed.
+     */
+    public static String exportToDownloads(Activity activity, String sourcePath, String displayName, String mime) {
+        if (activity == null) return "ERROR: No Android activity";
+        if (Build.VERSION.SDK_INT < 29) return "ERROR: Export to Downloads needs Android 10 or newer";
+        Uri outputUri = null;
+        ContentResolver resolver = activity.getContentResolver();
+        try {
+            File inputFile = new File(sourcePath);
+            if (!inputFile.isFile()) return "ERROR: Export file does not exist";
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, displayName);
+            values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/ZPunk/");
+            values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+            outputUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (outputUri == null) return "ERROR: Could not create Downloads file";
+            try (FileInputStream input = new FileInputStream(inputFile);
+                 OutputStream output = resolver.openOutputStream(outputUri, "w")) {
+                if (output == null) throw new java.io.IOException("Cannot open Downloads output stream");
+                byte[] buffer = new byte[65536];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                output.flush();
+            }
+            ContentValues visible = new ContentValues();
+            visible.put(MediaStore.MediaColumns.IS_PENDING, 0);
+            resolver.update(outputUri, visible, null, null);
+            return outputUri.toString();
+        } catch (Exception e) {
+            if (outputUri != null) {
+                try { resolver.delete(outputUri, null, null); } catch (Exception ignored) { }
+            }
+            Log.e(TAG, "Cannot publish export", e);
+            return "ERROR: " + e.getMessage();
+        }
+    }
 
     /** Returns a JSON string: {"tracks":[{title,artist,album,durationMs,uri,mime,relativePath,dataPath}...]} */
     public static String queryMusicJson(Activity activity, int limit) {

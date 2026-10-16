@@ -111,3 +111,24 @@ extern "C" void KMusic_OpenAudioDocumentPicker(const char *gameObjectName, const
         [controller presentViewController:picker animated:YES completion:nil];
     });
 }
+
+// Public export to Apple's Files picker. A copy is placed in the destination
+// chosen by the user (On My iPhone, iCloud Drive, or a Files provider).
+extern "C" void KMusic_OpenExportDocumentPicker(const char *filePath) {
+    NSString *source = filePath ? [NSString stringWithUTF8String:filePath] : nil;
+    if (source.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:source]) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *presenter = UnityGetGLViewController();
+        if (presenter == nil) return;
+        NSURL *url = [NSURL fileURLWithPath:source];
+        UIDocumentPickerViewController *picker = nil;
+        if (@available(iOS 14.0, *)) {
+            picker = [[UIDocumentPickerViewController alloc] initForExportingURLs:@[url] asCopy:YES];
+        } else {
+            picker = [[UIDocumentPickerViewController alloc]
+                initWithURL:url inMode:UIDocumentPickerModeExportToService];
+        }
+        picker.modalPresentationStyle = UIModalPresentationFormSheet;
+        [presenter presentViewController:picker animated:YES completion:nil];
+    });
+}
