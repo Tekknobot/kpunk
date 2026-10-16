@@ -19,10 +19,11 @@ namespace ZPunk.DAW
             new[] { "AMEN", "JUNGLE", "HALF-TIME" }
         };
         public static readonly string[] Keys = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-        public static string Label(int genre, int style, int key, bool minor)
+        public static string Label(int genre, int style, int key, bool minor, bool synthChords = false)
         {
             genre = Clamp(genre, 0, Genres.Length - 1);
-            return Genres[genre] + " / " + Styles[genre][Clamp(style, 0, 2)] + " / " +
+            return Genres[genre] + " / " + Styles[genre][Clamp(style, 0, 2)] +
+                   (synthChords ? " / CHORDS" : "") + " / " +
                    Keys[Mod(key, 12)] + (minor ? " MIN" : " MAJ");
         }
         public static string Description(int genre, int style)
@@ -37,8 +38,21 @@ namespace ZPunk.DAW
             return descriptions[genre][Clamp(style, 0, 2)];
         }
 
+        /// <summary>Describes the chord texture for the selected genre and style.</summary>
+        public static string ChordsDescription(int genre, int style)
+        {
+            string[][] descriptions = {
+                new[] { "Warm seventh and ninth chords, loose backbeat accents", "Dusty extended chords with spacious offbeat hits", "Jazz voicings with short syncopated stabs" },
+                new[] { "Bright seventh-chord stabs on the offbeats", "Deep sustained seventh and ninth chords", "Jackin chord hits with restless rhythmic accents" },
+                new[] { "Dark repeating triads with a driving pulse", "Sparse suspended chords and cold open space", "Hard minor-key clusters with industrial stabs" },
+                new[] { "Syncopated seventh chords against the break", "Fast chopped chord punches and octave shifts", "Wide half-time chords with delayed replies" }
+            };
+            genre = Clamp(genre, 0, Genres.Length - 1);
+            return descriptions[genre][Clamp(style, 0, 2)];
+        }
+
         public static void Fill(ClipContentData clip, TrackKind instrument, int genre, int style,
-                                int bars, int key, bool minor, int variation)
+                                int bars, int key, bool minor, int variation, bool synthChords = false)
         {
             if (clip == null) throw new ArgumentNullException(nameof(clip));
             if (instrument == TrackKind.Chops) return;
@@ -48,7 +62,7 @@ namespace ZPunk.DAW
             key = Mod(key, 12);
             clip.kind = instrument == TrackKind.Drums ? ClipKind.Drums : ClipKind.Midi;
             clip.lengthTicks = bars * SongData.TicksPerBar4;
-            clip.generatedTag = Label(genre, style, key, minor) + " / V" + variation;
+            clip.generatedTag = Label(genre, style, key, minor, synthChords && instrument == TrackKind.Synth) + " / V" + variation;
             if (clip.drums == null) clip.drums = new List<DrumEvent>();
             if (clip.notes == null) clip.notes = new List<NoteEvent>();
             clip.drums.Clear();
@@ -59,6 +73,8 @@ namespace ZPunk.DAW
             for (int bar = 0; bar < bars; bar++)
             {
                 if (instrument == TrackKind.Drums) GenerateDrums(clip, genre, style, bar, bars, rng);
+                else if (instrument == TrackKind.Synth && synthChords)
+                    GenerateSynthChords(clip, genre, style, bar, key, minor, rng);
                 else GenerateNotes(clip, instrument, genre, style, bar, key, minor, rng);
             }
         }
@@ -241,6 +257,91 @@ namespace ZPunk.DAW
                 foreach(int i in steps) Note(c,bar,i,s==2?3:1,baseNote+12+Scale((i/3)%5,minor),96,r);
             }
         }
+        // SYNTH chords are generated as ordinary piano-roll notes. No additional
+        // instrument mode, serialized schema, or playback engine changes are needed.
+        // All chord tones come from the selected scale, and the harmonic roots follow
+        // the same genre progression used by the BASS and PADS generators.
+        private static void GenerateSynthChords(ClipContentData c, int genre, int style,
+                                                int bar, int key, bool minor, Random r)
+        {
+            int rootDegree = Progression(genre)[bar % 4];
+            int basePitch = 48 + key + Scale(rootDegree, minor);
+            int third = Scale(rootDegree + 2, minor) - Scale(rootDegree, minor);
+            int fifth = Scale(rootDegree + 4, minor) - Scale(rootDegree, minor);
+            int seventh = Scale(rootDegree + 6, minor) - Scale(rootDegree, minor);
+            int ninth = Scale(rootDegree + 8, minor) - Scale(rootDegree, minor);
+
+            // Each genre has its own chord vocabulary, rather than a generic
+            // triad laid over the existing single-note melody rhythm.
+            int[] tones;
+            switch (genre)
+            {
+                case 0: // Boom bap: rootless jazz extensions and compact voicings.
+                    tones = style == 1 ? new[] { 0, third, seventh, ninth } :
+                            style == 2 ? new[] { third, fifth, seventh, ninth } :
+                                         new[] { 0, third, seventh, ninth };
+                    break;
+                case 1: // House: warm sevenths, brighter upper voices for jackin.
+                    tones = style == 1 ? new[] { 0, third, fifth, seventh, ninth } :
+                            style == 2 ? new[] { third, fifth, seventh, 12 } :
+                                         new[] { 0, third, fifth, seventh };
+                    break;
+                case 2: // Techno: restrained minor/major chords, dry machine stabs.
+                    tones = style == 1 ? new[] { 0, fifth, ninth } :
+                            style == 2 ? new[] { 0, third, seventh } :
+                                         new[] { 0, third, fifth };
+                    break;
+                default: // Breaks: minor/major sevenths and suspended upper tones.
+                    tones = style == 2 ? new[] { 0, third, fifth, seventh } :
+                            style == 1 ? new[] { third, fifth, seventh, ninth } :
+                                         new[] { 0, third, seventh, ninth };
+                    break;
+            }
+
+            // Stab times are sixteenth-note indices; Note() guarantees every
+            // duration ends inside the bar, even in one-bar clips.
+            int[] starts;
+            int[] lengths;
+            switch (genre)
+            {
+                case 0:
+                    starts  = style == 0 ? new[] { 0, 9 } : style == 1 ? new[] { 2, 13 } : new[] { 3, 7, 11, 14 };
+                    lengths = style == 0 ? new[] { 6, 3 } : style == 1 ? new[] { 9, 2 } : new[] { 2, 2, 2, 2 };
+                    break;
+                case 1:
+                    starts  = style == 0 ? new[] { 2, 6, 10, 14 } : style == 1 ? new[] { 0, 12 } : new[] { 1, 3, 6, 9, 11, 14 };
+                    lengths = style == 0 ? new[] { 2, 2, 2, 2 } : style == 1 ? new[] { 12, 4 } : new[] { 1, 2, 2, 1, 2, 2 };
+                    break;
+                case 2:
+                    starts  = style == 0 ? new[] { 2, 6, 10, 14 } : style == 1 ? new[] { 0, 12 } : new[] { 0, 3, 7, 10, 14 };
+                    lengths = style == 0 ? new[] { 2, 2, 2, 2 } : style == 1 ? new[] { 5, 3 } : new[] { 1, 1, 1, 2, 1 };
+                    break;
+                default:
+                    starts  = style == 0 ? new[] { 0, 7, 11 } : style == 1 ? new[] { 0, 3, 6, 10, 14 } : new[] { 0, 8 };
+                    lengths = style == 0 ? new[] { 3, 2, 3 } : style == 1 ? new[] { 1, 2, 1, 2, 2 } : new[] { 6, 6 };
+                    break;
+            }
+
+            // Seeded variation changes individual voicings and accents, without
+            // changing genre/style choice or moving any pitch off its diatonic scale.
+            for (int hit = 0; hit < starts.Length; hit++)
+            {
+                int shift = r.Next(3) == 0 ? 12 : 0;
+                int velocity = genre == 0 ? 79 : genre == 1 ? 91 : genre == 2 ? 83 : 87;
+                if (hit > 0) velocity -= 4;
+                if (style == 1 && genre == 0 && hit == 1) velocity -= 12;
+                for (int voice = 0; voice < tones.Length; voice++)
+                {
+                    // Gentle voice leading: alternate between close voicings.
+                    int pitch = basePitch + tones[voice];
+                    if (voice == 0 && shift != 0 && hit > 0) pitch += shift;
+                    // Longer deep-house chords intentionally start softer.
+                    int voiceVelocity = velocity - voice * 4 - (genre == 1 && style == 1 ? 9 : 0);
+                    Note(c, bar, starts[hit], lengths[hit], pitch, voiceVelocity, r);
+                }
+            }
+        }
+
         private static int Clamp(int n, int min, int max) => Math.Max(min,Math.Min(max,n));
         private static int Mod(int n,int d) => ((n%d)+d)%d;
     }

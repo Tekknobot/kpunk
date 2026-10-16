@@ -21,11 +21,11 @@ namespace ZPunk.DAW
             new Color(.35f,.60f,.98f), new Color(.66f,.45f,.94f), new Color(.24f,.82f,.69f)
         };
         private VisualElement root, canvas, gridScrollContainer, chips;
-        private VisualElement generatorPanel, generatorGenres, generatorStyles, generatorBarsRow;
-        private Button generatorQuickButton;
+        private VisualElement generatorPanel, generatorGenres, generatorStyles, generatorBarsRow, generatorSynthModeRow;
+        private Button generatorQuickButton, generatorMelodyButton, generatorChordsButton;
         private Label generatorHeading, generatorSummary, generatorHint, generatorKeyLabel, generatorVariationLabel;
         private int generatorGenre = 1, generatorStyle, generatorBars = 2, generatorKey = 9, generatorVariation;
-        private bool generatorMinor = true;
+        private bool generatorMinor = true, generatorSynthChords;
         private int generatorTargetTrack;
         private VisualElement editorPlayhead;
         private VisualElement samplerPage, samplerWave;
@@ -544,6 +544,26 @@ namespace ZPunk.DAW
             generatorStyles.style.flexDirection = FlexDirection.Row;
             body.Add(stylesScroll);
 
+            // SYNTH alone can generate either a melody or scale-aware chord
+            // progressions. Keep this inside the scrolling sheet for small phones.
+            generatorSynthModeRow = new VisualElement();
+            generatorSynthModeRow.style.flexDirection = FlexDirection.Column;
+            var synthModeLabel = Txt("SYNTH / GENERATION TYPE",11,Muted);
+            synthModeLabel.style.marginTop = 5;
+            generatorSynthModeRow.Add(synthModeLabel);
+            var synthModeButtons = new VisualElement();
+            synthModeButtons.style.flexDirection = FlexDirection.Row;
+            synthModeButtons.style.height = 48;
+            synthModeButtons.style.alignItems = Align.Center;
+            generatorMelodyButton = Btn("MELODY", () => { generatorSynthChords = false; RefreshGeneratorPanel(); }, 90);
+            generatorChordsButton = Btn("CHORDS", () => { generatorSynthChords = true; RefreshGeneratorPanel(); }, 90);
+            generatorMelodyButton.style.flexGrow = 1;
+            generatorChordsButton.style.flexGrow = 1;
+            synthModeButtons.Add(generatorMelodyButton);
+            synthModeButtons.Add(generatorChordsButton);
+            generatorSynthModeRow.Add(synthModeButtons);
+            body.Add(generatorSynthModeRow);
+
             generatorSummary = Txt("",12,Accent);
             generatorSummary.style.whiteSpace = WhiteSpace.Normal;
             generatorSummary.style.marginTop = 8;
@@ -605,6 +625,10 @@ namespace ZPunk.DAW
                 song.tracks[requestedTrack].kind == TrackKind.Chops) return;
             if (requestedTrack != trackIndex) SelectTrack(requestedTrack);
             generatorTargetTrack = trackIndex;
+            if (song.tracks[trackIndex].kind == TrackKind.Synth)
+                generatorSynthChords = content != null &&
+                    !string.IsNullOrEmpty(content.generatedTag) &&
+                    content.generatedTag.Contains(" / CHORDS / ");
             generatorBars = clip == null ? 2 :
                 (clip.lengthTicks >= 4 * SongData.TicksPerBar4 ? 4 :
                  clip.lengthTicks >= 2 * SongData.TicksPerBar4 ? 2 : 1);
@@ -641,8 +665,22 @@ namespace ZPunk.DAW
                 if (st == generatorStyle) { button.style.backgroundColor = SelectedColor(); button.style.color = Accent; }
                 generatorStyles.Add(button);
             }
-            generatorSummary.text = ZPunkGenreGenerator.Description(generatorGenre, generatorStyle) + "\n" +
-                "READY: " + ZPunkGenreGenerator.Label(generatorGenre,generatorStyle,generatorKey,generatorMinor);
+            bool isSynth = song.tracks[generatorTargetTrack].kind == TrackKind.Synth;
+            if (generatorSynthModeRow != null)
+                generatorSynthModeRow.style.display = isSynth ? DisplayStyle.Flex : DisplayStyle.None;
+            if (generatorMelodyButton != null && generatorChordsButton != null)
+            {
+                generatorMelodyButton.style.backgroundColor = !generatorSynthChords ? SelectedColor() : Raised;
+                generatorMelodyButton.style.color = !generatorSynthChords ? Accent : Ink;
+                generatorChordsButton.style.backgroundColor = generatorSynthChords ? SelectedColor() : Raised;
+                generatorChordsButton.style.color = generatorSynthChords ? Accent : Ink;
+            }
+            bool chords = isSynth && generatorSynthChords;
+            generatorSummary.text = (chords ?
+                ZPunkGenreGenerator.ChordsDescription(generatorGenre, generatorStyle) :
+                ZPunkGenreGenerator.Description(generatorGenre, generatorStyle)) + "\n" +
+                "READY: " + ZPunkGenreGenerator.Label(generatorGenre, generatorStyle, generatorKey, generatorMinor, chords) +
+                (isSynth && !chords ? " / MELODY" : "");
             generatorKeyLabel.text = ZPunkGenreGenerator.Keys[generatorKey] + (generatorMinor ? " MIN" : " MAJ");
             generatorBarsRow.Clear();
             foreach (int count in new[]{1,2,4})
@@ -679,7 +717,8 @@ namespace ZPunk.DAW
                 clip.contentId = content.id;
             }
             ZPunkGenreGenerator.Fill(content,track.kind,generatorGenre,generatorStyle,
-                generatorBars,generatorKey,generatorMinor,generatorVariation);
+                generatorBars,generatorKey,generatorMinor,generatorVariation,
+                track.kind == TrackKind.Synth && generatorSynthChords);
             clip.sourceOffsetTick = 0;
             clip.loopEnabled = false;
             clip.lengthTicks = content.lengthTicks;
