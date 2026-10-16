@@ -1748,8 +1748,8 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
             _appliedClip = cachedForId;
         else if (!string.IsNullOrEmpty(resPath) && !resPath.StartsWith("cached:"))
             _appliedClip = Resources.Load<AudioClip>(resPath);
-        if (_appliedClip == null && KMusicChopState.TryGetCachedClip(out var cachedAny))
-            _appliedClip = cachedAny;
+        // Never substitute a sample from a different project. Missing source
+        // leaves CHOPS silent until the matching sample is restored.
 
         if (_appliedClip == null)
         {

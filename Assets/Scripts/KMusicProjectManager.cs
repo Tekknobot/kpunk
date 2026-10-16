@@ -20,7 +20,8 @@ using ZPunk.DAW;
 [DefaultExecutionOrder(-950)]
 public sealed class KMusicProjectManager : MonoBehaviour
 {
-    private const int ProjectVer = 1;
+    private const int ProjectVer = 2;
+    private const string NativeFormat = "zpunk-2-arrangement";
     private const string PrefKey_CurrentSlot = "kmusic.project.slot.v1";
 
     [SerializeField] private UIDocument doc;
@@ -35,6 +36,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private VisualElement _modal;
     private ScrollView _modalList;
     private Label _modalTitle;
+    private VisualElement _projectNotice;
     private readonly Dictionary<int, string> _cachedProjectNames = new();
 
     // Runtime refs
@@ -97,6 +99,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
         string path = SlotPath(CurrentSlot);
         if (File.Exists(path))
             LoadProject(CurrentSlot, silent: true);
+        else
+            ResetToBlank();
     }
 
     private void FindRuntimeRefs()
@@ -108,7 +112,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
         if (_pad == null) _pad = FindObjectOfType<KMusic.KMusicChordTrackUI>();
         if (_helm == null) _helm = FindObjectOfType<KMusicHelmPresetPickerUI>();
         if (_padSynthRuntime == null) _padSynthRuntime = FindObjectOfType<KMusicPadSynthRuntime>();
-        if (_player == null) _player = FindObjectOfType<KMusicPlayerUI>();
+        if (_player == null)
+        {
+            _player = FindObjectOfType<KMusicPlayerUI>();
+            if (_player != null) _player.SampleRestoreError += ShowProjectNotice;
+        }
         if (_chainUi == null) _chainUi = FindObjectOfType<KMusicChainUI>();
     }
 
@@ -252,11 +260,105 @@ public sealed class KMusicProjectManager : MonoBehaviour
         });
     }
 
+    // Non-destructive, readable warning on phones and tablets. No alerts are dismissed
+    // automatically: a missing sample must never appear as a successful load.
+    private void ShowProjectNotice(string message)
+    {
+        if (string.IsNullOrEmpty(message)) return;
+        Debug.LogWarning("[ZPunk Projects] " + message);
+        if (doc == null || doc.rootVisualElement == null) return;
+        var root = doc.rootVisualElement;
+        if (_projectNotice == null)
+        {
+            _projectNotice = new VisualElement { name = "ZPunkProjectWarning" };
+            _projectNotice.style.position = Position.Absolute;
+            _projectNotice.style.left = 8;
+            _projectNotice.style.right = 8;
+            _projectNotice.style.bottom = 9;
+            _projectNotice.style.paddingLeft = 12;
+            _projectNotice.style.paddingRight = 10;
+            _projectNotice.style.paddingTop = 10;
+            _projectNotice.style.paddingBottom = 10;
+            _projectNotice.style.backgroundColor = new Color(.19f,.13f,.12f,.98f);
+            _projectNotice.style.borderTopLeftRadius = 7;
+            _projectNotice.style.borderTopRightRadius = 7;
+            _projectNotice.style.borderBottomLeftRadius = 7;
+            _projectNotice.style.borderBottomRightRadius = 7;
+            _projectNotice.style.flexDirection = FlexDirection.Row;
+            _projectNotice.style.alignItems = Align.Center;
+            var label = new Label { name = "ZPunkWarningText" };
+            label.style.flexGrow = 1;
+            label.style.flexShrink = 1;
+            label.style.whiteSpace = WhiteSpace.Normal;
+            label.style.fontSize = 12;
+            label.style.color = new Color(.99f,.91f,.82f);
+            _projectNotice.Add(label);
+            var dismiss = new Button(() => _projectNotice.style.display = DisplayStyle.None) { text = "OK" };
+            dismiss.style.minWidth = 52;
+            dismiss.style.height = 42;
+            dismiss.style.marginLeft = 8;
+            _projectNotice.Add(dismiss);
+        }
+        _projectNotice.Q<Label>("ZPunkWarningText").text = message;
+        _projectNotice.style.display = DisplayStyle.Flex;
+        // Keep above any other modal and all regular workspace elements.
+        if (_projectNotice.parent != null) _projectNotice.RemoveFromHierarchy();
+        root.Add(_projectNotice);
+    }
+
+    private static bool IsNativeProject(ProjectData data)
+    {
+        if (data == null || data.song == null || data.song.schemaVersion != SongData.CurrentSchema ||
+            data.song.migratedFromLegacy || data.song.tracks == null || data.song.contents == null ||
+            data.song.tracks.Count != 5) return false;
+        // Current-format saves carry an explicit marker. Also accept native 2.0
+        // arrangements saved by early preview builds, before the marker existed.
+        if (data.ver >= ProjectVer && data.projectFormat != NativeFormat) return false;
+        // Old 1.x saves may already contain a generated conversion preview.
+        // That is NOT proof of a native 2.0 project: only authored 2.0 clips qualify.
+        if (data.ver < ProjectVer && !data.song.arrangementAuthored) return false;
+        for (int i = 0; i < 5; i++)
+        {
+            var track = data.song.tracks[i];
+            if (track == null || (int)track.kind != i || track.clips == null || track.instrument == null)
+                return false;
+            foreach (var c in track.clips)
+                if (c == null || string.IsNullOrEmpty(c.contentId) || c.lengthTicks <= 0 ||
+                    c.startTick < 0 || ArrangementEditing.FindContent(data.song, c.contentId) == null)
+                    return false;
+        }
+        foreach (var content in data.song.contents)
+            if (content == null || content.lengthTicks <= 0) return false;
+        return true;
+    }
+
+    private void StartFreshAfterIncompatible(int rejectedSlot)
+    {
+        // DO NOT overwrite/delete an old project, any imported samples, or exports.
+        // Always move to a free slot first; old files can be backed up externally.
+        int next = FindNextFreeSlot(rejectedSlot);
+        if (File.Exists(SlotPath(next)))
+        {
+            ShowProjectNotice("Incompatible project. No free slot available. Your previous file was left untouched.");
+            return;
+        }
+        SwitchToSlot(next);
+        ResetToBlank();
+        ShowProjectNotice("PROJECT " + rejectedSlot.ToString("000") +
+            " was saved by an incompatible ZPUNK version. It was NOT deleted. " +
+            "A fresh ZPUNK 2.0 workspace is now open in slot " + next.ToString("000") + ".");
+    }
+
     private void OnNewClicked()
     {
         SaveProject(CurrentSlot);
 
         int next = FindNextFreeSlot(CurrentSlot);
+        if (File.Exists(SlotPath(next)))
+        {
+            ShowProjectNotice("All project slots are full. No files were overwritten.");
+            return;
+        }
         CurrentSlot = next;
         ProjectPrefs.SetActiveSlot(CurrentSlot);
 
@@ -277,13 +379,12 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
     private int FindNextFreeSlot(int start)
     {
-        for (int i = 1; i <= 200; i++)
+        for (int i = 1; i < 1000; i++)
         {
-            int slot = Mathf.Clamp(start + i, 0, 999);
-            if (!File.Exists(SlotPath(slot)))
-                return slot;
+            int slot = (start + i) % 1000;
+            if (!File.Exists(SlotPath(slot))) return slot;
         }
-        return Mathf.Clamp(start + 1, 0, 999);
+        return start; // callers must check before writing
     }
 
     private void EnsureProjectsDir()
@@ -410,6 +511,12 @@ public sealed class KMusicProjectManager : MonoBehaviour
         {
             string path = SlotPath(slot);
             bool has = File.Exists(path);
+            bool compatible = false;
+            if (has)
+            {
+                try { compatible = IsNativeProject(JsonUtility.FromJson<ProjectData>(File.ReadAllText(path))); }
+                catch (Exception) { compatible = false; }
+            }
 
             var row = new VisualElement();
             row.AddToClassList("km-project-row");
@@ -452,10 +559,12 @@ public sealed class KMusicProjectManager : MonoBehaviour
             string desc;
             if (!has)
                 desc = $"Project {slot:000} • Empty slot ready for a new project.";
+            else if (!compatible)
+                desc = $"Project {slot:000} - Older/incompatible file, preserved. Load starts a fresh workspace.";
             else if (slot == CurrentSlot)
-                desc = $"Project {slot:000} • Current project. You can rename, save, or delete it.";
+                desc = $"Project {slot:000} - Current project. You can rename, save, or delete it.";
             else
-                desc = $"Project {slot:000} • Ready to load or delete.";
+                desc = $"Project {slot:000} - Ready to load or delete.";
 
             var label = new Label(desc);
             label.AddToClassList("km-project-name");
@@ -669,6 +778,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private class ProjectData
     {
         public int ver;
+        public string projectFormat;
         public int slot;
         public long utc;
         public string projectName;
@@ -1008,12 +1118,34 @@ public sealed class KMusicProjectManager : MonoBehaviour
         EnsureProjectsDir();
         FindRuntimeRefs();
 
+        // Never overwrite an old or malformed project, even via SAVE from the UI.
+        string existingPath = SlotPath(slot);
+        if (File.Exists(existingPath))
+        {
+            try
+            {
+                var existing = JsonUtility.FromJson<ProjectData>(File.ReadAllText(existingPath));
+                if (!IsNativeProject(existing))
+                {
+                    ShowProjectNotice("Cannot overwrite incompatible project " + slot.ToString("000") +
+                        ". Open a new project slot instead. Existing data was preserved.");
+                    return;
+                }
+            }
+            catch (Exception)
+            {
+                ShowProjectNotice("Cannot overwrite an unreadable project. Existing file preserved.");
+                return;
+            }
+        }
+
         if (_chainUi != null)
             _chainUi.FlushLiveStateToPattern();
 
         var data = new ProjectData
         {
             ver = ProjectVer,
+            projectFormat = NativeFormat,
             slot = slot,
             utc = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             projectName = slot == CurrentSlot ? GetProjectDisplayName(CurrentSlot) : GetProjectDisplayName(slot),
@@ -1070,11 +1202,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
             data.synth.masterVolume = Mathf.Clamp01(_app.Bus.GetValue("master.vol"));
 
         if (_player != null)
-            data.player.lastTrackId = _player.GetLastTrackId();
+            data.player.lastTrackId = KMusicPlayerUI.CanonicalSampleId(_player.GetLastTrackId());
 
         if (KMusicChopState.TryLoadApplied(out string rp, out var ss, out var ee))
         {
-            data.chops.resourcesPath = rp;
+            data.chops.resourcesPath = KMusicPlayerUI.CanonicalSampleId(rp);
             data.chops.sliceStart01 = ss;
             data.chops.sliceEnd01 = ee;
         }
@@ -1103,8 +1235,28 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
         try
         {
+            if (data.song == null || data.song.schemaVersion != SongData.CurrentSchema)
+                throw new InvalidOperationException("Cannot save a project without a valid ZPUNK 2.0 song.");
+            // The current UI still captures some legacy step grids, but the saved
+            // format is always an explicitly native, editable 2.0 arrangement.
+            data.song.migratedFromLegacy = false;
+            data.song.arrangementAuthored = true;
+            if (data.song.tracks != null && data.song.tracks.Count > 4 &&
+                data.song.tracks[4] != null && data.song.tracks[4].instrument != null)
+                data.song.tracks[4].instrument.sampleResourcesPath =
+                    KMusicPlayerUI.CanonicalSampleId(data.song.tracks[4].instrument.sampleResourcesPath);
             string jsonPath = SlotPath(slot);
-            File.WriteAllText(jsonPath, JsonUtility.ToJson(data));
+            // Write a temporary file first, then replace: interrupted saves must
+            // not truncate the previous project. No sample/export files touched.
+            string tempPath = jsonPath + ".writing";
+            File.WriteAllText(tempPath, JsonUtility.ToJson(data));
+            if (File.Exists(jsonPath))
+            {
+                string backup = jsonPath + ".bak";
+                File.Copy(jsonPath, backup, true);
+                File.Delete(jsonPath);
+            }
+            File.Move(tempPath, jsonPath);
             CurrentSong = data.song;
             KMusicMidiExporter.ExportProjectMidiBundle(jsonPath, data, TryGetProjectTempoBpm());
             _cachedProjectNames[slot] = data.projectName;
@@ -1134,29 +1286,21 @@ public sealed class KMusicProjectManager : MonoBehaviour
         catch (Exception e)
         {
             Debug.LogWarning("[Project] Load failed: " + e.Message);
+            StartFreshAfterIncompatible(slot);
             return;
         }
 
-        if (data == null) return;
+        if (!IsNativeProject(data))
+        {
+            StartFreshAfterIncompatible(slot);
+            return;
+        }
 
         var dawTransport = FindObjectOfType<ZPunkSongTransport>();
         if (dawTransport != null && dawTransport.IsPlaying) dawTransport.StopSong();
 
-        // Read-only projection of older save slots; never rewrite files on load.
-        // A malformed or unsupported song does not prevent the v1 project opening.
-        CurrentSong = null;
-        try
-        {
-            if (data.song != null && data.song.schemaVersion == SongData.CurrentSchema &&
-                data.song.tracks != null && data.song.contents != null)
-                CurrentSong = data.song;
-            else
-                CurrentSong = BuildSongMirror(data);
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning("[ZPunk DAW] Could not prepare song preview: " + e.Message);
-        }
+        // Version validation completed before changing any playback or pref state.
+        CurrentSong = data.song;
 
         if (_chainUi != null)
             _chainUi.SetSuspendLivePatternWrites(true);
@@ -1292,14 +1436,25 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 _pendingSynthBusRestore.Clear();
             }
 
-            if (data.chops != null && !string.IsNullOrEmpty(data.chops.resourcesPath))
-                KMusicChopState.SetAppliedRaw(data.chops.resourcesPath, data.chops.sliceStart01, data.chops.sliceEnd01);
+            string chopsSampleId = data.chops != null ? data.chops.resourcesPath : null;
+            if (string.IsNullOrEmpty(chopsSampleId) && CurrentSong.tracks != null &&
+                CurrentSong.tracks.Count > 4 && CurrentSong.tracks[4].instrument != null)
+                chopsSampleId = CurrentSong.tracks[4].instrument.sampleResourcesPath;
+            chopsSampleId = KMusicPlayerUI.CanonicalSampleId(chopsSampleId);
+            if (!string.IsNullOrEmpty(chopsSampleId))
+                KMusicChopState.SetAppliedRaw(chopsSampleId,
+                    data.chops != null ? data.chops.sliceStart01 : CurrentSong.tracks[4].instrument.sliceStart01,
+                    data.chops != null ? data.chops.sliceEnd01 : CurrentSong.tracks[4].instrument.sliceEnd01);
             else
                 KMusicChopState.ClearApplied();
 
-            if (_player != null && data.player != null)
+            if (_player != null)
             {
-                _player.SetLastTrackId(data.player.lastTrackId);
+                // An applied CHOPS sample takes precedence over a previously browsed
+                // preview track. Never restore a mismatched sample into a project.
+                string projectSample = !string.IsNullOrEmpty(chopsSampleId) ? chopsSampleId :
+                    (data.player != null ? data.player.lastTrackId : null);
+                _player.SetLastTrackId(projectSample);
                 _player.RefreshAppliedMarkersFromState();
             }
 
@@ -1309,6 +1464,13 @@ public sealed class KMusicProjectManager : MonoBehaviour
             float mainSynthVol = (data.synth != null) ? data.synth.masterVolume : -1f;
             float padSynthVol = (data.pad != null) ? data.pad.masterVolume : -1f;
             StartCoroutine(ApplySavedSynthVolumesAfterLoad(mainSynthVol, padSynthVol));
+        }
+        catch (Exception e)
+        {
+            // Corrupt runtime state is never allowed to crash project switching.
+            // Keep the on-disk project intact for a future diagnostic or backup.
+            Debug.LogError("[Project] Could not restore project " + slot + ": " + e);
+            StartFreshAfterIncompatible(slot);
         }
         finally
         {
@@ -1371,6 +1533,7 @@ private System.Collections.IEnumerator ApplySavedSynthVolumesAfterLoad(float mai
         if (_player != null)
         {
             _player.ClearLastTrackId();
+            _player.ClearSampleSelection();
             _player.RefreshAppliedMarkersFromState();
         }
     }

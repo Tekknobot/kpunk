@@ -92,6 +92,92 @@ public class KMusicPlayerUI : MonoBehaviour
 #endif
 
     private const string PrefKey_LastTrack = "kmusic.player.lastTrack.v1";
+    public event Action<string> SampleRestoreError;
+    private int _sampleRequestSerial;
+    private string _pendingProjectId;
+
+    // App-private samples are stored as portable relative IDs, not absolute iOS
+    // sandbox paths (the sandbox UUID can change between app updates).
+    private static string SampleIdForFile(string path)
+    {
+        string full = Path.GetFullPath(path);
+        string root = Path.GetFullPath(Application.persistentDataPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (full.StartsWith(root, StringComparison.Ordinal))
+            return "local:" + full.Substring(root.Length).Replace('\\','/');
+        return "file:" + full;
+    }
+
+    public static string CanonicalSampleId(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return id;
+        // Resource identifiers stored for CHOPS omit the preview-only "res:" prefix.
+        if (id.StartsWith("res:", StringComparison.Ordinal)) return id.Substring(4);
+        if (!id.StartsWith("file:", StringComparison.Ordinal)) return id;
+        string path = id.Substring(5);
+        if (string.IsNullOrEmpty(path)) return id;
+        try
+        {
+            string full = Path.GetFullPath(path);
+            string root = Path.GetFullPath(Application.persistentDataPath)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (full.StartsWith(root, StringComparison.Ordinal))
+                return SampleIdForFile(full);
+#if UNITY_IOS && !UNITY_EDITOR
+            // Match the full DOCUMENTS/ZPunk prefix, not just a filename.
+            string normal = path.Replace('\\','/');
+            int marker = normal.LastIndexOf("/Documents/ZPunk/", StringComparison.Ordinal);
+            if (marker >= 0)
+                return "local:ZPunk/" + normal.Substring(marker + "/Documents/ZPunk/".Length);
+#endif
+        }
+        catch (Exception) { }
+        return id;
+    }
+
+    private static string ResolveLocalSample(string id)
+    {
+        if (string.IsNullOrEmpty(id) || !id.StartsWith("local:", StringComparison.Ordinal)) return null;
+        string relative = id.Substring(6).Replace('/', Path.DirectorySeparatorChar);
+        string root = Path.GetFullPath(Application.persistentDataPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        string absolute = Path.GetFullPath(Path.Combine(root, relative));
+        // Prevent crafted or corrupted projects from escaping the private folder.
+        return absolute.StartsWith(root, StringComparison.Ordinal) ? absolute : null;
+    }
+
+    private void MissingProjectSample(string id)
+    {
+        string safeName = id;
+        if (id != null && id.StartsWith("file:", StringComparison.Ordinal))
+            safeName = Path.GetFileName(id.Substring(5));
+        else if (id != null && id.StartsWith("local:", StringComparison.Ordinal))
+            safeName = id.Substring(6);
+        string message = "SAMPLE MISSING OR UNREADABLE: " + (string.IsNullOrEmpty(safeName) ? "unknown" : safeName) +
+            ". Import the same file again, or choose another sample. CHOPS are silent until the correct file is available.";
+        Debug.LogWarning("[Player] " + message);
+        UpdateTrackTitle("MISSING SAMPLE");
+        SampleRestoreError?.Invoke(message);
+    }
+
+    // Explicitly empty selection: never retain another project's cached sample.
+    public void ClearSampleSelection()
+    {
+        _sampleRequestSerial++;
+        _pendingProjectId = null;
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (_loadDeviceCoroutine != null) { StopCoroutine(_loadDeviceCoroutine); _loadDeviceCoroutine = null; }
+#endif
+        _clip = null;
+        _warpedClip = null;
+        _clipResourcesPath = null;
+        _clipIndex = -1;
+        _chops01.Clear();
+        if (audioSource != null) { audioSource.Stop(); audioSource.clip = null; }
+        if (_wave != null) { _wave.SetClip(null); _wave.SetPlayhead01(0); }
+        KMusicChopState.SetCachedClip(null, null);
+        UpdateTrackTitle("NO SAMPLE");
+    }
 
 
     private sealed class ImportedTrackInfo
@@ -169,25 +255,20 @@ public class KMusicPlayerUI : MonoBehaviour
 
     public void SetLastTrackId(string id)
     {
-        if (string.IsNullOrEmpty(id))
-            return;
-
+        // Project loader calls this with null for projects that never selected a sample.
+        ClearSampleSelection();
+        ClearLastTrackId();
+        if (string.IsNullOrEmpty(id)) return;
+        id = CanonicalSampleId(id);
+        _pendingProjectId = id;
         SaveLastTrackId(id);
-
-        try
-        {
-            if (audioSource == null)
-            {
-                Debug.Log("[Player] SetLastTrackId deferred: audioSource not ready");
-                return;
-            }
-
-            LoadTrackById(id);
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning("[Player] SetLastTrackId load failed: " + e.Message);
-        }
+        // The manager starts before the player UI. The player will restore the
+        // exact sample when BootAudioSources runs, not a random/default sample.
+        if (_wave == null || audioSource == null) return;
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (id.StartsWith("uri:", StringComparison.Ordinal) && !_deviceReady) return;
+#endif
+        TryRestoreTrackById(id);
     }
 
     public void ClearLastTrackId()
@@ -201,71 +282,73 @@ public class KMusicPlayerUI : MonoBehaviour
         RestoreMarkersFromAppliedState();
     }
 
-    private void LoadTrackById(string id)
+    private bool TryRestoreTrackById(string id)
     {
-        if (string.IsNullOrEmpty(id))
-            return;
-
-        if (audioSource == null)
-        {
-            Debug.Log("[Player] LoadTrackById aborted: audioSource not ready");
-            return;
-        }
-
+        if (string.IsNullOrEmpty(id)) return true;
+        if (audioSource == null || _wave == null) return false;
 #if UNITY_ANDROID && !UNITY_EDITOR
-        if (id.StartsWith("uri:"))
+        if (id.StartsWith("uri:", StringComparison.Ordinal))
         {
             string want = id.Substring(4);
-            if (_deviceTracks != null && _deviceTracks.Length > 0)
+            if (_deviceTracks != null)
             {
                 for (int i = 0; i < _deviceTracks.Length; i++)
-                {
                     if (_deviceTracks[i] != null && _deviceTracks[i].uri == want)
-                    {
-                        LoadDeviceTrackByIndex(i);
-                        return;
-                    }
-                }
+                    { LoadDeviceTrackByIndex(i); return true; }
             }
-            return;
+            // The user's file can exist beyond the first 250 indexed tracks.
+            // Restore directly by its exact saved content URI; failed access
+            // is reported by CoLoadDeviceTrack, never replaced with track #1.
+            if (_deviceReady)
+            {
+                _deviceTrackIndex = -1;
+                LoadDeviceTrackByInfo(new TrackInfo { uri = want, title = "PROJECT SAMPLE" });
+                return true;
+            }
+            MissingProjectSample(id);
+            return false;
         }
 #endif
-
-        if (id.StartsWith("res:"))
+        if (id.StartsWith("res:", StringComparison.Ordinal) ||
+            (!id.Contains(":") && id.Contains("/")))
         {
-            string wantPath = id.Substring(4);
+            string wanted = id.StartsWith("res:", StringComparison.Ordinal) ? id.Substring(4) : id;
+            AudioClip exact = Resources.Load<AudioClip>(wanted);
+            if (exact == null) { MissingProjectSample(id); return false; }
             RefreshClipList();
-
-            if (_clips != null && _clips.Length > 0)
-            {
-                string wantName = wantPath.Contains("/")
-                    ? wantPath.Substring(wantPath.LastIndexOf('/') + 1)
-                    : wantPath;
-
-                for (int i = 0; i < _clips.Length; i++)
-                {
-                    if (_clips[i] != null &&
-                        (_clips[i].name == wantName ||
-                        ($"{resourcesFolder}/" + _clips[i].name) == wantPath))
-                    {
-                        LoadClipByIndex(i);
-                        return;
-                    }
-                }
-            }
+            for (int i = 0; i < _clips.Length; i++)
+                if (_clips[i] == exact) { LoadClipByIndex(i); return true; }
+            MissingProjectSample(id);
+            return false;
         }
-
-        if (id.StartsWith("file:"))
+        if (id.StartsWith("local:", StringComparison.Ordinal) || id.StartsWith("file:", StringComparison.Ordinal))
         {
-            string wantPath = id.Substring(5);
-            if (!string.IsNullOrEmpty(wantPath) && File.Exists(wantPath))
+            string filePath = id.StartsWith("local:", StringComparison.Ordinal)
+                ? ResolveLocalSample(id) : id.Substring(5);
+            // iOS upgrade: older 2.0 builds recorded absolute Documents/ZPunk paths.
+            // Only relocate within the same known private ZPunk directory, never
+            // select an arbitrary same-named file in the user's Music library.
+#if UNITY_IOS && !UNITY_EDITOR
+            if (id.StartsWith("file:", StringComparison.Ordinal) && !File.Exists(filePath))
             {
-                StartCoroutine(CoLoadImportedTrackByPath(wantPath, true));
-                return;
+                string normalized = filePath.Replace('\\','/');
+                int marker = normalized.LastIndexOf("/Documents/ZPunk/", StringComparison.Ordinal);
+                if (marker >= 0)
+                    filePath = ResolveLocalSample("local:ZPunk/" + normalized.Substring(marker + "/Documents/ZPunk/".Length));
             }
+#endif
+            if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+            {
+                int serial = ++_sampleRequestSerial;
+                StartCoroutine(CoLoadImportedTrackByPath(filePath, true, serial));
+                return true;
+            }
+            MissingProjectSample(id);
+            return false;
         }
+        MissingProjectSample(id);
+        return false;
     }
-
 
     private void RefreshImportedTrackList()
     {
@@ -305,18 +388,20 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
 
         index = Mathf.Clamp(index, 0, _importedTracks.Count - 1);
-        StartCoroutine(CoLoadImportedTrackByPath(_importedTracks[index].absolutePath, true));
+        int serial = ++_sampleRequestSerial;
+        StartCoroutine(CoLoadImportedTrackByPath(_importedTracks[index].absolutePath, true, serial));
     }
 
-    private IEnumerator CoLoadImportedTrackByPath(string absolutePath, bool persistAsLastTrack)
+    private IEnumerator CoLoadImportedTrackByPath(string absolutePath, bool persistAsLastTrack, int requestSerial)
     {
-        if (string.IsNullOrEmpty(absolutePath) || !File.Exists(absolutePath))
+        if (requestSerial != _sampleRequestSerial || string.IsNullOrEmpty(absolutePath) || !File.Exists(absolutePath))
             yield break;
 
         _chops01.Clear();
         SyncMarkersToWave();
 
-        string url = "file://" + absolutePath.Replace("\\", "/");
+        // Handles imported filenames containing spaces or other URL characters.
+        string url = new Uri(Path.GetFullPath(absolutePath)).AbsoluteUri;
         AudioType type = GuessAudioTypeFromPath(absolutePath);
 
         using UnityWebRequest req = UnityWebRequestMultimedia.GetAudioClip(url, type);
@@ -328,18 +413,24 @@ public class KMusicPlayerUI : MonoBehaviour
 
         yield return req.SendWebRequest();
 
+        if (requestSerial != _sampleRequestSerial) yield break;
         if (req.result != UnityWebRequest.Result.Success)
         {
             Debug.LogWarning("[Player] Imported sample load failed: " + req.error + " path=" + absolutePath);
+            MissingProjectSample(SampleIdForFile(absolutePath));
             yield break;
         }
 
         var loaded = DownloadHandlerAudioClip.GetContent(req);
         if (loaded == null)
+        {
+            MissingProjectSample(SampleIdForFile(absolutePath));
             yield break;
+        }
 
         _clip = loaded;
-        _clipResourcesPath = "file:" + absolutePath;
+        _pendingProjectId = null;
+        _clipResourcesPath = SampleIdForFile(absolutePath);
         _clipIndex = -1;
 
         if (persistAsLastTrack)
@@ -540,34 +631,13 @@ public class KMusicPlayerUI : MonoBehaviour
                 _deviceTrackIndex = (_deviceTracks.Length > 0) ? 0 : -1;
                 _deviceReady = ok;
 
-                if (_deviceTracks.Length > 0)
-                {
-                    int idx = 0;
-                    var last = LoadLastTrackId();
-                    if (!string.IsNullOrEmpty(last) && last.StartsWith("uri:"))
-                    {
-                        string want = last.Substring(4);
-                        for (int i = 0; i < _deviceTracks.Length; i++)
-                        {
-                            if (_deviceTracks[i] != null && _deviceTracks[i].uri == want)
-                            {
-                                idx = i;
-                                break;
-                            }
-                        }
-                    }
-                    LoadDeviceTrackByIndex(idx);
-                }
+                // Never replace a project's absent/deleted sample with first
+                // track from the device library. Exact URI or explicit selection.
+                var last = LoadLastTrackId();
+                if (!string.IsNullOrEmpty(last))
+                    TryRestoreTrackById(last);
                 else
-                {
-                    UpdateTrackTitle(
-                        "ANDROID MUSIC: 0 tracks\n" +
-                        AndroidMusicLibrary.DebugLastStatus + "\n" +
-                        AndroidMusicLibrary.DebugLastJsonHead
-                    );
-                    RefreshClipList();
-                    if (_clips.Length > 0) LoadClipByIndex(0);
-                }
+                    UpdateTrackTitle("NO SAMPLE SELECTED");
 
                 RefreshTrackBrowserList();
             }, deviceTrackLimit);
@@ -580,21 +650,9 @@ public class KMusicPlayerUI : MonoBehaviour
 
         var lastTrackId = LoadLastTrackId();
         if (!string.IsNullOrEmpty(lastTrackId))
-        {
-            LoadTrackById(lastTrackId);
-        }
-        else if (_clips.Length > 0 && _clip == null)
-        {
-            LoadClipByIndex(0);
-        }
-        else if (_importedTracks.Count > 0 && _clip == null)
-        {
-            LoadImportedTrackByIndex(0);
-        }
-        else if (_clips.Length == 0)
-        {
-            UpdateTrackTitle(_importedTracks.Count > 0 ? "IMPORTED SAMPLES" : "NO TRACKS");
-        }
+            TryRestoreTrackById(lastTrackId);
+        else
+            UpdateTrackTitle("NO SAMPLE SELECTED");
 
         RefreshTrackBrowserList();
     }
@@ -755,6 +813,8 @@ public class KMusicPlayerUI : MonoBehaviour
     private void LoadClipByIndex(int index)
     {
         if (_clips == null || _clips.Length == 0) return;
+        _sampleRequestSerial++;
+        _pendingProjectId = null;
         index = Mathf.Clamp(index, 0, _clips.Length - 1);
 
         _chops01.Clear();
@@ -792,31 +852,33 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_deviceTracks == null || _deviceTracks.Length == 0) return;
         index = Mathf.Clamp(index, 0, _deviceTracks.Length - 1);
         _deviceTrackIndex = index;
+        LoadDeviceTrackByInfo(_deviceTracks[index]);
+    }
 
+    private void LoadDeviceTrackByInfo(TrackInfo t)
+    {
+        if (t == null || string.IsNullOrEmpty(t.uri)) return;
+        int serial = ++_sampleRequestSerial;
+        _pendingProjectId = null;
         _chops01.Clear();
         SyncMarkersToWave();
-
-        var t = _deviceTracks[_deviceTrackIndex];
         string title = string.IsNullOrEmpty(t.title) ? "TRACK" : t.title;
-        if (!string.IsNullOrEmpty(t.artist)) title += $" — {t.artist}";
+        if (!string.IsNullOrEmpty(t.artist)) title += " - " + t.artist;
         UpdateTrackTitle(title);
-
         if (_loadDeviceCoroutine != null)
         {
             StopCoroutine(_loadDeviceCoroutine);
             _loadDeviceCoroutine = null;
         }
-
         audioSource.Stop();
         _wave.SetClip(null);
         _wave.SetPlayhead01(0f);
         _wave.SetMarkers01(_chops01);
         _scrub01 = 0f;
-
-        _loadDeviceCoroutine = StartCoroutine(CoLoadDeviceTrack(t));
+        _loadDeviceCoroutine = StartCoroutine(CoLoadDeviceTrack(t, serial));
     }
 
-    private IEnumerator CoLoadDeviceTrack(TrackInfo t)
+    private IEnumerator CoLoadDeviceTrack(TrackInfo t, int requestSerial)
     {
         bool done = false;
         AudioClip loaded = null;
@@ -828,7 +890,12 @@ public class KMusicPlayerUI : MonoBehaviour
         });
 
         while (!done) yield return null;
-        if (loaded == null) yield break;
+        if (requestSerial != _sampleRequestSerial) yield break;
+        if (loaded == null)
+        {
+            MissingProjectSample("uri:" + t.uri);
+            yield break;
+        }
 
         _clip = loaded;
         _clipResourcesPath = !string.IsNullOrEmpty(t.uri) ? ("uri:" + t.uri) : null;
@@ -1376,7 +1443,7 @@ public class KMusicPlayerUI : MonoBehaviour
                 continue;
 
             int idx = i;
-            string id = "file:" + track.absolutePath;
+            string id = SampleIdForFile(track.absolutePath);
             items.Add(new TrackBrowserItem
             {
                 Title = track.title,
@@ -1434,7 +1501,8 @@ public class KMusicPlayerUI : MonoBehaviour
 
         RefreshImportedTrackList();
         RefreshTrackBrowserList();
-        StartCoroutine(CoLoadImportedTrackByPath(importedAbsolutePath, true));
+        int serial = ++_sampleRequestSerial;
+        StartCoroutine(CoLoadImportedTrackByPath(importedAbsolutePath, true, serial));
         UpdateTrackTitle("IMPORTED SAMPLE");
     }
 
