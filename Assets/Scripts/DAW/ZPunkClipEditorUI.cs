@@ -1046,15 +1046,27 @@ namespace ZPunk.DAW
                         DrawEvent(plane, chop.startTick, quantum, chop.sliceId - 1, -1, false);
                 }
             }
-            editorPlayhead = new VisualElement { name = "ZPunkEditorPlayhead" };
+            // Shared transport playhead for all clip editors.
+            // Covers both the timeline ruler and the note grid.
+            editorPlayhead = new VisualElement
+            {
+                name = "ZPunkEditorPlayhead"
+            };
+
             editorPlayhead.style.position = Position.Absolute;
             editorPlayhead.style.top = 0;
-            editorPlayhead.style.width = 2;
-            editorPlayhead.style.height = EditorHeight;
+            editorPlayhead.style.left = 0;
+            editorPlayhead.style.width = 3;
+            editorPlayhead.style.height = 25 + EditorHeight;
             editorPlayhead.style.backgroundColor = Accent;
+            editorPlayhead.style.opacity = 0.95f;
+
             editorPlayhead.pickingMode = PickingMode.Ignore;
-            editorPlayhead.style.display = DisplayStyle.None;
-            plane.Add(editorPlayhead);
+            editorPlayhead.style.display = DisplayStyle.Flex;
+
+            // Add to the outer grid so it spans the ruler and notes.
+            // Adding it last also keeps it visible above the notes.
+            grid.Add(editorPlayhead);
             plane.RegisterCallback<PointerDownEvent>(evt=>
             {
                 if (evt.button != 0) return;
@@ -1129,33 +1141,72 @@ namespace ZPunk.DAW
         }
         private void Update()
         {
-            if (!ready || editorPlayhead == null || clip == null || content == null ||
-                songTransport == null || root == null ||
-                root.resolvedStyle.display == DisplayStyle.None) return;
-            if (!songTransport.IsPlaying)
-            {
-                editorPlayhead.style.display = DisplayStyle.None;
-                lastPlayheadX = -1f;
+            if (!ready ||
+                root == null ||
+                editorPlayhead == null ||
+                clip == null ||
+                content == null)
                 return;
-            }
-            long relative = songTransport.CurrentTick - clip.startTick;
-            if (relative < 0 || relative >= clip.lengthTicks)
-            {
-                editorPlayhead.style.display = DisplayStyle.None;
-                lastPlayheadX = -1f;
-                return;
-            }
-            if (clip.loopEnabled && content.lengthTicks > 0)
-                relative = (relative + clip.sourceOffsetTick) % content.lengthTicks;
-            else relative += clip.sourceOffsetTick;
-            float x = (float)relative / quantum * StepW;
-            if (Time.unscaledTime < nextPlayheadPaint || Mathf.Abs(x-lastPlayheadX)<.4f) return;
-            nextPlayheadPaint = Time.unscaledTime + 1f / 30f;
-            lastPlayheadX = x;
-            editorPlayhead.style.display = DisplayStyle.Flex;
-            editorPlayhead.style.left = x;
-        }
 
+            // Recover the transport if it was created after initialization.
+            if (songTransport == null)
+                songTransport = FindObjectOfType<ZPunkSongTransport>();
+
+            if (songTransport == null)
+                return;
+
+            if (root.resolvedStyle.display == DisplayStyle.None ||
+                showingSampler)
+                return;
+
+            // Limit UI Toolkit positioning updates to 30 FPS.
+            if (Time.unscaledTime < nextPlayheadPaint)
+                return;
+
+            nextPlayheadPaint = Time.unscaledTime + 1f / 30f;
+
+            // Use the arrangement's musical clock.
+            long globalTick = songTransport.CurrentTick;
+
+            // Calculate the selected clip's relative position.
+            long localTick = globalTick - clip.startTick
+                            + clip.sourceOffsetTick;
+
+            // Determine the visible editor sequence length.
+            long cycleTicks = clip.loopEnabled && content.lengthTicks > 0
+                ? content.lengthTicks
+                : Math.Max(content.lengthTicks, clip.lengthTicks);
+
+            long visibleTicks = (long)steps * quantum;
+
+            cycleTicks = Math.Max(
+                quantum,
+                Math.Min(cycleTicks, visibleTicks)
+            );
+
+            // Wrap the position instead of hiding the playhead.
+            // This also handles clips placed later in the arrangement.
+            long wrappedTick = localTick % cycleTicks;
+
+            if (wrappedTick < 0)
+                wrappedTick += cycleTicks;
+
+            // Convert ticks to horizontal grid pixels.
+            float x = (float)wrappedTick / quantum * StepW;
+
+            // Keep the line visible at the left edge.
+            x = Mathf.Max(1f, x);
+
+            // Only change the element when the position actually moves.
+            if (Mathf.Abs(x - lastPlayheadX) >= 0.4f)
+            {
+                lastPlayheadX = x;
+                editorPlayhead.style.left = x;
+            }
+
+            // Keep the position indicator visible even when stopped.
+            editorPlayhead.style.display = DisplayStyle.Flex;
+        }        
         private void DrawEvent(VisualElement plane,long tick,long duration,int row,int index,bool selected)
         {
             float x=(float)tick/quantum*StepW;
