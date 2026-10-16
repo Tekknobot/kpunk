@@ -99,6 +99,8 @@ namespace ZPunk.DAW
         public string id;
         public ClipKind kind;
         public long lengthTicks = SongData.TicksPerBar4;
+        // Optional, backwards-compatible label for AI-free genre pattern generation.
+        public string generatedTag;
         public List<NoteEvent> notes = new List<NoteEvent>();
         public List<DrumEvent> drums = new List<DrumEvent>();
         public List<ChopEvent> chops = new List<ChopEvent>();

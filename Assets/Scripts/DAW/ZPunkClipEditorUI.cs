@@ -21,6 +21,12 @@ namespace ZPunk.DAW
             new Color(.35f,.60f,.98f), new Color(.66f,.45f,.94f), new Color(.24f,.82f,.69f)
         };
         private VisualElement root, canvas, gridScrollContainer, chips;
+        private VisualElement generatorPanel, generatorGenres, generatorStyles, generatorBarsRow;
+        private Button generatorQuickButton;
+        private Label generatorHeading, generatorSummary, generatorHint, generatorKeyLabel, generatorVariationLabel;
+        private int generatorGenre = 1, generatorStyle, generatorBars = 2, generatorKey = 9, generatorVariation;
+        private bool generatorMinor = true;
+        private int generatorTargetTrack;
         private VisualElement editorPlayhead;
         private VisualElement samplerPage, samplerWave;
         private ScrollView samplerScroll;
@@ -134,6 +140,7 @@ namespace ZPunk.DAW
         {
             root.Clear();
             root.style.flexDirection = FlexDirection.Column;
+            root.style.position = Position.Relative;
             root.style.flexGrow = 1;
             root.style.minHeight = 0;
             root.style.paddingLeft = 9;
@@ -205,6 +212,8 @@ namespace ZPunk.DAW
             row.Add(Btn("LEN -", () => ChangeLength(-1), 56));
             row.Add(Btn("LEN +", () => ChangeLength(1), 56));
             row.Add(Btn("NOTE DEL", DeleteSelectedNote, 77));
+            generatorQuickButton = Btn("GEN", () => OpenGenerator(trackIndex), 58);
+            row.Add(generatorQuickButton);
             var controls = new ScrollView(ScrollViewMode.Horizontal);
             controls.style.height = 54;
             controls.style.flexShrink = 0;
@@ -304,6 +313,7 @@ namespace ZPunk.DAW
             footer.style.marginBottom = 8;
             root.Add(footer);
             BuildSamplerPage();
+            BuildGeneratorPanel();
         }
 
         private void BuildSamplerPage()
@@ -481,6 +491,207 @@ namespace ZPunk.DAW
             root.Add(samplerPage);
         }
 
+        // The editor remains usable at a small phone viewport: the generator is a
+        // scrollable in-editor sheet instead of another permanent toolbar row.
+        private void BuildGeneratorPanel()
+        {
+            generatorPanel = new VisualElement { name = "ZPunkGenreGenerator" };
+            generatorPanel.style.position = Position.Absolute;
+            generatorPanel.style.left = 0;
+            generatorPanel.style.right = 0;
+            generatorPanel.style.top = 0;
+            generatorPanel.style.bottom = 0;
+            generatorPanel.style.backgroundColor = new Color(.055f,.078f,.116f,.99f);
+            generatorPanel.style.display = DisplayStyle.None;
+            generatorPanel.style.paddingTop = 6;
+            generatorPanel.style.paddingLeft = 8;
+            generatorPanel.style.paddingRight = 8;
+            var body = new ScrollView(ScrollViewMode.Vertical);
+            body.style.flexGrow = 1;
+            body.style.minHeight = 0;
+            body.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            body.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            body.contentContainer.style.paddingBottom = 14;
+            generatorPanel.Add(body);
+
+            generatorHeading = Txt("GENERATE / DRUMS",16,Ink);
+            generatorHeading.style.unityFontStyleAndWeight = FontStyle.Bold;
+            generatorHeading.style.marginTop = 4;
+            body.Add(generatorHeading);
+            generatorHint = Txt("Select the sound before writing notes to your clip.",11,Muted);
+            generatorHint.style.whiteSpace = WhiteSpace.Normal;
+            generatorHint.style.marginTop = 4;
+            generatorHint.style.marginBottom = 8;
+            body.Add(generatorHint);
+
+            body.Add(Txt("GENRE",11,Muted));
+            var genresScroll = new ScrollView(ScrollViewMode.Horizontal);
+            genresScroll.style.height = 52;
+            genresScroll.style.flexShrink = 0;
+            genresScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            genresScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            generatorGenres = genresScroll.contentContainer;
+            generatorGenres.style.flexDirection = FlexDirection.Row;
+            body.Add(genresScroll);
+
+            body.Add(Txt("STYLE",11,Muted));
+            var stylesScroll = new ScrollView(ScrollViewMode.Horizontal);
+            stylesScroll.style.height = 52;
+            stylesScroll.style.flexShrink = 0;
+            stylesScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            stylesScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            generatorStyles = stylesScroll.contentContainer;
+            generatorStyles.style.flexDirection = FlexDirection.Row;
+            body.Add(stylesScroll);
+
+            generatorSummary = Txt("",12,Accent);
+            generatorSummary.style.whiteSpace = WhiteSpace.Normal;
+            generatorSummary.style.marginTop = 8;
+            generatorSummary.style.marginBottom = 8;
+            body.Add(generatorSummary);
+
+            body.Add(Txt("KEY / SHARED BY BASS, SYNTH AND PADS",10,Muted));
+            var keyRow = new VisualElement();
+            keyRow.style.height = 48;
+            keyRow.style.flexDirection = FlexDirection.Row;
+            keyRow.style.alignItems = Align.Center;
+            keyRow.Add(Btn("<",() => { generatorKey = (generatorKey + 11)%12; RefreshGeneratorPanel(); },43));
+            generatorKeyLabel = Txt("A MIN",13,Accent);
+            generatorKeyLabel.style.flexGrow = 1;
+            generatorKeyLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+            keyRow.Add(generatorKeyLabel);
+            keyRow.Add(Btn(">",() => { generatorKey = (generatorKey + 1)%12; RefreshGeneratorPanel(); },43));
+            keyRow.Add(Btn("MIN/MAJ",() => { generatorMinor = !generatorMinor; RefreshGeneratorPanel(); },85));
+            body.Add(keyRow);
+
+            body.Add(Txt("LENGTH",10,Muted));
+            generatorBarsRow = new VisualElement();
+            generatorBarsRow.style.flexDirection = FlexDirection.Row;
+            generatorBarsRow.style.height = 48;
+            body.Add(generatorBarsRow);
+
+            var variationRow = new VisualElement();
+            variationRow.style.flexDirection = FlexDirection.Row;
+            variationRow.style.alignItems = Align.Center;
+            variationRow.style.height = 48;
+            generatorVariationLabel = Txt("VARIATION 1",11,Muted);
+            generatorVariationLabel.style.flexGrow = 1;
+            variationRow.Add(generatorVariationLabel);
+            variationRow.Add(Btn("NEW VARIATION",() => { generatorVariation++; RefreshGeneratorPanel(); },118));
+            body.Add(variationRow);
+
+            var actionRow = new VisualElement();
+            actionRow.style.flexDirection = FlexDirection.Row;
+            actionRow.style.height = 52;
+            actionRow.style.flexShrink = 0;
+            var cancel = Btn("CANCEL",CloseGenerator,82);
+            cancel.style.flexGrow = 1;
+            actionRow.Add(cancel);
+            var apply = Btn("GENERATE",ApplyGenerator,109);
+            apply.style.backgroundColor = new Color(.12f,.36f,.34f);
+            apply.style.color = Accent;
+            apply.style.flexGrow = 1;
+            actionRow.Add(apply);
+            // Keep cancel/apply visible even on short phone displays.
+            actionRow.style.paddingTop = 2;
+            generatorPanel.Add(actionRow);
+            root.Add(generatorPanel);
+        }
+
+        private void OpenGenerator(int requestedTrack)
+        {
+            if (!ready || showingSampler || generatorPanel == null || song == null || song.tracks == null ||
+                requestedTrack < 0 || requestedTrack >= song.tracks.Count ||
+                song.tracks[requestedTrack].kind == TrackKind.Chops) return;
+            if (requestedTrack != trackIndex) SelectTrack(requestedTrack);
+            generatorTargetTrack = trackIndex;
+            generatorBars = clip == null ? 2 :
+                (clip.lengthTicks >= 4 * SongData.TicksPerBar4 ? 4 :
+                 clip.lengthTicks >= 2 * SongData.TicksPerBar4 ? 2 : 1);
+            generatorVariation++;
+            RefreshGeneratorPanel();
+            generatorPanel.style.display = DisplayStyle.Flex;
+        }
+        private void CloseGenerator()
+        {
+            if (generatorPanel != null) generatorPanel.style.display = DisplayStyle.None;
+        }
+        private void RefreshGeneratorPanel()
+        {
+            if (generatorPanel == null || song == null || song.tracks == null ||
+                generatorTargetTrack >= song.tracks.Count) return;
+            generatorHeading.text = "GENERATE  /  " + song.tracks[generatorTargetTrack].name.ToUpperInvariant();
+            generatorHint.text = clip == null ?
+                "Creates a new clip. No changes until GENERATE is tapped." :
+                "REPLACES all notes in " + clip.name + ". Cancel leaves it unchanged." +
+                (string.IsNullOrEmpty(content?.generatedTag) ? "" : "\nCURRENT: " + content.generatedTag);
+            generatorGenres.Clear();
+            for (int g = 0; g < ZPunkGenreGenerator.Genres.Length; g++)
+            {
+                int index = g;
+                var button = Btn(ZPunkGenreGenerator.Genres[g],() => { generatorGenre = index; generatorStyle = 0; RefreshGeneratorPanel(); },90);
+                if (g == generatorGenre) { button.style.backgroundColor = SelectedColor(); button.style.color = Accent; }
+                generatorGenres.Add(button);
+            }
+            generatorStyles.Clear();
+            for (int st = 0; st < ZPunkGenreGenerator.Styles[generatorGenre].Length; st++)
+            {
+                int index = st;
+                var button = Btn(ZPunkGenreGenerator.Styles[generatorGenre][st],() => { generatorStyle = index; RefreshGeneratorPanel(); },91);
+                if (st == generatorStyle) { button.style.backgroundColor = SelectedColor(); button.style.color = Accent; }
+                generatorStyles.Add(button);
+            }
+            generatorSummary.text = ZPunkGenreGenerator.Description(generatorGenre, generatorStyle) + "\n" +
+                "READY: " + ZPunkGenreGenerator.Label(generatorGenre,generatorStyle,generatorKey,generatorMinor);
+            generatorKeyLabel.text = ZPunkGenreGenerator.Keys[generatorKey] + (generatorMinor ? " MIN" : " MAJ");
+            generatorBarsRow.Clear();
+            foreach (int count in new[]{1,2,4})
+            {
+                int selected = count;
+                var button = Btn(count + (count == 1 ? " BAR" : " BARS"), () => { generatorBars = selected; RefreshGeneratorPanel(); },76);
+                button.style.flexGrow = 1;
+                if (generatorBars == count) { button.style.backgroundColor = SelectedColor(); button.style.color = Accent; }
+                generatorBarsRow.Add(button);
+            }
+            generatorVariationLabel.text = "VARIATION " + generatorVariation.ToString();
+        }
+        private static Color SelectedColor() { return new Color(.10f,.32f,.34f); }
+
+        private void ApplyGenerator()
+        {
+            if (song == null || song.tracks == null || generatorTargetTrack != trackIndex ||
+                song.tracks[trackIndex].kind == TrackKind.Chops) return;
+            if (!Writable()) return;
+            TrackData track = song.tracks[trackIndex];
+            if (clip == null)
+            {
+                long start = ArrangementEditing.NextFreeStart(track,0, generatorBars * SongData.TicksPerBar4);
+                clip = ArrangementEditing.CreateClip(song,track,start);
+                if (clip == null) return;
+                clipId = clip.id;
+                content = ArrangementEditing.FindContent(song,clip.contentId);
+            }
+            if (content == null)
+            {
+                if (song.contents == null) song.contents = new List<ClipContentData>();
+                content = new ClipContentData { id = ArrangementEditing.Id("content") };
+                song.contents.Add(content);
+                clip.contentId = content.id;
+            }
+            ZPunkGenreGenerator.Fill(content,track.kind,generatorGenre,generatorStyle,
+                generatorBars,generatorKey,generatorMinor,generatorVariation);
+            clip.sourceOffsetTick = 0;
+            clip.loopEnabled = false;
+            clip.lengthTicks = content.lengthTicks;
+            ArrangementEditing.ExtendSong(song, clip.startTick + clip.lengthTicks);
+            selectedNote = -1;
+            CloseGenerator();
+            if (content.kind == ClipKind.Midi && content.notes != null && content.notes.Count > 0)
+                octave = Mathf.Clamp(content.notes[0].pitch / 12 - 1,-1,9);
+            Changed();
+            if (content.kind == ClipKind.Midi) ScrollToOctave();
+        }
+
         private void FindDrumEngine()
         {
             if (drumEngine == null) drumEngine = FindObjectOfType<KMusicDrumSequencer>();
@@ -544,8 +755,8 @@ namespace ZPunk.DAW
             showingSampler = value;
             if (root == null || samplerPage == null) return;
             foreach (var child in root.Children())
-                child.style.display = child == samplerPage ?
-                    (value ? DisplayStyle.Flex : DisplayStyle.None) :
+                child.style.display = child == generatorPanel ? DisplayStyle.None :
+                    child == samplerPage ? (value ? DisplayStyle.Flex : DisplayStyle.None) :
                     (value ? DisplayStyle.None : DisplayStyle.Flex);
             if (!value) return;
             FindSampler();
@@ -942,7 +1153,45 @@ namespace ZPunk.DAW
             for (int i=0;i<song.tracks.Count;i++)
             {
                 int index=i;
-                var item=Btn(song.tracks[i].name.ToUpperInvariant(),()=>SelectTrack(index),83);
+                bool isGeneratable = song.tracks[i].kind != TrackKind.Chops;
+                bool suppressNextClick = false;
+                bool pressing = false;
+                bool moved = false;
+                Vector2 down = Vector2.zero;
+                IVisualElementScheduledItem hold = null;
+                var item=Btn(song.tracks[i].name.ToUpperInvariant(),()=> {
+                    if (suppressNextClick) { suppressNextClick = false; return; }
+                    SelectTrack(index);
+                },83);
+                if (isGeneratable)
+                {
+                    item.RegisterCallback<PointerDownEvent>(evt => {
+                        if (evt.button != 0) return;
+                        hold?.Pause();
+                        pressing = true;
+                        moved = false;
+                        down = evt.position;
+                        hold = item.schedule.Execute(() => {
+                            if (!pressing || moved) return;
+                            suppressNextClick = true;
+                            pressing = false;
+                            OpenGenerator(index);
+                        });
+                        hold.ExecuteLater(525);
+                    }, TrickleDown.TrickleDown);
+                    item.RegisterCallback<PointerMoveEvent>(evt => {
+                        if (pressing && ((Vector2)evt.position - down).sqrMagnitude > 196f)
+                        {
+                            moved = true;
+                            pressing = false;
+                            hold?.Pause();
+                        }
+                    }, TrickleDown.TrickleDown);
+                    item.RegisterCallback<PointerUpEvent>(evt => { pressing = false; hold?.Pause(); }, TrickleDown.TrickleDown);
+                    item.RegisterCallback<PointerCancelEvent>(evt => { pressing = false; hold?.Pause(); });
+                    item.RegisterCallback<PointerCaptureOutEvent>(evt => { pressing = false; hold?.Pause(); });
+                    item.RegisterCallback<DetachFromPanelEvent>(evt => { pressing = false; hold?.Pause(); });
+                }
                 item.style.backgroundColor=i==trackIndex ? colors[Mathf.Min(i,4)] : Raised;
                 item.style.color=i==trackIndex ? new Color(.03f,.07f,.10f) : Ink;
                 chips.Add(item);
@@ -951,10 +1200,13 @@ namespace ZPunk.DAW
             if (trackScroller != null)
                 trackScroller.schedule.Execute(() => { if (trackScroller != null) trackScroller.scrollOffset = new Vector2(chipX, 0); }).ExecuteLater(0);
             RefreshKitSelector();
+            if (generatorQuickButton != null)
+                generatorQuickButton.SetEnabled(song.tracks[trackIndex].kind != TrackKind.Chops);
             if (title != null) title.text = song.tracks[trackIndex].name.ToUpperInvariant()+"  /  " + (clip != null ? clip.name : "NO CLIP");
-            if (info != null) info.text= clip == null ? "NO CLIP  /  Tap + NEW CLIP to begin" :
-                (IsMidi ? "PIANO ROLL" : content != null && content.kind==ClipKind.Drums ? "DRUM STEP EDITOR" : "SAMPLE STEP EDITOR")+
-                "  /  Bar " + (clip.startTick / SongData.TicksPerBar4 + 1) + "  /  LIVE EDIT";
+            if (info != null) info.text= clip == null ? "NO CLIP  /  HOLD TRACK TO GENERATE" :
+                (!string.IsNullOrEmpty(content?.generatedTag) ? "GEN " + content.generatedTag :
+                (IsMidi ? "PIANO ROLL" : content != null && content.kind==ClipKind.Drums ? "DRUM STEP EDITOR" : "SAMPLE STEP EDITOR") +
+                "  /  Bar " + (clip.startTick / SongData.TicksPerBar4 + 1)) + "  /  HOLD TRACK TO GEN";
             gridScrollContainer.Clear();
             editorPlayhead = null;
             lastPlayheadX = -1f;
