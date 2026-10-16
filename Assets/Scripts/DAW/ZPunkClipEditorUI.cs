@@ -48,8 +48,8 @@ namespace ZPunk.DAW
         private int selectedEventRow = -1;
         private long selectedEventTick = -1;
         private int velocity = 110;
-        private const float StepW = 24f;
-        private const float RowH = 27f;
+        private const float StepW = 32f;
+        private const float RowH = 36f;
         // Render every MIDI pitch (C-1 through G9). The user scrolls the same
         // continuous 128-note keyboard; octave controls only move the viewport.
         private const int MidiRows = 128;
@@ -93,7 +93,7 @@ namespace ZPunk.DAW
         private static Label Txt(string str, int size=12, Color? color=null)
         {
             var label = new Label(str);
-            label.style.fontSize = size;
+            label.style.fontSize = Mathf.Max(12, size);
             label.style.color = color ?? Ink;
             label.style.unityTextAlign = TextAnchor.MiddleLeft;
             return label;
@@ -114,7 +114,7 @@ namespace ZPunk.DAW
             b.style.minWidth = width;
             b.style.flexShrink = 0;
             b.style.flexGrow = 0;
-            b.style.height = 37;
+            b.style.height = 44;
             b.style.marginRight = 5;
             b.style.marginBottom = 1;
             b.style.whiteSpace = WhiteSpace.NoWrap;
@@ -126,7 +126,7 @@ namespace ZPunk.DAW
             b.style.borderTopRightRadius = 7;
             b.style.borderBottomLeftRadius = 7;
             b.style.borderBottomRightRadius = 7;
-            b.style.fontSize = 11;
+            b.style.fontSize = 13;
             b.style.unityFontStyleAndWeight = FontStyle.Bold;
             return b;
         }
@@ -152,7 +152,7 @@ namespace ZPunk.DAW
             title.style.whiteSpace = WhiteSpace.NoWrap;
             title.style.overflow = Overflow.Hidden;
             title.style.textOverflow = TextOverflow.Ellipsis;
-            heading.style.height = 46;
+            heading.style.height = 50;
             heading.style.flexShrink = 0;
             heading.Add(title);
             heading.Add(Btn("+ NEW CLIP", NewClip, 98));
@@ -160,7 +160,7 @@ namespace ZPunk.DAW
 
             var tracks = new ScrollView(ScrollViewMode.Horizontal);
             trackScroller = tracks;
-            tracks.style.height = 49;
+            tracks.style.height = 55;
             tracks.style.flexShrink = 0;
             tracks.style.marginTop = 6;
             tracks.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
@@ -173,9 +173,9 @@ namespace ZPunk.DAW
             // Reserve this one toolbar row for every track: switching Drums/Bass/etc
             // must not shift the piano roll or the scroll viewport vertically.
             kitSelector = new VisualElement { name = "ZPunkDrumKitSelector" };
-            kitSelector.style.height = 42;
-            kitSelector.style.minHeight = 42;
-            kitSelector.style.maxHeight = 42;
+            kitSelector.style.height = 50;
+            kitSelector.style.minHeight = 50;
+            kitSelector.style.maxHeight = 50;
             kitSelector.style.flexShrink = 0;
             kitSelector.style.flexDirection = FlexDirection.Row;
             kitSelector.style.alignItems = Align.Center;
@@ -208,7 +208,7 @@ namespace ZPunk.DAW
             row.Add(Btn("SAMPLE", OpenSampler, 76));
             row.Add(Btn("SAVE", Save, 53));
             var controls = new ScrollView(ScrollViewMode.Horizontal);
-            controls.style.height = 48;
+            controls.style.height = 54;
             controls.style.flexShrink = 0;
             controls.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             controls.verticalScrollerVisibility = ScrollerVisibility.Hidden;
@@ -222,7 +222,7 @@ namespace ZPunk.DAW
 
             scroller = new ScrollView(ScrollViewMode.VerticalAndHorizontal) { name = "ZPunkNoteScroll" };
             scroller.style.flexGrow = 1;
-            scroller.style.minHeight = 170;
+            scroller.style.minHeight = 125;
             scroller.style.maxHeight = 655;
             scroller.style.backgroundColor = new Color(.047f,.068f,.105f);
             scroller.style.borderTopLeftRadius = 8;

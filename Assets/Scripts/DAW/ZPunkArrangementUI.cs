@@ -12,7 +12,7 @@ namespace ZPunk.DAW
     /// </summary>
     public sealed class ZPunkArrangementUI : MonoBehaviour
     {
-        private float HeaderWidth = 118f;
+        private float HeaderWidth = 170f;
         private float RowHeight = 55f;
         private float RulerHeight = 26f;
         private float uiScale = 1f;
@@ -111,7 +111,7 @@ namespace ZPunk.DAW
             scale = Mathf.Clamp(scale, 1f, 1.12f);
             if (Mathf.Abs(scale - uiScale) < .025f) return;
             uiScale = scale;
-            HeaderWidth = 118f;
+            HeaderWidth = 170f;
             RowHeight = 55f;
             RulerHeight = 26f;
             pixelsPerBar = Mathf.Clamp(pixelsPerBar, 42f, 154f);
@@ -122,10 +122,10 @@ namespace ZPunk.DAW
             page.style.paddingBottom = 8 * scale;
             foreach (var button in page.Query<Button>().ToList())
             {
-                button.style.height = 35 * scale;
-                button.style.fontSize = 11 * scale;
+                button.style.height = 44 * scale;
+                button.style.fontSize = 13 * scale;
                 // Keep touch targets usable even before the first layout pass.
-                button.style.minWidth = Mathf.Max(64f,
+                button.style.minWidth = Mathf.Max(48f,
                     (button.text != null ? button.text.Length : 0) * 8.5f + 16f) * scale;
             }
             var songTitle = page.Q<Label>("ZPunkSongTitle");
@@ -133,9 +133,9 @@ namespace ZPunk.DAW
             if (details != null) details.style.fontSize = 12 * scale;
             if (hint != null) hint.style.fontSize = 11 * scale;
             var clipActions = page.Q<ScrollView>("ZPunkClipActions");
-            if (clipActions != null) clipActions.style.height = 42 * scale;
+            if (clipActions != null) clipActions.style.height = 51 * scale;
             var songActions = page.Q<ScrollView>("ZPunkSongActions");
-            if (songActions != null) songActions.style.height = 42 * scale;
+            if (songActions != null) songActions.style.height = 51 * scale;
             if (timelineFrame != null)
                 timelineFrame.style.height = RulerHeight + 5 * RowHeight + 2 * scale;
             if (song != null) Refresh();
@@ -164,7 +164,7 @@ namespace ZPunk.DAW
             var b = new Button(click) { text = label };
             b.style.minWidth = minWidth * uiScale;
             b.style.flexShrink = 0;
-            b.style.height = 34 * uiScale;
+            b.style.height = 44 * uiScale;
             b.style.marginRight = 5 * uiScale;
             b.style.marginBottom = 2 * uiScale;
             b.style.paddingLeft = 10 * uiScale;
@@ -175,7 +175,7 @@ namespace ZPunk.DAW
             b.style.borderTopRightRadius = 5;
             b.style.borderBottomLeftRadius = 5;
             b.style.borderBottomRightRadius = 5;
-            b.style.fontSize = 11 * uiScale;
+            b.style.fontSize = 13 * uiScale;
             b.style.unityFontStyleAndWeight = FontStyle.Bold;
             return b;
         }
@@ -183,7 +183,7 @@ namespace ZPunk.DAW
         private Label Label(string str, int size, Color color)
         {
             var label = new Label(str);
-            label.style.fontSize = size * uiScale;
+            label.style.fontSize = Mathf.Max(12f, size * uiScale);
             label.style.color = color;
             label.style.unityTextAlign = TextAnchor.MiddleLeft;
             return label;
@@ -321,9 +321,9 @@ namespace ZPunk.DAW
             loopCaption.style.flexGrow = 1;
             loopCaption.style.minWidth = 0;
             loopRow.Add(loopCaption);
-            var decrease = Button("-", () => AdjustLoopBars(-1), 35);
-            decrease.style.minWidth = 35;
-            decrease.style.width = 35;
+            var decrease = Button("-", () => AdjustLoopBars(-1), 44);
+            decrease.style.minWidth = 44;
+            decrease.style.width = 44;
             decrease.style.paddingLeft = 0;
             decrease.style.paddingRight = 0;
             loopRow.Add(decrease);
@@ -331,9 +331,9 @@ namespace ZPunk.DAW
             loopBarsLabel.style.width = 46;
             loopBarsLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
             loopRow.Add(loopBarsLabel);
-            var increase = Button("+", () => AdjustLoopBars(1), 35);
-            increase.style.minWidth = 35;
-            increase.style.width = 35;
+            var increase = Button("+", () => AdjustLoopBars(1), 44);
+            increase.style.minWidth = 44;
+            increase.style.width = 44;
             increase.style.paddingLeft = 0;
             increase.style.paddingRight = 0;
             loopRow.Add(increase);
@@ -390,7 +390,7 @@ namespace ZPunk.DAW
         private ScrollView MakeCommandStrip(string name)
         {
             var row = new ScrollView(ScrollViewMode.Horizontal) { name = name };
-            row.style.height = 41 * uiScale;
+            row.style.height = 51 * uiScale;
             row.style.marginBottom = 3 * uiScale;
             row.style.flexShrink = 0;
             row.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
@@ -484,25 +484,30 @@ namespace ZPunk.DAW
                 name.style.minWidth = 0;
                 name.RegisterCallback<PointerDownEvent>(evt => { selectedTrackIndex = index; SelectClip(null); evt.StopPropagation(); });
                 info.Add(name);
-                // M/S vertical stack keeps both accessible and entirely inside the lane header.
+                // Two full-size touch targets instead of the former 23px stacked
+                // buttons. Keeping these inline leaves the timeline's row height
+                // and five-lane overview unchanged.
                 var toggles = new VisualElement();
-                toggles.style.flexDirection = FlexDirection.Column;
-                toggles.style.width = 29;
-                toggles.style.marginRight = 4;
-                var m = Button(track.mute ? "M!" : "M", () => ToggleMute(index), 25);
-                m.style.minWidth = 25;
-                m.style.height = 23;
-                m.style.fontSize = 9;
-                m.style.marginRight = 0;
-                m.style.marginBottom = 2;
+                toggles.style.flexDirection = FlexDirection.Row;
+                toggles.style.alignItems = Align.Center;
+                toggles.style.width = 91;
+                toggles.style.marginRight = 3;
+                var m = Button(track.mute ? "M!" : "M", () => ToggleMute(index), 42);
+                m.style.minWidth = 42;
+                m.style.width = 42;
+                m.style.height = 44;
+                m.style.fontSize = 12;
+                m.style.marginRight = 4;
+                m.style.marginBottom = 0;
                 m.style.paddingLeft = 0;
                 m.style.paddingRight = 0;
                 m.style.backgroundColor = track.mute ? new Color(.55f,.21f,.29f) : new Color(.20f,.25f,.32f);
                 toggles.Add(m);
-                var s = Button(track.solo ? "S!" : "S", () => ToggleSolo(index), 25);
-                s.style.minWidth = 25;
-                s.style.height = 23;
-                s.style.fontSize = 9;
+                var s = Button(track.solo ? "S!" : "S", () => ToggleSolo(index), 42);
+                s.style.minWidth = 42;
+                s.style.width = 42;
+                s.style.height = 44;
+                s.style.fontSize = 12;
                 s.style.marginRight = 0;
                 s.style.marginBottom = 0;
                 s.style.paddingLeft = 0;

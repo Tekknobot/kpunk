@@ -74,7 +74,7 @@ namespace ZPunk.DAW
         {
             var label = new Label(s);
             label.style.color = color;
-            label.style.fontSize = size;
+            label.style.fontSize = Mathf.Max(12, size);
             label.style.unityTextAlign = TextAnchor.MiddleLeft;
             return label;
         }
@@ -96,13 +96,13 @@ namespace ZPunk.DAW
         private static Button Action(string label,Action action)
         {
             var button = new Button(action) { text = label };
-            button.style.height = 31;
-            button.style.minWidth = 39;
+            button.style.height = 45;
+            button.style.minWidth = 46;
             button.style.flexShrink = 0;
             button.style.color = Ink;
             button.style.backgroundColor = new Color(.16f,.22f,.30f);
             button.style.marginLeft = 5;
-            button.style.fontSize = 10;
+            button.style.fontSize = 13;
             return button;
         }
         private static void AddFader(VisualElement parent,float value,Color color,Action<float> onChange)

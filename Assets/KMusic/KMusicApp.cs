@@ -205,12 +205,19 @@ namespace KMusic
     {
         if (_responsivePanel == null) return;
         bool portrait = Screen.height > Screen.width;
+        float shortEdge = Mathf.Min(Screen.width, Screen.height);
+        float aspect = Mathf.Max(Screen.width, Screen.height) / Mathf.Max(1f, shortEdge);
+        // Pixel density alone cannot distinguish a high-resolution phone from a
+        // tablet. A tablet-like aspect ratio needs a wider logical canvas; using
+        // a phone's 430-point canvas on an iPad destroys the usable viewport.
+        bool tabletLayout = shortEdge >= 700f && aspect <= 1.67f;
         _responsivePanel.scaleMode = PanelScaleMode.ScaleWithScreenSize;
         _responsivePanel.screenMatchMode = PanelScreenMatchMode.MatchWidthOrHeight;
-        _responsivePanel.match = 0f;  // predictable logical widths
-        _responsivePanel.referenceResolution = portrait
-            ? new Vector2Int(430, 932)
-            : new Vector2Int(1280, 800);
+        _responsivePanel.match = 0f;
+        _responsivePanel.referenceResolution = tabletLayout
+            ? (portrait ? new Vector2Int(760, 1024) : new Vector2Int(980, 760))
+            : (portrait ? new Vector2Int(430, 932)
+                : (Application.isMobilePlatform ? new Vector2Int(900, 520) : new Vector2Int(1280, 800)));
     }
 
     private void ApplySafeArea(bool force)

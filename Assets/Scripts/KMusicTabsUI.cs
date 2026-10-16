@@ -13,14 +13,14 @@ using ZPunk.DAW;
 public sealed class KMusicTabsUI : MonoBehaviour
 {
     [SerializeField] private UIDocument doc;
-    private VisualElement uiRoot, pages, shell, header, transportRow, menu, dock;
+    private VisualElement uiRoot, pages, shell, header, headerRow, menu, dock;
     private VisualElement pageArrangement, pageEditor, pageSound, pageMixer;
     private VisualElement context, content;
-    private Label heading, subheading, projectInfo;
+    private Label heading, subheading, projectInfo, headerTitle, headerSignature;
     private Label tempoDisplay;
     private Coroutine menuAnimation;
     private bool menuIsOpen;
-    private Button arrangeButton, createButton, soundButton, mixButton, menuToggle;
+    private Button arrangeButton, createButton, soundButton, mixButton, menuToggle, headerSave, headerPlay, headerStop;
     private ZPunkArrangementUI arrangement;
     private ZPunkClipEditorUI editor;
     private ZPunkSoundUI sound;
@@ -30,37 +30,12 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private string workspace="arrange";
     private bool isReady, compact;
     private float previousWidth=-1f, previousHeight=-1f;
-    private PanelSettings workspacePanel;
-    private Vector2Int originalReferenceResolution;
-    private float originalPanelMatch;
-    private bool panelMetricsSaved, tabletMetrics;
     private bool pendingLiveEdit;
     private float nextLiveEditApply;
 
-    // The stock panel is 1080 x 2280, height-matched for phones. Keeping those
-    // metrics on a 4:3 tablet makes the DAW occupy a tiny fraction of the screen.
-    // Switch the same panel to tablet-native coordinates, without scaling every
-    // child or changing how existing phone builds look.
-    private void ConfigureDisplayMetrics()
-    {
-        if(doc==null || doc.panelSettings==null)return;
-        if(workspacePanel!=doc.panelSettings)
-        {
-            workspacePanel=doc.panelSettings;
-            panelMetricsSaved=false;
-        }
-        if(!panelMetricsSaved)
-        {
-            originalReferenceResolution=workspacePanel.referenceResolution;
-            originalPanelMatch=workspacePanel.match;
-            panelMetricsSaved=true;
-        }
-        bool tablet=Screen.width>=650 && Screen.height>=650;
-        if(tablet==tabletMetrics && panelMetricsSaved && previousWidth>=0)return;
-        tabletMetrics=tablet;
-        workspacePanel.referenceResolution=tablet ? new Vector2Int(1024,768) : originalReferenceResolution;
-        workspacePanel.match=tablet ? 0.5f : originalPanelMatch;
-    }
+    // PanelSettings belong to KMusicApp. Never overwrite its phone/tablet
+    // reference resolution from another component: both behaviours previously
+    // fought over the same shared panel and caused intermittent tablet scaling.
 
     private int lastSlot=-1;
     private static readonly Color Ink=new Color(.91f,.95f,.98f);
@@ -69,7 +44,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private static readonly Color NavBg=new Color(.080f,.115f,.165f);
     private static readonly Color Selected=new Color(.12f,.32f,.33f);
 
-    private void Awake(){if(doc==null)doc=GetComponent<UIDocument>(); ConfigureDisplayMetrics();}
+    private void Awake(){if(doc==null)doc=GetComponent<UIDocument>();}
     private void OnEnable()
     {
         // The old workspace created the pad Audio Helm controller dynamically.
@@ -83,15 +58,6 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private void OnDisable()
     {
         if(uiRoot!=null)uiRoot.UnregisterCallback<GeometryChangedEvent>(GeometryChanged);
-        // PanelSettings is a shared ScriptableObject; do not retain temporary
-        // tablet coordinates after the workspace closes or Editor Play stops.
-        if(workspacePanel!=null && panelMetricsSaved)
-        {
-            workspacePanel.referenceResolution=originalReferenceResolution;
-            workspacePanel.match=originalPanelMatch;
-        }
-        panelMetricsSaved=false;
-        tabletMetrics=false;
         previousWidth=-1f;
         previousHeight=-1f;
         isReady=false;
@@ -100,7 +66,6 @@ public sealed class KMusicTabsUI : MonoBehaviour
     {
         if(doc==null)doc=GetComponent<UIDocument>();
         if(doc==null)yield break;
-        ConfigureDisplayMetrics();
         while(doc.rootVisualElement==null || doc.rootVisualElement.Q<VisualElement>("Pages")==null)
             yield return null;
         if(isReady)yield break;
@@ -146,7 +111,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private static Label Label(string text,int size=12,Color? color=null)
     {
         var l=new Label(text);
-        l.style.fontSize=size;
+        l.style.fontSize=Mathf.Max(12,size);
         l.style.color=color??Ink;
         l.style.unityTextAlign=TextAnchor.MiddleLeft;
         return l;
@@ -156,8 +121,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
         var b=new Button(onClick){text=text};
         b.style.backgroundColor=NavBg;
         b.style.color=Ink;
-        b.style.fontSize=12;
-        b.style.height=42;
+        b.style.fontSize=14;
+        b.style.height=46;
         b.style.paddingLeft=9;
         b.style.paddingRight=9;
         b.style.borderTopLeftRadius=7;
@@ -195,92 +160,97 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(obsoleteMenu!=null)obsoleteMenu.RemoveFromHierarchy();
         header.RemoveFromHierarchy();
         header.Clear();
-        header.style.height=StyleKeyword.Auto;
-        header.style.minHeight=82;
-        header.style.paddingLeft=8;
-        header.style.paddingRight=8;
+        header.style.height=61;
+        header.style.minHeight=61;
+        header.style.flexShrink=0;
+        header.style.paddingLeft=10;
+        header.style.paddingRight=10;
         header.style.paddingTop=7;
-        header.style.paddingBottom=8;
+        header.style.paddingBottom=7;
         header.style.marginBottom=3;
-        header.style.flexDirection=FlexDirection.Column;
+        header.style.flexDirection=FlexDirection.Row;
+        header.style.alignItems=Align.Center;
         header.style.backgroundColor=new Color(.052f,.080f,.124f);
-        header.style.borderTopLeftRadius=9;
-        header.style.borderTopRightRadius=9;
-        header.style.borderBottomLeftRadius=9;
-        header.style.borderBottomRightRadius=9;
+        header.style.borderTopLeftRadius=10;
+        header.style.borderTopRightRadius=10;
+        header.style.borderBottomLeftRadius=10;
+        header.style.borderBottomRightRadius=10;
         uiRoot.Insert(0,header);
 
-        // Named controls are retained, not recreated: original events survive.
-        var row1=new VisualElement();
-        row1.style.flexDirection=FlexDirection.Row;
-        row1.style.alignItems=Align.Center;
-        row1.style.justifyContent=Justify.SpaceBetween;
-        row1.style.height=36;
-        if(existingTitle!=null)
+        // The entire transport lives in one permanently non-wrapping row.
+        // Named Play/Stop buttons are reused, so their existing bindings survive.
+        headerRow=new VisualElement{name="ZPunkHeaderRow"};
+        headerRow.style.flexDirection=FlexDirection.Row;
+        headerRow.style.flexWrap=Wrap.NoWrap;
+        headerRow.style.alignItems=Align.Center;
+        headerRow.style.width=new Length(100,LengthUnit.Percent);
+        headerRow.style.minWidth=0;
+        header.Add(headerRow);
+        headerTitle=existingTitle!=null?existingTitle:Label("ZPUNK 2.0",18);
+        headerTitle.text="ZPUNK 2.0";
+        headerTitle.style.fontSize=18;
+        headerTitle.style.unityFontStyleAndWeight=FontStyle.Bold;
+        headerTitle.style.color=Ink;
+        headerTitle.style.flexShrink=1;
+        headerTitle.style.flexGrow=1;
+        headerTitle.style.minWidth=0;
+        headerTitle.style.overflow=Overflow.Hidden;
+        headerTitle.style.whiteSpace=WhiteSpace.NoWrap;
+        headerTitle.style.textOverflow=TextOverflow.Ellipsis;
+        headerRow.Add(headerTitle);
+
+        headerPlay=play;
+        headerStop=stop;
+        if(headerPlay!=null)
         {
-            existingTitle.RemoveFromHierarchy();
-            existingTitle.text="ZPUNK 2.0";
-            existingTitle.style.fontSize=19;
-            existingTitle.style.color=Ink;
-            row1.Add(existingTitle);
+            headerPlay.text="▶";
+            headerPlay.tooltip="Play";
+            SetTransport(headerPlay);
+            headerPlay.style.backgroundColor=Accent;
+            headerPlay.style.color=new Color(.02f,.08f,.10f);
+            headerRow.Add(headerPlay);
         }
-        else
+        if(headerStop!=null)
         {
-            var title=Label("ZPUNK 2.0",19);
-            title.style.unityFontStyleAndWeight=FontStyle.Bold;
-            row1.Add(title);
+            headerStop.text="■";
+            headerStop.tooltip="Stop";
+            SetTransport(headerStop);
+            headerRow.Add(headerStop);
         }
+        headerSignature=Label("4/4",12,Dim);
+        headerSignature.style.flexShrink=0;
+        headerSignature.style.marginLeft=3;
+        headerSignature.style.marginRight=5;
+        headerRow.Add(headerSignature);
+
+        headerSave=Button("SAVE",Save);
+        headerSave.style.height=46;
+        headerSave.style.minWidth=61;
+        headerSave.style.fontSize=13;
+        headerSave.style.flexShrink=0;
+        headerSave.style.marginRight=6;
+        headerSave.style.backgroundColor=new Color(.105f,.188f,.230f);
+        headerRow.Add(headerSave);
+
         menuToggle=Button("",ToggleMenu);
         menuToggle.name="ZPunkMenuToggle";
-        menuToggle.style.width=42;
-        menuToggle.style.height=34;
+        menuToggle.tooltip="Project menu";
+        menuToggle.style.width=46;
+        menuToggle.style.height=46;
+        menuToggle.style.flexShrink=0;
         menuToggle.style.alignItems=Align.Center;
         menuToggle.style.justifyContent=Justify.Center;
         for(int line=0;line<3;line++)
         {
             var bar=new VisualElement();
-            bar.style.width=20;
+            bar.style.width=19;
             bar.style.height=2;
-            bar.style.marginBottom=3;
+            bar.style.marginBottom=line==2?0:4;
             bar.style.backgroundColor=Ink;
+            bar.pickingMode=PickingMode.Ignore;
             menuToggle.Add(bar);
         }
-        row1.Add(menuToggle);
-        header.Add(row1);
-
-        transportRow=new VisualElement();
-        transportRow.style.flexDirection=FlexDirection.Row;
-        transportRow.style.alignItems=Align.Center;
-        transportRow.style.marginTop=5;
-        if(play!=null)
-        {
-            play.RemoveFromHierarchy();
-            play.text="▶";
-            SetTransport(play);
-            play.style.backgroundColor=Accent;
-            play.style.color=new Color(.02f,.08f,.10f);
-            transportRow.Add(play);
-        }
-        if(stop!=null)
-        {
-            stop.RemoveFromHierarchy();
-            stop.text="■";
-            SetTransport(stop);
-            transportRow.Add(stop);
-        }
-        // No BPM input or readout in the transport. Tempo lives in Arrange.
-        var signature=Label("4/4",11,Dim);
-        signature.style.marginLeft=8;
-        transportRow.Add(signature);
-        var space=new VisualElement();space.style.flexGrow=1;transportRow.Add(space);
-        var save=Button("SAVE",Save);
-        save.style.height=35;
-        save.style.borderTopLeftRadius=3;
-        save.style.borderTopRightRadius=3;
-        save.style.borderBottomLeftRadius=3;
-        save.style.borderBottomRightRadius=3;
-        transportRow.Add(save);
-        header.Add(transportRow);
+        headerRow.Add(menuToggle);
 
         menu=new VisualElement{name="ZPunkProjectMenu"};
         menu.style.display=DisplayStyle.None;
@@ -340,7 +310,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
         var closeProject=Button("CLOSE MENU",()=>SetMenuOpen(false));
         StyleMenuItem(closeProject);
         menu.Add(closeProject);
-        header.Add(menu);
+        // Menu expands below the one-row header, never inside it.
+        uiRoot.Insert(1,menu);
 
         shell=new VisualElement{name="ZPunkWorkspaceFrame"};
         shell.style.flexDirection=FlexDirection.Column;
@@ -401,10 +372,10 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void StyleMenuItem(Button b)
     {
-        b.style.height=41;
-        b.style.marginBottom=5;
+        b.style.height=46;
+        b.style.marginBottom=6;
         b.style.backgroundColor=NavBg;
-        b.style.fontSize=12;
+        b.style.fontSize=13;
         b.style.color=Ink;
         b.style.borderTopLeftRadius=3;
         b.style.borderTopRightRadius=3;
@@ -441,10 +412,11 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void SetTransport(Button b)
     {
-        b.style.width=52;
-        b.style.height=39;
+        b.style.width=47;
+        b.style.height=46;
+        b.style.flexShrink=0;
         b.style.fontSize=19;
-        b.style.marginRight=6;
+        b.style.marginRight=5;
         b.style.backgroundColor=NavBg;
         b.style.borderTopLeftRadius=7;
         b.style.borderTopRightRadius=7;
@@ -455,10 +427,10 @@ public sealed class KMusicTabsUI : MonoBehaviour
     {
         var b=Button(title,action);
         b.style.flexGrow=1;
-        b.style.height=46;
+        b.style.height=49;
         b.style.marginRight=3;
         b.style.marginLeft=3;
-        b.style.fontSize=12;
+        b.style.fontSize=13;
         b.style.unityFontStyleAndWeight=FontStyle.Bold;
         dock.Add(b);
         return b;
@@ -522,44 +494,56 @@ public sealed class KMusicTabsUI : MonoBehaviour
         previousHeight=uiRoot.resolvedStyle.height;
         compact=Screen.height>Screen.width || width<720;
         bool shortViewport=previousHeight>0 && previousHeight<760;
-        if(context!=null) context.style.height=shortViewport?32:42;
+
+        // Keep the header legible and single-line down to narrow phone widths.
+        // Only the low-value signature disappears; the title and core actions stay.
+        bool narrow=width<400;
+        if(headerTitle!=null)
+        {
+            headerTitle.text=narrow?"ZPUNK":"ZPUNK 2.0";
+            headerTitle.style.fontSize=narrow?16:18;
+        }
+        if(headerSignature!=null)
+            headerSignature.style.display=width<440?DisplayStyle.None:DisplayStyle.Flex;
+        if(headerPlay!=null)headerPlay.style.width=narrow?43:47;
+        if(headerStop!=null)headerStop.style.width=narrow?43:47;
+        if(headerSave!=null)
+        {
+            headerSave.style.minWidth=narrow?56:61;
+            headerSave.style.paddingLeft=narrow?6:9;
+            headerSave.style.paddingRight=narrow?6:9;
+        }
+        if(menuToggle!=null)menuToggle.style.width=narrow?43:46;
         if(header!=null)
         {
-            header.style.paddingTop=shortViewport?3:7;
-            header.style.paddingBottom=shortViewport?3:8;
+            header.style.height=shortViewport?56:61;
+            header.style.minHeight=shortViewport?56:61;
         }
+        if(context!=null) context.style.height=shortViewport?37:43;
+
         shell.style.flexDirection=compact?FlexDirection.Column:FlexDirection.Row;
         dock.RemoveFromHierarchy();
         if(compact)shell.Add(dock);
         else shell.Insert(0,dock);
         dock.style.flexDirection=compact?FlexDirection.Row:FlexDirection.Column;
-        if(compact){dock.style.width=StyleKeyword.Auto;dock.style.height=shortViewport?53:60;}
-        else {dock.style.width=112;dock.style.height=StyleKeyword.Auto;}
+        if(compact){dock.style.width=StyleKeyword.Auto;dock.style.height=shortViewport?57:64;}
+        else {dock.style.width=118;dock.style.height=StyleKeyword.Auto;}
         dock.style.justifyContent=compact?Justify.SpaceAround:Justify.FlexStart;
         dock.style.flexShrink=0;
         dock.style.overflow=Overflow.Visible;
         foreach(var button in new[]{arrangeButton,createButton,soundButton,mixButton})
         {
             button.style.flexGrow=compact?1:0;
-            button.style.height=compact?(shortViewport?41:47):49;
+            button.style.height=compact?(shortViewport?46:51):53;
             button.style.flexShrink=0;
             button.style.minWidth=0;
             button.style.marginBottom=compact?0:8;
-            button.style.fontSize=compact?11:11;
+            button.style.fontSize=13;
         }
-        header.style.minHeight=compact?(shortViewport?72:82):47;
     }
     private void Update()
     {
         if(!isReady)return;
-        // Rotation and split-screen resize must not leave a tall-phone coordinate
-        // system on a tablet. Reconfigure only if the device class changes.
-        bool tabletNow=Screen.width>=650 && Screen.height>=650;
-        if(tabletNow!=tabletMetrics)
-        {
-            ConfigureDisplayMetrics();
-            Responsive(uiRoot.resolvedStyle.width);
-        }
         if(projects==null)return;
         if(pendingLiveEdit && Time.unscaledTime>=nextLiveEditApply)
         {

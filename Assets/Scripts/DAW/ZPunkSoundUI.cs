@@ -45,7 +45,7 @@ namespace ZPunk.DAW
         private static Label T(string value,int size,Color color)
         {
             var l=new Label(value);
-            l.style.fontSize=size;l.style.color=color;
+            l.style.fontSize=Mathf.Max(12,size);l.style.color=color;
             l.style.unityTextAlign=TextAnchor.MiddleLeft;
             return l;
         }
@@ -57,10 +57,10 @@ namespace ZPunk.DAW
         private static Button Action(string name,Action click)
         {
             var b=new Button(click){text=name};
-            b.style.height=39;
-            b.style.minWidth=45;
+            b.style.height=46;
+            b.style.minWidth=46;
             b.style.flexShrink=0;
-            b.style.fontSize=12;
+            b.style.fontSize=14;
             b.style.color=Ink;
             b.style.backgroundColor=Tile;
             Corners(b,4);
@@ -85,7 +85,7 @@ namespace ZPunk.DAW
 
             trackBar=new VisualElement();
             trackBar.style.flexDirection=FlexDirection.Row;
-            trackBar.style.height=44;
+            trackBar.style.height=52;
             trackBar.style.flexShrink=0;
             trackBar.style.marginBottom=9;
             foreach(var kind in new[]{TrackKind.Bass,TrackKind.Synth,TrackKind.Pads})
@@ -104,7 +104,7 @@ namespace ZPunk.DAW
             var presetCard=new VisualElement();
             presetCard.style.flexDirection=FlexDirection.Row;
             presetCard.style.alignItems=Align.Center;
-            presetCard.style.height=56;
+            presetCard.style.height=61;
             presetCard.style.flexShrink=0;
             presetCard.style.paddingLeft=8;
             presetCard.style.paddingRight=8;
@@ -112,7 +112,7 @@ namespace ZPunk.DAW
             Corners(presetCard,5);
             presetCard.style.marginBottom=8;
             var prev=Action("<",()=>ChangePreset(-1));
-            prev.style.width=42;prev.style.marginRight=5;
+            prev.style.width=46;prev.style.marginRight=5;
             presetCard.Add(prev);
             presetName=T("LOADING PRESET",12,Ink);
             presetName.style.flexGrow=1;
@@ -121,7 +121,7 @@ namespace ZPunk.DAW
             presetName.style.whiteSpace=WhiteSpace.Normal;
             presetCard.Add(presetName);
             var next=Action(">",()=>ChangePreset(1));
-            next.style.width=42;next.style.marginLeft=5;
+            next.style.width=46;next.style.marginLeft=5;
             presetCard.Add(next);
             root.Add(presetCard);
 
@@ -314,7 +314,7 @@ namespace ZPunk.DAW
                 var row=new VisualElement();
                 row.style.flexDirection=FlexDirection.Row;
                 row.style.alignItems=Align.Center;
-                row.style.height=43;
+                row.style.height=47;
                 var label=T(macro.id.Substring(macro.id.IndexOf('.')+1).ToUpperInvariant(),10,Dim);
                 label.style.width=95;
                 label.style.flexShrink=0;

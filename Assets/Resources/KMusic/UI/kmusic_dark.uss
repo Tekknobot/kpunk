@@ -382,3 +382,28 @@
 .km-card { background-color: #111E30; border-left-color: #283A50; border-right-color: #283A50; border-top-color: #283A50; border-bottom-color: #283A50; border-left-width: 1px; border-right-width: 1px; border-top-width: 1px; border-bottom-width: 1px; border-top-left-radius: 8px; border-top-right-radius: 8px; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; margin-top: 5px; margin-bottom: 5px; padding: 10px; }
 .km-subtitle { color: #F0B760; font-size: 13px; }
 .km-label { color: #B4C6D8; }
+
+/* Touch/readability defaults for the active UXML. The DAW shell is built by
+   KMusicTabsUI and uses inline dimensions for its responsive layout. */
+.km-root {
+    -unity-font-style: normal;
+    color: #edf3fa;
+}
+.km-topbar {
+    margin-bottom: 3px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
+}
+.km-pillbtn {
+    min-height: 44px;
+    font-size: 14px;
+    color: #f2f6fa;
+}
+.km-pillbtn:focus {
+    border-top-color: #4cddb9;
+    border-bottom-color: #4cddb9;
+    border-left-color: #4cddb9;
+    border-right-color: #4cddb9;
+}
