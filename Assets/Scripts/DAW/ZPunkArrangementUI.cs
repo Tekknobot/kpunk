@@ -471,6 +471,7 @@ namespace ZPunk.DAW
                 info.style.flexDirection = FlexDirection.Row;
                 info.style.alignItems = Align.Center;
                 info.style.paddingLeft = 7;
+                info.style.paddingRight = 8;
                 info.style.backgroundColor = selectedTrackIndex == i ? new Color(.18f,.24f,.30f) :
                     new Color(.105f,.14f,.19f);
                 var strip = new VisualElement();
@@ -492,6 +493,7 @@ namespace ZPunk.DAW
                 toggles.style.alignItems = Align.Center;
                 toggles.style.width = 91;
                 toggles.style.marginRight = 3;
+                toggles.style.flexShrink = 0;
                 var m = Button(track.mute ? "M!" : "M", () => ToggleMute(index), 42);
                 m.style.minWidth = 42;
                 m.style.width = 42;
