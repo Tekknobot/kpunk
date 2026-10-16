@@ -109,6 +109,11 @@ public class KMusicDrumSequencer : MonoBehaviour
     [Header("Sampler Volume")]
     [Range(0f, 1f)] public float sampleMasterVolume = 1f;
 
+    [Header("Chop Playback")]
+    [Tooltip("Maximum time in seconds for any sequenced or auditioned chop. Shorter marker-defined slices are unaffected.")]
+    [SerializeField, Range(0.1f, 12f)] private float maxChopDurationSeconds = 4f;
+    public float MaxChopDurationSeconds => Mathf.Clamp(maxChopDurationSeconds, 0.1f, 12f);
+
     // Optional UI control name (Slider or KnobElement root name)
     public string sampleMasterSliderName = "SampleMasterVol";
 
@@ -235,7 +240,11 @@ public class KMusicDrumSequencer : MonoBehaviour
         var src = _sampleVoicePool[voiceIndex];
         if (src == null) return;
         float rate = Mathf.Max(0.01f, GetSamplePitchRate());
-        double duration = Math.Max(0.01, (end01 - start01) * _appliedClip.length / rate);
+        // The last marker can lead all the way to the file's end. Never let a
+        // long source tail continue over the rest of the arrangement.
+        double duration = Math.Max(0.01, Math.Min(
+            (end01 - start01) * _appliedClip.length / rate,
+            MaxChopDurationSeconds));
         src.Stop();
         src.clip = _appliedClip;
         src.loop = false;
@@ -1812,7 +1821,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         double sliceDur = (e01 - s01) * _appliedClip.length;
 
         // ✅ play full chop length (to next marker)
-        double dur = Math.Max(0.01, Math.Min(sliceDur / pitchRate, 4.0)); // cap at 4s (tweak)
+        double dur = Math.Max(0.01, Math.Min(sliceDur / pitchRate, MaxChopDurationSeconds));
 
         // Compute start sample
         int startSample = Mathf.Clamp(
@@ -2650,7 +2659,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
 
         float pitchRate = Mathf.Max(0.01f, GetSamplePitchRate());
         double sliceDur = (e01 - s01) * _appliedClip.length;
-        float dur = (float)Math.Max(0.02, sliceDur / pitchRate);
+        float dur = (float)Math.Max(0.02, Math.Min(sliceDur / pitchRate, MaxChopDurationSeconds));
 
         int startSample = Mathf.Clamp(
             (int)(s01 * _appliedClip.samples),

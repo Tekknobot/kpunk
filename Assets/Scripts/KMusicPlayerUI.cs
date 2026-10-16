@@ -76,6 +76,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private float _warpPendingAt = -1f;
     private string _warpStatus = "NO SAMPLE";
     private KMusicProjectManager _warpProjects;
+    private KMusicDrumSequencer _chopEngine;
     private const string WarpEnabledKey = "zpunk.sampler.warp.enabled";
 
     // Last known playhead position from scrubbing/UI.
@@ -389,24 +390,31 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (!doc) doc = GetComponent<UIDocument>();
         EnsureDedicatedPlayerAudioSource();
+        // A restored/serialized AudioSource may still start with its clip playing.
+        // Loading a project or a saved sample must never audition it automatically.
+        if (audioSource != null) audioSource.Stop();
         EnsureImportFolders();
         _autoWarpEnabled = ProjectPrefs.GetInt(WarpEnabledKey, 1) != 0;
     }
 
     private void EnsureDedicatedPlayerAudioSource()
     {
-        if (audioSource != null) return;
-
-        var child = transform.Find("PlayerAudioSource");
-        if (child == null)
+        // Even an AudioSource assigned in the Inspector must be configured:
+        // the early return previously left its playOnAwake state unchanged.
+        if (audioSource == null)
         {
-            var go = new GameObject("PlayerAudioSource");
-            go.transform.SetParent(transform, false);
-            child = go.transform;
-        }
+            var child = transform.Find("PlayerAudioSource");
+            if (child == null)
+            {
+                var go = new GameObject("PlayerAudioSource");
+                go.transform.SetParent(transform, false);
+                child = go.transform;
+            }
 
-        audioSource = child.GetComponent<AudioSource>();
-        if (audioSource == null) audioSource = child.gameObject.AddComponent<AudioSource>();
+            audioSource = child.GetComponent<AudioSource>();
+            if (audioSource == null)
+                audioSource = child.gameObject.AddComponent<AudioSource>();
+        }
 
         audioSource.playOnAwake = false;
         audioSource.loop = false;
@@ -417,6 +425,8 @@ public class KMusicPlayerUI : MonoBehaviour
     private void OnEnable()
     {
         EnsureDedicatedPlayerAudioSource();
+        // UI initialization and automatic project restore must be silent.
+        if (audioSource != null) audioSource.Stop();
 
         _root = doc != null ? doc.rootVisualElement : null;
         if (_root == null) return;
@@ -904,6 +914,14 @@ public class KMusicPlayerUI : MonoBehaviour
     }
     private void OnSourceSampleReady()
     {
+        // A sample selection is a load, not a play command. This also prevents
+        // a pending auto-warp completion from resuming an old preview.
+        if (audioSource != null) audioSource.Stop();
+        if (_markerPreviewCoroutine != null)
+        {
+            StopCoroutine(_markerPreviewCoroutine);
+            _markerPreviewCoroutine = null;
+        }
         // Cancel any unfinished conversion of the previous sample; an old
         // stretch must never replace the newly selected source.
         _warpGeneration++;
@@ -1583,7 +1601,10 @@ public class KMusicPlayerUI : MonoBehaviour
         float activeLength = (_warpedClip != null ? _warpedClip : _clip).length;
         startTime = Mathf.Clamp(start01 * activeLength, 0f, Mathf.Max(0f, activeLength - .001f));
         float rawSliceDur = Mathf.Clamp((end01 - start01) * activeLength, 0.03f, activeLength);
-        float pitchedDur = Mathf.Max(0.02f, rawSliceDur / pitchRate);
+        // Preview the same bounded duration heard in the sequenced chop engine.
+        if (_chopEngine == null) _chopEngine = FindObjectOfType<KMusicDrumSequencer>();
+        float cap = _chopEngine != null ? _chopEngine.MaxChopDurationSeconds : 4f;
+        float pitchedDur = Mathf.Clamp(rawSliceDur / pitchRate, 0.02f, cap);
 
         if (_markerPreviewCoroutine != null)
             StopCoroutine(_markerPreviewCoroutine);

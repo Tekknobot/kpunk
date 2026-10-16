@@ -101,7 +101,8 @@ public class KMusicSampleSequencerUI : MonoBehaviour
             _preferCachedOnNextBind = false;
 
             ForceGridRefresh(sampleGrid);
-            SelectChop(activeChop);
+            // UI/project restoration selects the chop without playing it.
+            SelectChop(activeChop, audition: false);
         }).Every(100); // 10x per second is fine for UI binding
     }
 
@@ -235,19 +236,23 @@ public class KMusicSampleSequencerUI : MonoBehaviour
             btn.AddToClassList(wiredClass);
             btn.RegisterCallback<PointerDownEvent>(_ =>
             {
-                if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
-                _sequencer?.AuditionChop(chopId);
+                // User interaction should audition exactly once, via SelectChop.
                 SelectChop(chopId);
             }, TrickleDown.TrickleDown);
         }
     }
 
-    private void SelectChop(int chopId)
+    private void SelectChop(int chopId, bool audition = true)
     {
         activeChop = Mathf.Clamp(chopId, 1, 16);
 
-        if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
-        _sequencer?.AuditionChop(activeChop);
+        // Only an explicit tap/click auditions a chop. Startup, project restore,
+        // and UI rebinding must not trigger sample playback.
+        if (audition)
+        {
+            if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
+            _sequencer?.AuditionChop(activeChop);
+        }
 
         if (sampleGrid != null)
         {
