@@ -22,26 +22,31 @@ namespace KMusic.UI
         {
             UxmlStringAttributeDescription _label = new() { name = "label", defaultValue = "" };
             UxmlStringAttributeDescription _paramId = new() { name = "paramId", defaultValue = "" };
+            UxmlBoolAttributeDescription _compact = new() { name = "compact", defaultValue = false };
             public override void Init(VisualElement ve, IUxmlAttributes bag, CreationContext cc)
             {
                 base.Init(ve, bag, cc);
                 var k = (KnobElement)ve;
                 k.Label = _label.GetValueFromBag(bag, cc);
                 k.ParamId = _paramId.GetValueFromBag(bag, cc);
+                k.Compact = _compact.GetValueFromBag(bag, cc);
                 k.Build();
             }
         }
 
         public string Label { get; set; } = "";
         public string ParamId { get; set; } = "";
+        public bool Compact { get; set; }
 
         private ParameterBus _bus;
         private VisualElement _ring;
+        private VisualElement _indicator;
         private Label _name;
         private Label _value;
         private float _startT;
         private Vector2 _startPos;
         private bool _drag;
+        private int _dragPointer = -1;
 
         public KnobElement()
         {
@@ -57,13 +62,22 @@ namespace KMusic.UI
         private void Build()
         {
             Clear();
+            if (Compact)
+            {
+                style.width = new Length(33.3333f, LengthUnit.Percent);
+                style.minWidth = 0;
+                style.height = 122;
+                style.marginRight = 0;
+                style.flexShrink = 0;
+            }
 
+            int diameter = Compact ? 64 : 85;
             var knob = new VisualElement();
-            knob.style.width = 85;
-            knob.style.height = 85;
+            knob.style.width = diameter;
+            knob.style.height = diameter;
 
-            knob.style.minWidth = 85;
-            knob.style.minHeight = 85;
+            knob.style.minWidth = diameter;
+            knob.style.minHeight = diameter;
             knob.style.flexShrink = 0;
             knob.style.alignSelf = Align.Center; // optional but helps
 
@@ -85,20 +99,63 @@ namespace KMusic.UI
             _ring.style.position = Position.Absolute;
             _ring.style.left = 0;
             _ring.style.top = 0;
-            _ring.style.width = 80;
-            _ring.style.height = 80;
+            _ring.style.width = Compact ? 60 : 80;
+            _ring.style.height = Compact ? 60 : 80;
             knob.Add(_ring);
+
+            // Persistent ring and indicator: rotating does not allocate VisualElements
+            // on every touch move, avoiding unnecessary UI Toolkit layout churn.
+            var ring = new VisualElement();
+            ring.style.position = Position.Absolute;
+            float inset = Compact ? 5f : 6f;
+            float ringSize = Compact ? 52f : 68f;
+            ring.style.left = inset;
+            ring.style.top = inset;
+            ring.style.width = ringSize;
+            ring.style.height = ringSize;
+            ring.style.borderTopLeftRadius = 999;
+            ring.style.borderTopRightRadius = 999;
+            ring.style.borderBottomLeftRadius = 999;
+            ring.style.borderBottomRightRadius = 999;
+            ring.style.borderLeftWidth = 3;
+            ring.style.borderRightWidth = 3;
+            ring.style.borderTopWidth = 3;
+            ring.style.borderBottomWidth = 3;
+            var faint = new Color(1, 1, 1, 0.09f);
+            ring.style.borderLeftColor = faint;
+            ring.style.borderRightColor = faint;
+            ring.style.borderTopColor = faint;
+            ring.style.borderBottomColor = faint;
+            _ring.Add(ring);
+
+            _indicator = new VisualElement();
+            _indicator.style.position = Position.Absolute;
+            float tickWidth = Compact ? 4f : 6f;
+            _indicator.style.width = tickWidth;
+            _indicator.style.height = Compact ? 13f : 18f;
+            _indicator.style.left = ((Compact ? 60f : 80f) - tickWidth) * .5f;
+            _indicator.style.top = Compact ? 7f : 8f;
+            _indicator.style.backgroundColor = new Color(0.41f, 0.89f, 1f);
+            _indicator.style.borderTopLeftRadius = 3;
+            _indicator.style.borderTopRightRadius = 3;
+            _indicator.style.borderBottomLeftRadius = 3;
+            _indicator.style.borderBottomRightRadius = 3;
+            _indicator.style.transformOrigin = Compact
+                ? new TransformOrigin(2, 23, 0)
+                : new TransformOrigin(3, 32, 0);
+            _ring.Add(_indicator);
 
             _name = new Label(Label);
             _name.style.unityTextAlign = TextAnchor.MiddleCenter;
             _name.style.color = new Color(0.60f, 0.64f, 0.70f, 1f);
-            _name.style.fontSize = 20;
-            _name.style.marginTop = 8;
+            _name.style.fontSize = Compact ? 12 : 20;
+            _name.style.whiteSpace = WhiteSpace.NoWrap;
+            _name.style.marginTop = Compact ? 5 : 8;
 
             _value = new Label("--");
             _value.style.unityTextAlign = TextAnchor.MiddleCenter;
             _value.style.color = new Color(0.91f, 0.92f, 0.93f, 1f);
-            _value.style.fontSize = 20;
+            _value.style.fontSize = Compact ? 12 : 20;
 
             Add(knob);
             Add(_name);
@@ -107,13 +164,15 @@ namespace KMusic.UI
             RegisterCallback<PointerDownEvent>(OnDown);
             RegisterCallback<PointerMoveEvent>(OnMove);
             RegisterCallback<PointerUpEvent>(OnUp);
+            RegisterCallback<PointerCaptureOutEvent>(_ => { _drag = false; _dragPointer = -1; });
         }
 
         public void Bind(ParameterBus bus)
         {
+            // Rebinding after enable/disable must not stack bus callbacks.
+            if (_bus != null) _bus.OnChanged -= OnParamChanged;
             _bus = bus;
-            if (_bus != null)
-                _bus.OnChanged += OnParamChanged;
+            if (_bus != null) _bus.OnChanged += OnParamChanged;
             Refresh();
         }
 
@@ -137,7 +196,9 @@ namespace KMusic.UI
         private void OnDown(PointerDownEvent e)
         {
             if (_bus == null || string.IsNullOrEmpty(ParamId)) return;
+            if (_drag) return;
             _drag = true;
+            _dragPointer = e.pointerId;
             _startPos = e.position;
             _startT = _bus.GetNormalized(ParamId);
             this.CapturePointer(e.pointerId);
@@ -157,7 +218,8 @@ namespace KMusic.UI
 
         private void OnMove(PointerMoveEvent e)
         {
-            if (!_drag || _bus == null || string.IsNullOrEmpty(ParamId)) return;
+            if (!_drag || e.pointerId != _dragPointer || _bus == null || string.IsNullOrEmpty(ParamId)) return;
+            e.StopPropagation();
 
             float dy = (_startPos.y - e.position.y);
             float speed = e.shiftKey ? 0.0008f : 0.0030f;
@@ -183,60 +245,18 @@ namespace KMusic.UI
 
         private void OnUp(PointerUpEvent e)
         {
-            if (!_drag) return;
+            if (!_drag || e.pointerId != _dragPointer) return;
             _drag = false;
+            _dragPointer = -1;
             this.ReleasePointer(e.pointerId);
             e.StopPropagation();
         }
 
         private void DrawArc(float t)
         {
-            t = Mathf.Clamp01(t);
-            _ring.Clear();
-
-            // subtle ring
-            var ring = new VisualElement();
-            ring.style.position = Position.Absolute;
-            ring.style.left = 6;
-            ring.style.top = 6;
-            ring.style.width = 68;
-            ring.style.height = 68;
-            ring.style.borderTopLeftRadius = 999;
-            ring.style.borderTopRightRadius = 999;
-            ring.style.borderBottomLeftRadius = 999;
-            ring.style.borderBottomRightRadius = 999;
-            ring.style.borderLeftWidth = 3;
-            ring.style.borderRightWidth = 3;
-            ring.style.borderTopWidth = 3;
-            ring.style.borderBottomWidth = 3;
-            ring.style.borderLeftColor = new Color(1, 1, 1, 0.06f);
-            ring.style.borderRightColor = new Color(1, 1, 1, 0.06f);
-            ring.style.borderTopColor = new Color(1, 1, 1, 0.06f);
-            ring.style.borderBottomColor = new Color(1, 1, 1, 0.06f);
-            _ring.Add(ring);
-
-            // ✅ pointer tick centered + stable rotation
-            var tick = new VisualElement();
-            tick.style.position = Position.Absolute;
-            tick.style.width = 6;
-            tick.style.height = 18;
-
-            // center tick in 80x80, place near top
-            tick.style.left = (80 - 6) * 0.5f;
-            tick.style.top = 8;
-
-            tick.style.backgroundColor = new Color(0.41f, 0.89f, 1f, 1f);
-            tick.style.borderTopLeftRadius = 3;
-            tick.style.borderTopRightRadius = 3;
-            tick.style.borderBottomLeftRadius = 3;
-            tick.style.borderBottomRightRadius = 3;
-
-            // rotate around knob center-ish
-            float ang = Mathf.Lerp(-135f, 135f, t);
-            tick.style.transformOrigin = new TransformOrigin(3, 32, 0);
-            tick.style.rotate = new StyleRotate(new Rotate(new Angle(ang, AngleUnit.Degree)));
-
-            _ring.Add(tick);
+            if (_indicator == null) return;
+            float ang = Mathf.Lerp(-135f, 135f, Mathf.Clamp01(t));
+            _indicator.style.rotate = new StyleRotate(new Rotate(new Angle(ang, AngleUnit.Degree)));
         }
     }
 

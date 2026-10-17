@@ -1,6 +1,8 @@
 // KMusicApp.cs
 
 using System;
+using System.Collections.Generic;
+using AudioHelm;
 using UnityEngine;
 using UnityEngine.UIElements;
 using KMusic.Core;
@@ -33,6 +35,13 @@ namespace KMusic
 
         // prevent stacking event handlers on enable/disable
         private Action<string, float> _onBusChanged;
+        private readonly List<KeyValuePair<Button, Action>> _soundSwitches = new();
+        private readonly List<HelmController> _soundHelms = new();
+        private bool _warnedSoundRouting;
+
+        [Header("Audio Helm SOUND Routing (optional, assign when multiple Helm instances exist)")]
+        [SerializeField] private HelmController soundSynth1;
+        [SerializeField] private HelmController soundSynth2;
 
         private void Awake()
         {
@@ -101,6 +110,8 @@ namespace KMusic
 
             // Load saved mixer/fader values after defaults exist.
             KMusicSaveState.LoadBus(_bus, PrefKey_Bus, id =>
+                id.StartsWith("fx.") || id.StartsWith("arp.") ||
+                id == "mod.wave" || id == "filter.env" || id == "filter.blend" ||
                 id.StartsWith("mix.") ||
                 id.StartsWith("drum.") ||
                 id.StartsWith("sampler.") ||
@@ -171,11 +182,23 @@ namespace KMusic
                     bpmLabel.text = t.Format();
             };
             _bus.OnChanged += _onBusChanged;
+            _bus.OnChanged += OnSoundParameterChanged;
+            ResolveSoundHelms();
+            BindSoundSwitches(root);
+            // Native Helm instances and preset scripts initialize after the
+            // workspace's early Awake. Apply saved effect switches after startup.
+            root.schedule.Execute(RestoreSoundState).ExecuteLater(300);
         }
 
     private void OnSafeRootGeometry(GeometryChangedEvent evt)
     {
         ApplySafeArea(false);
+        if (_safeRoot != null && _safeRoot.resolvedStyle.width > 0)
+        {
+            float available = _safeRoot.resolvedStyle.width;
+            available -= _safeRoot.resolvedStyle.paddingLeft + _safeRoot.resolvedStyle.paddingRight;
+            _safeRoot.EnableInClassList("km-sound-wide", available >= 620f);
+        }
     }
 
     private void Update()
@@ -248,14 +271,23 @@ namespace KMusic
         _safeRoot.style.paddingBottom = bottom + 8f;
         _safeRoot.style.paddingLeft = left + 7f;
         _safeRoot.style.paddingRight = right + 7f;
+        // Logical available width (not screen pixels) distinguishes phone and tablet.
+        // A narrow landscape viewport still stacks modules safely.
+        _safeRoot.EnableInClassList("km-sound-wide", w - left - right >= 620f);
     }
 
     private void OnDisable()
     {
+        foreach (var subscription in _soundSwitches)
+            subscription.Key.clicked -= subscription.Value;
+        _soundSwitches.Clear();
+        if (_bus != null) _bus.OnChanged -= OnSoundParameterChanged;
         if (_safeRoot != null) _safeRoot.UnregisterCallback<GeometryChangedEvent>(OnSafeRootGeometry);
         _safeRoot = null;
         // Save bus values (mixer/drum/sampler/mutes only)
         KMusicSaveState.SaveBus(_bus, PrefKey_Bus, id =>
+            id.StartsWith("fx.") || id.StartsWith("arp.") ||
+            id == "mod.wave" || id == "filter.env" || id == "filter.blend" ||
             id.StartsWith("mix.") ||
             id.StartsWith("drum.") ||
             id.StartsWith("sampler.") ||
@@ -288,6 +320,8 @@ namespace KMusic
         if (!pause) return;
 
         KMusicSaveState.SaveBus(_bus, PrefKey_Bus, id =>
+            id.StartsWith("fx.") || id.StartsWith("arp.") ||
+            id == "mod.wave" || id == "filter.env" || id == "filter.blend" ||
             id.StartsWith("mix.") ||
             id.StartsWith("drum.") ||
             id.StartsWith("sampler.") ||
@@ -302,6 +336,8 @@ namespace KMusic
     private void OnApplicationQuit()
     {
         KMusicSaveState.SaveBus(_bus, PrefKey_Bus, id =>
+            id.StartsWith("fx.") || id.StartsWith("arp.") ||
+            id == "mod.wave" || id == "filter.env" || id == "filter.blend" ||
             id.StartsWith("mix.") ||
             id.StartsWith("drum.") ||
             id.StartsWith("sampler.") ||
@@ -313,6 +349,168 @@ namespace KMusic
         );
     }
 
+        // The FX / arp controls use Audio Helm's native Param enum rather than
+        // relying on similarly named fields that might not be wired to audio.
+        // Only route explicitly assigned controllers, controllers under this app,
+        // or a single unambiguous controller in the scene. Never change a random
+        // drum or unrelated Helm channel in a multi-controller project.
+        private void ResolveSoundHelms()
+        {
+            _soundHelms.Clear();
+            AddSoundHelm(soundSynth1);
+            AddSoundHelm(soundSynth2);
+            if (_soundHelms.Count > 0) return;
+            foreach (var helm in GetComponentsInChildren<HelmController>(true))
+                AddSoundHelm(helm);
+            if (_soundHelms.Count > 0) return;
+            var found = FindObjectsByType<HelmController>(FindObjectsInactive.Include,
+                FindObjectsSortMode.None);
+            if (found.Length == 1) AddSoundHelm(found[0]);
+        }
+
+        private void AddSoundHelm(HelmController helm)
+        {
+            if (helm != null && !_soundHelms.Contains(helm)) _soundHelms.Add(helm);
+        }
+
+        private void RestoreSoundState()
+        {
+            if (!isActiveAndEnabled || _bus == null) return;
+            ResolveSoundHelms();
+            if (_soundHelms.Count == 0) return;
+            if (_bus.GetValue("fx.dist.on") > .5f) PushSoundGroup("fx.dist.");
+            if (_bus.GetValue("fx.delay.on") > .5f) PushSoundGroup("fx.delay.");
+            if (_bus.GetValue("fx.rev.on") > .5f) PushSoundGroup("fx.rev.");
+            if (_bus.GetValue("arp.on") > .5f) PushSoundGroup("arp.");
+            PushSoundParameter("fx.dist.on");
+            PushSoundParameter("fx.delay.on");
+            PushSoundParameter("fx.rev.on");
+            PushSoundParameter("arp.on");
+        }
+
+        private void BindSoundSwitches(VisualElement root)
+        {
+            BindSoundSwitch(root, "DistToggleButton", "fx.dist.on");
+            BindSoundSwitch(root, "DistToggleButton2", "fx.dist.on");
+            BindSoundSwitch(root, "DelayToggleButton", "fx.delay.on");
+            BindSoundSwitch(root, "DelayToggleButton2", "fx.delay.on");
+            BindSoundSwitch(root, "DelaySyncToggleButton", "fx.delay.sync");
+            BindSoundSwitch(root, "DelaySyncToggleButton2", "fx.delay.sync");
+            BindSoundSwitch(root, "ReverbToggleButton", "fx.rev.on");
+            BindSoundSwitch(root, "ReverbToggleButton2", "fx.rev.on");
+            BindSoundSwitch(root, "ArpToggleButton", "arp.on");
+            BindSoundSwitch(root, "ArpToggleButton2", "arp.on");
+            BindSoundSwitch(root, "ArpSyncToggleButton", "arp.sync");
+            BindSoundSwitch(root, "ArpSyncToggleButton2", "arp.sync");
+        }
+
+        private void BindSoundSwitch(VisualElement root, string name, string id)
+        {
+            var button = root.Q<Button>(name);
+            if (button == null || !_bus.TryGet(id, out _)) return;
+            Action click = () => _bus.SetValue(id, _bus.GetValue(id) > .5f ? 0f : 1f);
+            button.clicked += click;
+            _soundSwitches.Add(new KeyValuePair<Button, Action>(button, click));
+            RefreshSoundSwitch(button, id);
+        }
+
+        private void RefreshSoundSwitch(Button button, string id)
+        {
+            bool enabled = _bus.GetValue(id) > .5f;
+            bool sync = id == "arp.sync" || id == "fx.delay.sync";
+            button.text = sync ? (enabled ? "SYNC" : "FREE") : (enabled ? "ON" : "OFF");
+            button.EnableInClassList("is-on", enabled);
+        }
+
+        private void OnSoundParameterChanged(string id, float value)
+        {
+            if (id.StartsWith("fx.", StringComparison.Ordinal) || id.StartsWith("arp.", StringComparison.Ordinal))
+            {
+                foreach (var binding in _soundSwitches)
+                {
+                    if (binding.Key.name.StartsWith("DistToggle") && id == "fx.dist.on") RefreshSoundSwitch(binding.Key, id);
+                    if (binding.Key.name.StartsWith("DelayToggle") && id == "fx.delay.on") RefreshSoundSwitch(binding.Key, id);
+                    if (binding.Key.name.StartsWith("ReverbToggle") && id == "fx.rev.on") RefreshSoundSwitch(binding.Key, id);
+                    if (binding.Key.name.StartsWith("ArpToggle") && id == "arp.on") RefreshSoundSwitch(binding.Key, id);
+                    if (binding.Key.name.StartsWith("ArpSyncToggle") && id == "arp.sync") RefreshSoundSwitch(binding.Key, id);
+                    if (binding.Key.name.StartsWith("DelaySyncToggle") && id == "fx.delay.sync") RefreshSoundSwitch(binding.Key, id);
+                }
+            }
+            if (id == "fx.dist.on" && value > .5f) PushSoundGroup("fx.dist.");
+            if (id == "fx.delay.on" && value > .5f) PushSoundGroup("fx.delay.");
+            if (id == "fx.rev.on" && value > .5f) PushSoundGroup("fx.rev.");
+            if (id == "arp.on" && value > .5f) PushSoundGroup("arp.");
+            if (id == "arp.sync") PushSoundParameter("arp.rate");
+            if (id == "fx.delay.sync") PushSoundParameter("fx.delay.time");
+            PushSoundParameter(id);
+        }
+
+        private void PushSoundGroup(string prefix)
+        {
+            foreach (var param in _bus.All)
+                if (param.Id.StartsWith(prefix, StringComparison.Ordinal) &&
+                    param.Id != prefix + "on") PushSoundParameter(param.Id);
+        }
+
+        private void PushSoundParameter(string id)
+        {
+            Param helmParam;
+            switch (id)
+            {
+                case "fx.dist.on": helmParam = Param.kDistortionOn; break;
+                case "fx.dist.type": helmParam = Param.kDistortionType; break;
+                case "fx.dist.drive": helmParam = Param.kDistortionDrive; break;
+                case "fx.dist.mix": helmParam = Param.kDistortionMix; break;
+                case "fx.delay.on": helmParam = Param.kDelayOn; break;
+                case "fx.delay.mix": helmParam = Param.kDelayDryWet; break;
+                case "fx.delay.fb": helmParam = Param.kDelayFeedback; break;
+                case "fx.delay.time": helmParam = _bus.GetValue("fx.delay.sync") > .5f
+                    ? Param.kDelayTempo : Param.kDelayFrequency; break;
+                case "fx.delay.sync": helmParam = Param.kDelaySync; break;
+                case "fx.rev.on": helmParam = Param.kReverbOn; break;
+                case "fx.rev.mix": helmParam = Param.kReverbDryWet; break;
+                case "fx.rev.fb": helmParam = Param.kReverbFeedback; break;
+                case "fx.rev.damp": helmParam = Param.kReverbDamping; break;
+                case "arp.on": helmParam = Param.kArpOn; break;
+                case "arp.sync": helmParam = Param.kArpSync; break;
+                case "arp.pattern": helmParam = Param.kArpPattern; break;
+                case "arp.gate": helmParam = Param.kArpGate; break;
+                case "arp.octaves": helmParam = Param.kArpOctaves; break;
+                case "arp.rate": helmParam = _bus.GetValue("arp.sync") > .5f
+                    ? Param.kArpTempo : Param.kArpFrequency; break;
+                case "filter.env": helmParam = Param.kFilterEnvelopeDepth; break;
+                case "filter.blend": helmParam = Param.kFilterBlend; break;
+                case "mod.wave": helmParam = Param.kMonoLfo1Waveform; break;
+                default: return;
+            }
+            if (_soundHelms.Count == 0) ResolveSoundHelms();
+            if (_soundHelms.Count == 0)
+            {
+                if (!_warnedSoundRouting)
+                {
+                    Debug.LogWarning("ZPUNK SOUND: Assign HelmController references on KMusicApp when multiple Audio Helm instances are in the scene.");
+                    _warnedSoundRouting = true;
+                }
+                return;
+            }
+            float t = _bus.GetNormalized(id);
+            // Helm's SetParameterPercent applies each parameter's actual native
+            // range and scaling; the UI operates in normalized 0..1 space.
+            foreach (var helm in _soundHelms)
+            {
+                if (helm == null) continue;
+                try { helm.SetParameterPercent(helmParam, t); }
+                catch (Exception ex) when (ex is EntryPointNotFoundException || ex is DllNotFoundException)
+                {
+                    if (!_warnedSoundRouting)
+                    {
+                        Debug.LogWarning("ZPUNK SOUND: Audio Helm native plugin is unavailable on this platform.");
+                        _warnedSoundRouting = true;
+                    }
+                }
+            }
+        }
+
         private void BuildParameters()
         {
             _bus = new ParameterBus();
@@ -322,7 +520,7 @@ namespace KMusic
             // -----------------
             _bus.Add(new Parameter("master.vol",   0f, 1f, 0.80f));
             _bus.Add(new Parameter("master.porta", 0f, 100f, 0f, unit: "%"));
-            _bus.Add(new Parameter("master.poly",  0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("master.poly",  1f, 16f, 8f));
 
             // OSC1
             _bus.Add(new Parameter("osc1.vol",    0f, 100f, 0f, unit: "%"));
@@ -353,20 +551,29 @@ namespace KMusic
 
             // FX
             _bus.Add(new Parameter("fx.delay.on",   0f, 1f, 0f));
-            _bus.Add(new Parameter("fx.delay.mix",  0f, 100f, 0f, unit: "%"));
-            _bus.Add(new Parameter("fx.delay.fb",   0f, 100f, 0f, unit: "%"));
-            _bus.Add(new Parameter("fx.delay.time", 0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("fx.delay.sync", 0f, 3f, 1f));
+            _bus.Add(new Parameter("fx.delay.mix",  0f, 100f, 24f, unit: "%"));
+            _bus.Add(new Parameter("fx.delay.fb",   0f, 100f, 35f, unit: "%"));
+            _bus.Add(new Parameter("fx.delay.time", 0f, 100f, 42f, unit: "%"));
 
             _bus.Add(new Parameter("fx.rev.on",   0f, 1f, 0f));
-            _bus.Add(new Parameter("fx.rev.mix",  0f, 100f, 0f, unit: "%"));
-            _bus.Add(new Parameter("fx.rev.fb",   0f, 100f, 0f, unit: "%"));
-            _bus.Add(new Parameter("fx.rev.damp", 0f, 100f, 0f, unit: "%"));
+            _bus.Add(new Parameter("fx.rev.mix",  0f, 100f, 25f, unit: "%"));
+            _bus.Add(new Parameter("fx.rev.fb",   0f, 100f, 55f, unit: "%"));
+            _bus.Add(new Parameter("fx.rev.damp", 0f, 100f, 45f, unit: "%"));
 
             // DISTORTION
             _bus.Add(new Parameter("fx.dist.on",    0f, 1f, 0f));
-            _bus.Add(new Parameter("fx.dist.type",  0f, 100f, 0f, unit: "%"));
-            _bus.Add(new Parameter("fx.dist.drive", 0f, 100f, 0f, unit: "%"));
-            _bus.Add(new Parameter("fx.dist.mix",   0f, 100f, 0f, unit: "%"));            
+            _bus.Add(new Parameter("fx.dist.type",  0f, 3f, 0f));
+            _bus.Add(new Parameter("fx.dist.drive", 0f, 100f, 45f, unit: "%"));
+            _bus.Add(new Parameter("fx.dist.mix",   0f, 100f, 38f, unit: "%"));            
+
+            // Audio Helm arpeggiator (the synth engine, not the DAW clip sequencer).
+            _bus.Add(new Parameter("arp.on", 0f, 1f, 0f));
+            _bus.Add(new Parameter("arp.sync", 0f, 3f, 1f));
+            _bus.Add(new Parameter("arp.pattern", 0f, 4f, 0f));
+            _bus.Add(new Parameter("arp.gate", 0f, 100f, 65f, unit: "%"));
+            _bus.Add(new Parameter("arp.octaves", 1f, 4f, 1f));
+            _bus.Add(new Parameter("arp.rate", 0f, 100f, 50f, unit: "%"));
 
             // -----------------
             // FILTER
@@ -374,6 +581,8 @@ namespace KMusic
             _bus.Add(new Parameter("filter.cutoff", 20, 20000, 3200, log: true, unit: "hz"));
             _bus.Add(new Parameter("filter.res", 0, 100, 30, unit: "%"));
             _bus.Add(new Parameter("filter.drive", 0, 100, 20, unit: "%"));
+            _bus.Add(new Parameter("filter.env", 0, 100, 50, unit: "%"));
+            _bus.Add(new Parameter("filter.blend", 0, 100, 50, unit: "%"));
             _bus.Add(new Parameter("filter.atk", 0, 500, 120, unit: "ms"));
             _bus.Add(new Parameter("filter.dec", 0, 500, 220, unit: "ms"));
             _bus.Add(new Parameter("filter.sus", 0, 100, 60, unit: "%"));
@@ -396,6 +605,7 @@ namespace KMusic
             _bus.Add(new Parameter("mod.rate", 0, 20, 4, unit: "hz"));
             _bus.Add(new Parameter("mod.depth", 0, 100, 40, unit: "%"));
             _bus.Add(new Parameter("mod.mix", 0, 100, 30, unit: "%"));
+            _bus.Add(new Parameter("mod.wave", 0, 100, 0, unit: "%"));
             _bus.Add(new Parameter("mod.atk", 0, 500, 120, unit: "ms"));
             _bus.Add(new Parameter("mod.dec", 0, 500, 220, unit: "ms"));
             _bus.Add(new Parameter("mod.sus", 0, 100, 60, unit: "%"));

@@ -1637,3 +1637,58 @@ unity-text-align: middle-center;
 .km-project-rename-field .unity-base-text-field__input { color: #142131; background-color: #DDE8F2; font-size: 12px; }
 .km-project-rename-field .unity-text-element { color: #142131; }
 .km-project-rename-btn { width: 76px; min-width: 76px; font-size: 10px; border-radius: 3px; }
+
+
+/* ZPUNK SOUND: compact 3-knob rows, shared by synth tracks. The sound
+   panels size to their content instead of clipping at legacy fixed heights. */
+#PageSynth .km-sound-card, #PageSynth2 .km-sound-card {
+  height: auto;
+  overflow: visible;
+  padding: 10px;
+  margin-top: 7px;
+  margin-bottom: 4px;
+}
+#PageSynth .km-sound-module, #PageSynth2 .km-sound-module {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  padding: 8px;
+  margin-right: 0;
+  margin-top: 6px;
+  border-width: 1px;
+  border-radius: 8px;
+}
+.km-sound-page .km-sound-modules { flex-direction: column; width: 100%; }
+.km-sound-page .km-sound-knob-row {
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  width: 100%;
+  margin-top: 7px;
+  margin-bottom: 4px;
+}
+.km-sound-page .km-subtitle { font-size: 14px; margin-bottom: 6px; }
+.km-sound-page .km-fx-mini-title { font-size: 12px; }
+.km-sound-page .km-fx-header-row { margin-top: 13px; margin-bottom: 4px; }
+.km-sound-page .km-fx-toggle {
+  height: 36px;
+  min-width: 65px;
+  padding-left: 10px;
+  padding-right: 10px;
+  border-width: 1px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.km-sound-page .km-fx-toggle > .unity-text-element { font-size: 12px; }
+/* Wider logical canvases (iPad/tablet, landscape) show two modules side-by-side;
+   phones get full-width modules, preserving a minimum usable knob drag target. */
+.km-sound-wide .km-sound-page .km-sound-modules { flex-direction: row; align-items: stretch; }
+.km-sound-wide .km-sound-page .km-sound-modules > .km-sound-module {
+  width: 49%;
+  flex-grow: 1;
+  flex-shrink: 1;
+  margin-right: 5px;
+}
+.km-sound-wide .km-sound-page .km-sound-card { padding: 13px; }
+.km-sound-wide .km-sound-page .km-sound-module { padding: 12px; }

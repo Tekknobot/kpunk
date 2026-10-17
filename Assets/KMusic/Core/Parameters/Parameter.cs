@@ -22,7 +22,12 @@ namespace KMusic.Core
             {
                 // All writers (touch knobs, sampler buttons and saved presets)
                 // use the same integer semitone detents for sample transposition.
-                if (Id == "sample.pitch") value = Mathf.Round(value);
+                if (Id == "sample.pitch" || Id == "fx.dist.type" ||
+                    Id == "arp.pattern" || Id == "arp.octaves" ||
+                    Id == "master.poly" ||
+                    Id == "arp.on" || Id == "arp.sync" || Id == "fx.delay.sync" ||
+                    Id == "fx.dist.on" || Id == "fx.delay.on" || Id == "fx.rev.on")
+                    value = Mathf.Round(value);
                 _value = Mathf.Clamp(value, Min, Max);
             }
         }
@@ -78,15 +83,17 @@ namespace KMusic.Core
 
                 if (Id == "fx.dist.type")
                 {
-                    string[] distNames =
-                    {
-                        "SOFT", "HARD", "CLIP", "FOLD"
-                    };
-
-                    int index = Mathf.RoundToInt(Normalized * (distNames.Length - 1));
-                    index = Mathf.Clamp(index, 0, distNames.Length - 1);
-                    return distNames[index];
+                    string[] types = { "SOFT CLIP", "HARD CLIP", "LIN FOLD", "SINE FOLD" };
+                    return types[Mathf.Clamp(Mathf.RoundToInt(Value), 0, types.Length - 1)];
                 }
+                if (Id == "arp.pattern")
+                {
+                    string[] patterns = { "UP", "DOWN", "UP/DOWN", "PLAYED", "RANDOM" };
+                    return patterns[Mathf.Clamp(Mathf.RoundToInt(Value), 0, patterns.Length - 1)];
+                }
+                if (Id == "arp.octaves") return $"{Mathf.RoundToInt(Value)} OCT";
+                if (Id == "master.poly") return $"{Mathf.RoundToInt(Value)} VOICES";
+                if (Id == "master.vol") return $"{Mathf.RoundToInt(Value * 100f)}%";
             }
 
             // Special-case: drum mixer faders are stored as 0..1 in the bus,
