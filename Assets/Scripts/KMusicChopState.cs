@@ -107,8 +107,9 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
                 {
                     float t = Mathf.Clamp01(userMarkers01[i]);
 
-                    // ignore edges (0 and 1 are not user chops)
-                    if (t <= 0.0001f || t >= 0.9999f)
+                    // 0.0 is an explicit playable slice start; only the end
+                    // of the sample is a non-playable closing boundary.
+                    if (t >= 0.9999f)
                         continue;
 
                     markers.Add(t);
@@ -116,6 +117,9 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             }
 
             markers.Sort();
+            for (int i = markers.Count - 1; i > 0; i--)
+                if (Mathf.Abs(markers[i] - markers[i - 1]) < 0.0001f)
+                    markers.RemoveAt(i);
 
             // Build up to 16 playable slices from marker[i] -> marker[i+1] / end-of-file.
             // Allow a 17th marker so chop 16 can end before the full sample tail.
@@ -153,6 +157,23 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             _appliedRevision++;
 
             Debug.Log($"[Chops] Saved applied chops for '{resourcesPath}'.");
+        }
+
+        // Retain exactly what the user marked, including a marker at 0.0.
+        // A legacy project may have slice boundaries but no explicit markers.
+        public static bool TryLoadAppliedMarkerPositions(out float[] markers01)
+        {
+            markers01 = null;
+            if (!ProjectPrefs.HasKey(PrefKey_Json)) return false;
+            try
+            {
+                var save = JsonUtility.FromJson<ChopSave>(ProjectPrefs.GetString(PrefKey_Json, ""));
+                if (save == null || save.markerPositions01 == null) return false;
+                markers01 = (float[])save.markerPositions01.Clone();
+                Array.Sort(markers01);
+                return true;
+            }
+            catch (Exception) { return false; }
         }
 
         public static bool TryLoadApplied(out string resourcesPath, out float[] sliceStart01, out float[] sliceEnd01)
@@ -212,7 +233,7 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             {
                 float s = starts[i];
                 float e = ends[i];
-                if (s > 0.0001f && e > s)
+                if (e > s && (s > 0.0001f || (i == 0 && e > 0f)))
                     markers.Add(Mathf.Clamp01(s));
             }
             if (ends.Length >= 16)

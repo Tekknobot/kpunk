@@ -196,7 +196,12 @@ namespace KMusic
 
             WireToggleButtons();
             RefreshToggleButtons();
-            ApplyAllFromBus();
+            // On first bind, the synth's patch is the source of truth. Pushing
+            // the bus's factory defaults here can overwrite a preset that loaded
+            // just before the binder initialized, with no subsequent restore.
+            // Project-specific parameter overrides are applied by the project
+            // manager *after* the preset finishes loading.
+            PullHelmToBus();
             _pulledOnce = true;
 
             _lastSent.Clear();

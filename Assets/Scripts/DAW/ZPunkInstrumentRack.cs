@@ -24,6 +24,9 @@ namespace ZPunk.DAW
         private KMusicProjectManager projects;
         private int lastSlot=-1;
         private bool presetsReady;
+        private SongData lastSong;
+        private int loadRevision;
+        private int loadingPresetIndex = -1;
         public HelmController BassController => bass;
         public string BassPresetName => bassPresetIndex>=0 && bassPresetIndex<bassPresets.Count
             ? Path.GetFileNameWithoutExtension(bassPresets[bassPresetIndex]):"INITIALIZING";
@@ -83,19 +86,23 @@ namespace ZPunk.DAW
             }
             if(bassPresets.Count>0)yield return LoadBassPreset(choice,false);
             lastSlot=projects!=null?projects.CurrentSlot:-1;
+            lastSong=projects!=null?projects.CurrentSong:null;
             presetsReady=true;
         }
         private void Update()
         {
             // When opening a different project, restore its independent Bass preset.
-            if(!presetsReady || projects==null || lastSlot==projects.CurrentSlot)return;
-            lastSlot=projects.CurrentSlot;
+            if(!presetsReady || projects==null)return;
             var song=projects.CurrentSong;
+            if(lastSlot==projects.CurrentSlot && ReferenceEquals(lastSong,song))return;
+            lastSlot=projects.CurrentSlot;
+            lastSong=song;
             if(song==null || song.tracks==null || song.tracks.Count<2 || song.tracks[1]==null)return;
             var instrument=song.tracks[1].instrument;
             if(instrument==null || string.IsNullOrEmpty(instrument.presetRelPath))return;
             int index=bassPresets.FindIndex(x=>string.Equals(x,instrument.presetRelPath,StringComparison.OrdinalIgnoreCase));
-            if(index>=0 && index!=bassPresetIndex)StartCoroutine(LoadBassPreset(index,false));
+            if(index>=0 && index!=bassPresetIndex && index!=loadingPresetIndex)
+                StartCoroutine(LoadBassPreset(index,false));
         }
         public HelmController Controller(TrackKind kind)
         {
@@ -115,14 +122,17 @@ namespace ZPunk.DAW
         public void StepBassPreset(int delta)
         {
             if(bassPresets.Count==0)return;
-            int next=(bassPresetIndex+delta+bassPresets.Count)%bassPresets.Count;
+            int current=loadingPresetIndex>=0?loadingPresetIndex:bassPresetIndex;
+            int next=(current+delta+bassPresets.Count)%bassPresets.Count;
             StartCoroutine(LoadBassPreset(next,true));
         }
         private IEnumerator LoadBassPreset(int index,bool persist)
         {
             if(bass==null || bassPatch==null || bassPresets.Count==0)yield break;
-            bassPresetIndex=Mathf.Clamp(index,0,bassPresets.Count-1);
-            var relative="HelmPresets/"+bassPresets[bassPresetIndex];
+            int revision=++loadRevision;
+            int choice=Mathf.Clamp(index,0,bassPresets.Count-1);
+            loadingPresetIndex=choice;
+            var relative="HelmPresets/"+bassPresets[choice];
             var location=Path.Combine(Application.streamingAssetsPath,relative);
             string json=null;
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -134,16 +144,25 @@ namespace ZPunk.DAW
 #else
             if(File.Exists(location))json=File.ReadAllText(location);
 #endif
-            if(string.IsNullOrEmpty(json))yield break;
-            var patch=JsonUtility.FromJson<HelmPatchFormat>(json);
-            if(patch==null || patch.settings==null)yield break;
+            if(revision!=loadRevision)yield break;
+            if(string.IsNullOrEmpty(json)) { loadingPresetIndex=-1; yield break; }
+            HelmPatchFormat patch;
+            try { patch=JsonUtility.FromJson<HelmPatchFormat>(json); }
+            catch(Exception e) { loadingPresetIndex=-1; Debug.LogWarning("[ZPunk] Bass preset parse failed: "+e.Message); yield break; }
+            if(patch==null || patch.settings==null) { loadingPresetIndex=-1; yield break; }
+            // Let native mixer/channel initialization complete on cold launch.
+            yield return null;
+            yield return null;
+            if(revision!=loadRevision)yield break;
             bassPatch.patchData=patch;
             bass.LoadPatch(bassPatch);
+            bassPresetIndex=choice;
+            loadingPresetIndex=-1;
             var song=persist && projects!=null?projects.GetSongForArrangementEditor():null;
             if(song!=null && song.tracks!=null && song.tracks.Count>1 && song.tracks[1]!=null)
             {
                 if(!ReferenceEquals(song,projects.CurrentSong))song=ArrangementEditing.IndependentCopy(song);
-                song.tracks[1].instrument.presetRelPath=bassPresets[bassPresetIndex];
+                song.tracks[1].instrument.presetRelPath=bassPresets[choice];
                 song.tracks[1].instrument.presetIndex=bassPresetIndex;
                 projects.AcceptArrangementEdit(song);
             }

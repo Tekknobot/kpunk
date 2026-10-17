@@ -76,8 +76,210 @@ namespace ZPunk.DAW
                 else if (instrument == TrackKind.Synth && synthChords)
                     GenerateSynthChords(clip, genre, style, bar, key, minor, rng);
                 else GenerateNotes(clip, instrument, genre, style, bar, key, minor, rng);
+
+                // Style specifies the musical vocabulary; variation now changes
+                // the groove, pickups, note contour and phrase endings as well.
+                if (instrument == TrackKind.Drums)
+                    ApplyDrumVariation(clip, genre, style, bar, bars, variation, rng);
+                else
+                    ApplyMelodicVariation(clip, instrument, genre, style, bar,
+                                          key, minor, variation, synthChords, rng);
             }
         }
+
+        // Variation families are deliberately different rhythmic templates, not
+        // just a new RNG seed for the velocity of an otherwise identical pattern.
+        private static readonly int[][] HatGrooves = {
+            new[] { 0, 2, 4, 6, 8, 10, 12, 14 },
+            new[] { 2, 6, 10, 14 },
+            new[] { 0, 3, 6, 8, 11, 14 },
+            new[] { 1, 3, 5, 7, 9, 11, 13, 15 },
+            new[] { 0, 4, 7, 10, 12, 15 },
+            new[] { 0, 2, 5, 8, 10, 13, 14 }
+        };
+
+        private static void ApplyDrumVariation(ClipContentData clip, int genre, int style,
+                                               int bar, int bars, int variation, Random rng)
+        {
+            int family = Mod(variation - 1, HatGrooves.Length);
+            long barStart = bar * SongData.TicksPerBar4;
+            long barEnd = barStart + SongData.TicksPerBar4;
+            // Rebuild only the closed-hat voice; leave genre-specific kick,
+            // snare, clap and percussion anchors intact.
+            clip.drums.RemoveAll(hit => hit != null && hit.lane == 3 &&
+                hit.startTick >= barStart && hit.startTick < barEnd);
+
+            int hatFamily = (family + (bar % 2 == 1 && family > 0 ? 1 : 0)) % HatGrooves.Length;
+            int[] hats = HatGrooves[hatFamily];
+            double density = genre == 0 && style == 1 ? .69 :
+                             genre == 2 && style == 1 ? .72 : .96;
+            foreach (int step in hats)
+            {
+                int accent = step % 4 == 0 ? 87 : step % 2 == 0 ? 68 : 55;
+                Drum(clip, bar, step, 3, accent, rng, density);
+            }
+
+            // A different response at the end of every other bar and a few
+            // sparse pickups make two-bar and four-bar clips feel composed.
+            if (family == 1 || family == 4)
+            {
+                if (bar % 2 == 1) Drum(clip, bar, 15, 0, 77, rng, .85);
+                if (genre != 2) Drum(clip, bar, 11, 6, 49, rng, .66);
+            }
+            else if (family == 2 || family == 5)
+            {
+                Drum(clip, bar, genre == 1 || genre == 2 ? 14 : 9, 0, 75, rng, .72);
+                if (bar % 2 == 0) Drum(clip, bar, 3, 6, 43, rng, .75);
+            }
+            else if (family == 3)
+            {
+                Drum(clip, bar, 7, 6, 55, rng, .76);
+                if (genre == 0 || genre == 3) Drum(clip, bar, 13, 0, 86, rng, .74);
+            }
+            if (bars > 1 && bar == bars - 1 && family > 0)
+            {
+                Drum(clip, bar, 14, 6, 49, rng, .9);
+                Drum(clip, bar, 15, 7, 70, rng, .7);
+            }
+            // All generated drum clips have a downbeat at exactly tick zero.
+            Drum(clip, bar, 0, 0, 120, rng);
+        }
+
+        private static readonly int[][] RhythmOffsets = {
+            new[] { 0, 0, 0, 0 },
+            new[] { 0, -1, 1, -1 },
+            new[] { 0, 1, -1, 1 },
+            new[] { 0, -2, -1, 0 },
+            new[] { 0, 2, -1, -2 },
+            new[] { 0, 1, 2, -1 }
+        };
+        private static readonly int[][] Contours = {
+            new[] { 0, 0, 0, 0 },
+            new[] { 0, 2, -1, 1 },
+            new[] { 0, -2, 1, -1 },
+            new[] { 0, 1, 2, -2 },
+            new[] { 0, -1, -2, 1 },
+            new[] { 0, 2, -2, 1 }
+        };
+
+        // Shift a melody by scale degrees instead of arbitrary chromatic semitones.
+        private static int ShiftInScale(int pitch, int key, bool minor, int degrees)
+        {
+            if (degrees == 0) return pitch;
+            int approxOctave = (int)Math.Floor((pitch - key) / 12.0);
+            int nearestDegree = 0;
+            int nearestDistance = int.MaxValue;
+            for (int d = approxOctave * 7 - 1; d <= approxOctave * 7 + 8; d++)
+            {
+                int distance = Math.Abs(key + Scale(d, minor) - pitch);
+                if (distance < nearestDistance)
+                {
+                    nearestDistance = distance;
+                    nearestDegree = d;
+                }
+            }
+            return Clamp(key + Scale(nearestDegree + degrees, minor), 0, 127);
+        }
+
+        private static void ApplyMelodicVariation(ClipContentData clip, TrackKind kind,
+                                                   int genre, int style, int bar,
+                                                   int key, bool minor, int variation,
+                                                   bool synthChords, Random rng)
+        {
+            long firstTick = bar * SongData.TicksPerBar4;
+            long lastTick = firstTick + SongData.TicksPerBar4;
+            var onsets = new List<long>();
+            var grouped = new Dictionary<long, List<NoteEvent>>();
+            foreach (var note in clip.notes)
+            {
+                if (note == null || note.startTick < firstTick || note.startTick >= lastTick) continue;
+                if (!grouped.TryGetValue(note.startTick, out var voices))
+                {
+                    voices = new List<NoteEvent>();
+                    grouped.Add(note.startTick, voices);
+                    onsets.Add(note.startTick);
+                }
+                voices.Add(note);
+            }
+            if (onsets.Count == 0) return;
+            onsets.Sort();
+
+            int family = Mod(variation - 1, RhythmOffsets.Length);
+            bool isChordPart = kind == TrackKind.Pads || (kind == TrackKind.Synth && synthChords);
+            int lastStep = -1;
+            for (int onset = 0; onset < onsets.Count; onset++)
+            {
+                long original = onsets[onset];
+                int step = (int)((original - firstTick) / SongData.TicksPerSixteenth);
+                int shift = RhythmOffsets[family][onset % 4];
+                if (bar % 2 == 1 && family != 0 && onset > 0) shift = -shift;
+                // Start the phrase (and each repeated bar) on the downbeat.
+                // Reserve room for remaining onsets so dense arpeggios never
+                // spill into the next bar after rhythmic displacement.
+                int latest = 16 - (onsets.Count - onset);
+                int destination = onset == 0 ? 0 :
+                    Math.Min(15, Math.Max(lastStep + 1, Math.Min(step + shift, latest)));
+                lastStep = destination;
+                long newTick = firstTick + destination * SongData.TicksPerSixteenth;
+                int voiceIndex = 0;
+                foreach (var note in grouped[original])
+                {
+                    int existingSteps = Math.Max(1, (int)(note.durationTicks / SongData.TicksPerSixteenth));
+                    int lengthChange = !isChordPart && family > 0 && onset > 0 && rng.Next(3) == 0
+                        ? (family % 2 == 0 ? 1 : -1) : 0;
+                    note.startTick = newTick;
+                    note.durationTicks = Math.Max(1, Math.Min(existingSteps + lengthChange, 16 - destination)) *
+                                         SongData.TicksPerSixteenth;
+
+                    if (family != 0 && onset > 0)
+                    {
+                        if (!isChordPart)
+                        {
+                            // Bass stays rooted on strong beats. Melody gets a
+                            // wider call-and-response contour than its bassline.
+                            int degrees = Contours[family][onset % 4];
+                            if (kind == TrackKind.Bass) degrees = degrees == 2 ? 1 :
+                                degrees == -2 ? -1 : degrees;
+                            note.pitch = ShiftInScale(note.pitch, key, minor, degrees);
+                        }
+                        else if (voiceIndex == (family % 2 == 0 ? 0 : 2))
+                        {
+                            // Octave displacement makes new inversions while
+                            // preserving all chord tones and scale membership.
+                            note.pitch = Clamp(note.pitch + (family % 2 == 0 ? 12 : -12), 0, 127);
+                        }
+                    }
+                    voiceIndex++;
+                }
+            }
+
+            // Long Pad notes otherwise sound identical across every generated
+            // variation. Alternate held textures with a shorter gated response,
+            // without creating a new track type or uneditable note events.
+            if (kind == TrackKind.Pads && family > 0 && onsets.Count == 1)
+            {
+                int split = family == 1 ? 8 : family == 2 ? 12 :
+                            family == 3 ? 6 : family == 4 ? 10 : 4;
+                var primary = grouped[onsets[0]];
+                var response = new List<NoteEvent>();
+                for (int v = 0; v < primary.Count; v++)
+                {
+                    var source = primary[v];
+                    if (source.durationTicks <= split * SongData.TicksPerSixteenth)
+                        continue;
+                    long responseLength = (16 - split) * SongData.TicksPerSixteenth;
+                    response.Add(new NoteEvent {
+                        pitch = Clamp(source.pitch + (family % 2 == 0 && v == 0 ? 12 : 0), 0, 127),
+                        startTick = firstTick + split * SongData.TicksPerSixteenth,
+                        durationTicks = responseLength,
+                        velocity = Clamp(source.velocity - 14, 25, 127)
+                    });
+                    source.durationTicks = split * SongData.TicksPerSixteenth;
+                }
+                clip.notes.AddRange(response);
+            }
+        }
+
         private static void Drum(ClipContentData clip, int bar, int step, int lane, int velocity, Random rng, double chance = 1.0)
         {
             if (step < 0 || step >= 16 || rng.NextDouble() > chance) return;

@@ -86,6 +86,7 @@ namespace KMusic
 
         private int _pendingPresetIndex = -1;
         private string _pendingPresetRelPath = null;
+        private int _loadRevision;
 
 
 public float CaptureMasterVolume()
@@ -215,6 +216,7 @@ public void ApplyMasterVolume(float normalized)
 
         private void OnDisable()
         {
+            ++_loadRevision;
             if (_co != null) StopCoroutine(_co);
             _co = null;
 
@@ -827,11 +829,13 @@ public void ApplyMasterVolume(float normalized)
 
         private IEnumerator LoadAndApplyPreset(string relPath)
         {
+            int revision = ++_loadRevision;
             if (helm == null || _runtimePatch == null) yield break;
 
             string rel = presetsRootFolder + "/" + relPath;
             string json = null;
             yield return ReadStreamingText(rel, s => json = s);
+            if (revision != _loadRevision) yield break;
             if (string.IsNullOrEmpty(json)) yield break;
 
             HelmPatchFormat fmt = null;
@@ -839,10 +843,14 @@ public void ApplyMasterVolume(float normalized)
             catch { }
             if (fmt == null || fmt.settings == null) yield break;
 
+            yield return null;
+            yield return null;
+            if (revision != _loadRevision) yield break;
             _runtimePatch.patchData = fmt;
             helm.LoadPatch(_runtimePatch);
             yield return null;
             yield return null;
+            if (revision != _loadRevision) yield break;
 
             PullHelmToBus();
             PresetApplied?.Invoke(_index, relPath);

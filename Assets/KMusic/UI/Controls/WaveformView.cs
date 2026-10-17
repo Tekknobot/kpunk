@@ -194,7 +194,7 @@ namespace KMusic.UI
                     // Starts live within the sample. The rightmost endpoint is
                     // represented as a visible closing marker for slice 16.
                     float t = Mathf.Clamp01(m);
-                    if (t <= 0.0005f) continue;
+                    // 0.0 is a valid, selectable chop start, not an implicit marker.
                     if (t >= 0.9995f) continue;
                     _markers01.Add(t);
                 }

@@ -70,6 +70,7 @@ namespace KMusic
 
         private int _pendingPresetIndex = -1;
         private string _pendingPresetRelPath = null;
+        private int _loadRevision; // latest selection wins over in-flight disk/APK reads
 
         private void SaveCurrentPresetChoice()
         {
@@ -209,6 +210,7 @@ namespace KMusic
 
         private void OnDisable()
         {
+            ++_loadRevision;
             if (_prevBtn != null) _prevBtn.clicked -= OnPrev;
             if (_nextBtn != null) _nextBtn.clicked -= OnNext;
 
@@ -355,6 +357,7 @@ namespace KMusic
 
         private IEnumerator LoadAndApplyPreset(string relPath)
         {
+            int revision = ++_loadRevision;
             ResolveMainSynthHelm();
             if (helm == null || _runtimePatch == null)
                 yield break;
@@ -363,6 +366,7 @@ namespace KMusic
 
             string json = null;
             yield return ReadStreamingText(rel, s => json = s);
+            if (revision != _loadRevision) yield break;
 
             if (string.IsNullOrEmpty(json))
             {
@@ -387,6 +391,12 @@ namespace KMusic
                 yield break;
             }
 
+            // Startup can complete before Audio Helm's native output and the
+            // scene's controllers have finished their first frame. Load only
+            // after that initialization and discard superseded requests.
+            yield return null;
+            yield return null;
+            if (revision != _loadRevision) yield break;
             _runtimePatch.patchData = fmt;
             helm.LoadPatch(_runtimePatch);
 
@@ -394,13 +404,12 @@ namespace KMusic
             yield return null;
             yield return null;
 
-            // Optional: if binder exposes RequestPullFromHelm(), call it so UI syncs to loaded patch.
+            if (revision != _loadRevision) yield break;
+            // Replace stale bus values with the newly loaded patch's actual
+            // parameters before project-specific overrides are restored.
             ResolveMainSynthBinder();
             if (_binder != null && BinderTargetsHelm(_binder, helm))
-            {
-                var mi = _binder.GetType().GetMethod("RequestPullFromHelm");
-                if (mi != null) mi.Invoke(_binder, null);
-            }
+                _binder.RequestPullFromHelm();
 
             // Fire after the patch has had a couple of frames to settle and the bus has been synced.
             PresetApplied?.Invoke(_index, relPath);

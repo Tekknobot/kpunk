@@ -60,7 +60,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private Coroutine _markerPreviewCoroutine;
     private int _selectedMarkerIndex = -1;
 
-    // Markers: normalized [0..1], 0 and 1 are implied boundaries when applying.
+    // Markers: normalized [0..1); zero is a valid explicit S01 start.
     private readonly List<float> _chops01 = new();
 
     private AudioClip[] _clips = Array.Empty<AudioClip>();
@@ -676,6 +676,25 @@ public class KMusicPlayerUI : MonoBehaviour
         if (!string.Equals(appliedPath, _clipResourcesPath, StringComparison.Ordinal))
         {
             SyncMarkersToWave();
+            return;
+        }
+
+        // Prefer the exact saved marker positions, which distinguish an explicit
+        // marker at 0.0 from legacy slice arrays with an implicit 0.0 boundary.
+        if (KMusicChopState.TryLoadAppliedMarkerPositions(out float[] savedMarkers))
+        {
+            for (int i = 0; i < savedMarkers.Length; i++)
+            {
+                float marker = Mathf.Clamp01(savedMarkers[i]);
+                if (marker >= 0.9999f) continue;
+                if (_chops01.Count > 0 && Mathf.Abs(_chops01[_chops01.Count-1] - marker) < 0.0001f)
+                    continue;
+                _chops01.Add(marker);
+            }
+            _chops01.Sort();
+            ClampSelectedMarkerIndex();
+            SyncMarkersToWave();
+            UpdateMarkerNavigatorUI();
             return;
         }
 
@@ -1619,7 +1638,8 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null || _clip.length <= 0f) return Mathf.Clamp01(t01);
 
         float minGap01 = MinMarkerGapSeconds / _clip.length;
-        float min = (markerIndex > 0) ? (_chops01[markerIndex - 1] + minGap01) : minGap01;
+        // The first start marker may land precisely on the first sample frame.
+        float min = (markerIndex > 0) ? (_chops01[markerIndex - 1] + minGap01) : 0f;
         float max = (markerIndex < _chops01.Count - 1) ? (_chops01[markerIndex + 1] - minGap01) : (1f - minGap01);
         if (max < min)
         {
@@ -1783,18 +1803,13 @@ public class KMusicPlayerUI : MonoBehaviour
         t01 = Mathf.Clamp01(t01);
         if (_snapEnabled) t01 = SnapMusical01(t01);
 
+        float minSlice01 = MinMarkerGapSeconds / _clip.length;
+        // All markers stay separated, even with snap disabled; never push 0.0
+        // toward the next grid division or a percentage of the sample length.
+        if (t01 > 1f - minSlice01) t01 = Mathf.Max(0f, 1f - minSlice01);
         for (int i = 0; i < _chops01.Count; i++)
-            if (_snapEnabled)
-            {
-                float minSliceSeconds = 0.05f;
-                float minSlice01 = minSliceSeconds / _clip.length;
-
-                if (Mathf.Abs(_chops01[i] - t01) < minSlice01)
-                    return;
-            }
-
-        if (t01 < 0.01f) t01 = 0.01f;
-        if (t01 > 0.99f) t01 = 0.99f;
+            if (Mathf.Abs(_chops01[i] - t01) < minSlice01)
+                return;
 
         _chops01.Add(t01);
         _chops01.Sort();
