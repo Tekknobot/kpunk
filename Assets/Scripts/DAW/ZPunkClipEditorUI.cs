@@ -20,7 +20,7 @@ namespace ZPunk.DAW
             new Color(.98f,.66f,.28f), new Color(.96f,.36f,.48f),
             new Color(.35f,.60f,.98f), new Color(.66f,.45f,.94f), new Color(.24f,.82f,.69f)
         };
-        private VisualElement root, canvas, gridScrollContainer, chips;
+        private VisualElement root, canvas, gridScrollContainer, chips, labelViewport, labelColumn;
         private VisualElement generatorPanel, generatorGenres, generatorStyles, generatorBarsRow, generatorSynthModeRow;
         private Button generatorQuickButton, generatorMelodyButton, generatorChordsButton;
         private Label generatorHeading, generatorSummary, generatorHint, generatorKeyLabel, generatorVariationLabel;
@@ -38,6 +38,8 @@ namespace ZPunk.DAW
         private ZPunkSongTransport songTransport;
         private ScrollView scroller;
         private Label title, info, selectedInfo;
+        private VisualElement velocityFill, velocityThumb;
+        private readonly List<VelocityDisplay> velocityDisplays = new List<VelocityDisplay>();
         private VisualElement kitSelector;
         private Label kitName;
         private KMusicDrumSequencer drumEngine;
@@ -82,6 +84,19 @@ namespace ZPunk.DAW
             public Vector2 start;
             public int row;
             public int step;
+            public bool handled;
+            public IVisualElementScheduledItem hold;
+        }
+        private sealed class VelocityDisplay
+        {
+            public VisualElement cell;
+            public VisualElement meter;
+            public Label number;
+            public int row;
+            public int noteIndex;
+            public long tick;
+            public float width;
+            public int velocity;
         }
         private Tap pendingTap;
         public Action OnClipChanged;
@@ -227,19 +242,39 @@ namespace ZPunk.DAW
             info.style.flexShrink = 0;
             root.Add(info);
 
+            // The names stay on screen while the note grid scrolls horizontally.
+            // Both areas share the same vertical scroll position.
+            var editorViewport = new VisualElement { name = "ZPunkPianoRollViewport" };
+            editorViewport.style.flexDirection = FlexDirection.Row;
+            editorViewport.style.flexGrow = 1;
+            editorViewport.style.minHeight = 125;
+            editorViewport.style.maxHeight = 655;
+            editorViewport.style.minWidth = 0;
+            editorViewport.style.overflow = Overflow.Hidden;
+            editorViewport.style.backgroundColor = new Color(.047f,.068f,.105f);
+            editorViewport.style.borderTopLeftRadius = 8;
+            editorViewport.style.borderTopRightRadius = 8;
+            labelViewport = new VisualElement { name = "ZPunkPianoRollLabels" };
+            labelViewport.style.position = Position.Relative;
+            labelViewport.style.flexShrink = 0;
+            labelViewport.style.width = 57;
+            labelViewport.style.overflow = Overflow.Hidden;
+            labelViewport.style.backgroundColor = new Color(.095f,.13f,.18f);
+            editorViewport.Add(labelViewport);
+
             scroller = new ScrollView(ScrollViewMode.VerticalAndHorizontal) { name = "ZPunkNoteScroll" };
             scroller.style.flexGrow = 1;
-            scroller.style.minHeight = 125;
-            scroller.style.maxHeight = 655;
+            scroller.style.minWidth = 0;
+            scroller.style.minHeight = 0;
             scroller.style.backgroundColor = new Color(.047f,.068f,.105f);
-            scroller.style.borderTopLeftRadius = 8;
-            scroller.style.borderTopRightRadius = 8;
             scroller.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             scroller.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             gridScrollContainer = new VisualElement();
             gridScrollContainer.style.flexDirection = FlexDirection.Row;
             scroller.Add(gridScrollContainer);
-            root.Add(scroller);
+            scroller.verticalScroller.valueChanged += _ => SyncPianoRollLabels();
+            editorViewport.Add(scroller);
+            root.Add(editorViewport);
 
             var velocityRow = new VisualElement();
             velocityRow.style.flexDirection = FlexDirection.Row;
@@ -273,12 +308,15 @@ namespace ZPunk.DAW
             velThumb.style.left=new Length(velocity/127f*100,LengthUnit.Percent);
             velThumb.pickingMode=PickingMode.Ignore;
             velRail.Add(velThumb);
+            velocityFill = velFill;
+            velocityThumb = velThumb;
             Action<Vector2> setVelocity=(position)=>
             {
                 float normalized=Mathf.Clamp01(velRail.WorldToLocal(position).x/Mathf.Max(1,velRail.contentRect.width));
-                velocity=Mathf.Clamp(Mathf.RoundToInt(1+126*normalized),1,127);
-                velFill.style.width=new Length(normalized*100,LengthUnit.Percent);
-                velThumb.style.left=new Length(normalized*100,LengthUnit.Percent);
+                int next = Mathf.Clamp(Mathf.RoundToInt(1+126*normalized),1,127);
+                if (next == velocity) return;
+                velocity = next;
+                RefreshVelocityRail();
                 ChangeVelocity();
             };
             velRail.RegisterCallback<PointerDownEvent>(evt=>
@@ -307,7 +345,7 @@ namespace ZPunk.DAW
             selectedInfo.style.unityTextAlign = TextAnchor.MiddleRight;
             velocityRow.Add(selectedInfo);
             root.Add(velocityRow);
-            var footer = Txt("TAP to place/remove  |  DRAG notes to move  |  DRAG right edge to resize",10,Muted);
+            var footer = Txt("TAP: add/remove step  |  HOLD active step: edit velocity  |  DRAG notes: move/resize",10,Muted);
             footer.style.whiteSpace = WhiteSpace.Normal;
             footer.style.marginTop = 5;
             footer.style.marginBottom = 8;
@@ -724,6 +762,8 @@ namespace ZPunk.DAW
             clip.lengthTicks = content.lengthTicks;
             ArrangementEditing.ExtendSong(song, clip.startTick + clip.lengthTicks);
             selectedNote = -1;
+            selectedEventRow = -1;
+            selectedEventTick = -1;
             CloseGenerator();
             if (content.kind == ClipKind.Midi && content.notes != null && content.notes.Count > 0)
                 octave = Mathf.Clamp(content.notes[0].pitch / 12 - 1,-1,9);
@@ -998,6 +1038,8 @@ namespace ZPunk.DAW
             clipId = clip != null ? clip.id : null;
             content = clip == null ? null : ArrangementEditing.FindContent(song,clip.contentId);
             selectedNote = -1;
+            selectedEventRow = -1;
+            selectedEventTick = -1;
         }
         private bool Writable()
         {
@@ -1042,6 +1084,8 @@ namespace ZPunk.DAW
             clipId = clip != null ? clip.id : null;
             content = clip == null ? null : ArrangementEditing.FindContent(song,clip.contentId);
             selectedNote = -1;
+            selectedEventRow = -1;
+            selectedEventTick = -1;
             Changed();
         }
         private void Save()
@@ -1084,29 +1128,106 @@ namespace ZPunk.DAW
             selectedNote=-1;
             Changed();
         }
+        // The slider edits the selected event, or acts as the brush velocity when
+        // nothing is selected. Selecting never toggles/deletes the event.
+        private void RefreshVelocityRail()
+        {
+            float percent = Mathf.Clamp(velocity, 1, 127) / 127f * 100f;
+            if (velocityFill != null) velocityFill.style.width = new Length(percent, LengthUnit.Percent);
+            if (velocityThumb != null) velocityThumb.style.left = new Length(percent, LengthUnit.Percent);
+            if (selectedInfo != null) selectedInfo.text = velocity.ToString();
+        }
+        private void SelectNoteVelocity(int index)
+        {
+            if (content == null || content.notes == null || index < 0 || index >= content.notes.Count ||
+                content.notes[index] == null) return;
+            selectedNote = index;
+            selectedEventRow = -1;
+            selectedEventTick = -1;
+            velocity = Mathf.Clamp(content.notes[index].velocity, 1, 127);
+            RefreshVelocityRail();
+            RefreshVelocityDisplays();
+        }
+        private bool HasStepEvent(int row, long tick)
+        {
+            if (content == null) return false;
+            if (content.kind == ClipKind.Drums)
+                return content.drums != null && content.drums.Exists(d => d != null && d.lane == row && d.startTick == tick);
+            if (content.kind == ClipKind.Chops)
+                return content.chops != null && content.chops.Exists(d => d != null && d.sliceId == row + 1 && d.startTick == tick);
+            return false;
+        }
+        private void SelectStepVelocity(int row, long tick)
+        {
+            if (!HasStepEvent(row, tick)) return;
+            selectedNote = -1;
+            selectedEventRow = row;
+            selectedEventTick = tick;
+            if (content.kind == ClipKind.Drums)
+            {
+                var hit = content.drums.Find(d => d != null && d.lane == row && d.startTick == tick);
+                velocity = Mathf.Clamp(hit.velocity, 1, 127);
+            }
+            else
+            {
+                var hit = content.chops.Find(d => d != null && d.sliceId == row + 1 && d.startTick == tick);
+                velocity = Mathf.Clamp(hit.velocity, 1, 127);
+            }
+            RefreshVelocityRail();
+            RefreshVelocityDisplays();
+        }
+        private void RefreshVelocityDisplays()
+        {
+            foreach (var display in velocityDisplays)
+            {
+                bool selected = IsMidi ? display.noteIndex == selectedNote && selectedNote >= 0 :
+                    display.row == selectedEventRow && display.tick == selectedEventTick && selectedEventRow >= 0;
+                display.cell.style.backgroundColor = selected ? Accent : colors[Mathf.Min(trackIndex, 4)];
+                display.cell.style.borderBottomWidth = selected ? 2 : 0;
+                display.cell.style.borderBottomColor = Ink;
+                float span = Mathf.Max(1f, display.width - 6f);
+                display.meter.style.width = Mathf.Max(1f, span * Mathf.Clamp(display.velocity, 1, 127) / 127f);
+                if (display.number != null) display.number.text = Mathf.Clamp(display.velocity, 1, 127).ToString();
+            }
+        }
         private void ChangeVelocity()
         {
             if (selectedInfo != null) selectedInfo.text = velocity.ToString();
             if (content == null) return;
-            if(content.kind==ClipKind.Midi)
+            if (content.kind == ClipKind.Midi)
             {
-                if(selectedNote<0 || content.notes==null || selectedNote>=content.notes.Count || !Writable())return;
-                content.notes[selectedNote].velocity=velocity;
+                if (selectedNote < 0 || content.notes == null || selectedNote >= content.notes.Count ||
+                    content.notes[selectedNote] == null || content.notes[selectedNote].velocity == velocity || !Writable()) return;
+                content.notes[selectedNote].velocity = velocity;
             }
-            else if(content.kind==ClipKind.Drums)
+            else if (content.kind == ClipKind.Drums)
             {
-                if(content.drums==null || selectedEventRow<0 || !Writable())return;
-                var hit=content.drums.Find(d=>d!=null && d.lane==selectedEventRow && d.startTick==selectedEventTick);
-                if(hit==null)return;
-                hit.velocity=velocity;
+                if (content.drums == null || selectedEventRow < 0) return;
+                var hit = content.drums.Find(d => d != null && d.lane == selectedEventRow && d.startTick == selectedEventTick);
+                if (hit == null || hit.velocity == velocity || !Writable()) return;
+                hit = content.drums.Find(d => d != null && d.lane == selectedEventRow && d.startTick == selectedEventTick);
+                if (hit == null) return;
+                hit.velocity = velocity;
             }
-            else
+            else if (content.kind == ClipKind.Chops)
             {
-                if(content.chops==null || selectedEventRow<0 || !Writable())return;
-                var hit=content.chops.Find(d=>d!=null && d.sliceId==selectedEventRow+1 && d.startTick==selectedEventTick);
-                if(hit==null)return;
-                hit.velocity=velocity;
+                if (content.chops == null || selectedEventRow < 0) return;
+                var hit = content.chops.Find(d => d != null && d.sliceId == selectedEventRow + 1 && d.startTick == selectedEventTick);
+                if (hit == null || hit.velocity == velocity || !Writable()) return;
+                hit = content.chops.Find(d => d != null && d.sliceId == selectedEventRow + 1 && d.startTick == selectedEventTick);
+                if (hit == null) return;
+                hit.velocity = velocity;
             }
+            else return;
+            // Update the active cell without rebuilding the piano roll while the
+            // slider is moving; the scroll position and touch gesture stay put.
+            foreach (var display in velocityDisplays)
+            {
+                bool selected = IsMidi ? display.noteIndex == selectedNote && selectedNote >= 0 :
+                    display.row == selectedEventRow && display.tick == selectedEventTick && selectedEventRow >= 0;
+                if (selected) display.velocity = velocity;
+            }
+            RefreshVelocityDisplays();
             OnClipChanged?.Invoke();
         }
         private bool IsMidi => content != null && content.kind == ClipKind.Midi;
@@ -1114,8 +1235,17 @@ namespace ZPunk.DAW
         private int PitchForRow(int row) => Mathf.Clamp(127 - row, 0, 127);
         private int RowForPitch(int pitch) => 127 - pitch;
 
-        // Scroll both the pitch names and notes together in their shared ScrollView.
-        // This provides the full MIDI 0..127 range without truncating note events.
+        // Keep the fixed label column aligned with the vertically scrolling notes.
+        // Translation avoids relaying out the 128-row MIDI keyboard on each scroll.
+        private void SyncPianoRollLabels()
+        {
+            if (labelColumn == null || scroller == null) return;
+            labelColumn.style.translate = new Translate(
+                new Length(0f, LengthUnit.Pixel),
+                new Length(-scroller.scrollOffset.y, LengthUnit.Pixel), 0f);
+        }
+
+        // Full 128-note keyboard: OCT buttons scroll vertically, not horizontally.
         private void ScrollToOctave()
         {
             if (scroller == null || !IsMidi) return;
@@ -1124,7 +1254,10 @@ namespace ZPunk.DAW
             scroller.schedule.Execute(() =>
             {
                 if (scroller != null && IsMidi)
+                {
                     scroller.scrollOffset = new Vector2(scroller.scrollOffset.x, y);
+                    SyncPianoRollLabels();
+                }
             }).ExecuteLater(0);
         }
         private float EditorHeight => RowCount * RowH;
@@ -1146,43 +1279,67 @@ namespace ZPunk.DAW
         {
             if (content == null || !Writable()) return;
             long tick = step * quantum;
-            selectedEventRow=row;
-            selectedEventTick=tick;
             if (content.kind == ClipKind.Drums)
             {
                 if (content.drums == null) content.drums = new List<DrumEvent>();
-                int lane = row;
-                int i = content.drums.FindIndex(d=>d != null && d.lane==lane && d.startTick==tick);
-                if (i>=0) content.drums.RemoveAt(i);
-                else content.drums.Add(new DrumEvent { lane=lane,startTick=tick,velocity=velocity,legacyVelocityTier=2 });
+                int i = content.drums.FindIndex(d => d != null && d.lane == row && d.startTick == tick);
+                if (i >= 0)
+                {
+                    content.drums.RemoveAt(i);
+                    if (selectedEventRow == row && selectedEventTick == tick) selectedEventRow = -1;
+                }
+                else
+                {
+                    content.drums.Add(new DrumEvent { lane = row, startTick = tick, velocity = velocity, legacyVelocityTier = 2 });
+                    selectedEventRow = row;
+                    selectedEventTick = tick;
+                }
+                selectedNote = -1;
             }
             else if (content.kind == ClipKind.Chops)
             {
                 if (content.chops == null) content.chops = new List<ChopEvent>();
-                int slice = row + 1;
-                int i = content.chops.FindIndex(d=>d != null && d.sliceId==slice && d.startTick==tick);
-                if (i>=0) content.chops.RemoveAt(i);
-                else content.chops.Add(new ChopEvent { sliceId=slice,startTick=tick,velocity=velocity });
+                int i = content.chops.FindIndex(d => d != null && d.sliceId == row + 1 && d.startTick == tick);
+                if (i >= 0)
+                {
+                    content.chops.RemoveAt(i);
+                    if (selectedEventRow == row && selectedEventTick == tick) selectedEventRow = -1;
+                }
+                else
+                {
+                    content.chops.Add(new ChopEvent { sliceId = row + 1, startTick = tick, velocity = velocity });
+                    selectedEventRow = row;
+                    selectedEventTick = tick;
+                }
+                selectedNote = -1;
             }
             else
             {
                 if (content.notes == null) content.notes = new List<NoteEvent>();
-                int pitch=PitchForRow(row);
-                int existing=FindNote(pitch,tick);
-                if (existing>=0) { content.notes.RemoveAt(existing); selectedNote=-1; }
+                int pitch = PitchForRow(row);
+                int existing = FindNote(pitch, tick);
+                if (existing >= 0) { content.notes.RemoveAt(existing); selectedNote = -1; }
                 else
                 {
-                    content.notes.Add(new NoteEvent{pitch=pitch,startTick=tick,durationTicks=quantum,velocity=velocity});
-                    selectedNote=content.notes.Count-1;
+                    content.notes.Add(new NoteEvent { pitch = pitch, startTick = tick, durationTicks = quantum, velocity = velocity });
+                    selectedNote = content.notes.Count - 1;
                 }
+                selectedEventRow = -1;
             }
-            content.lengthTicks=Math.Max(content.lengthTicks,tick+quantum);
+            content.lengthTicks = Math.Max(content.lengthTicks, tick + quantum);
             Changed();
         }
 
         private void Redraw()
         {
             if (!ready || root == null || chips == null || gridScrollContainer == null) return;
+            // A refresh detaches the old note plane. Cancel any hold that was
+            // scheduled against it before rebuilding the cells.
+            if (pendingTap != null)
+            {
+                pendingTap.hold?.Pause();
+                pendingTap = null;
+            }
             // Refreshing note rectangles must not throw the user back to MIDI 127.
             // OCT +/- and initial track selection can still reposition afterwards.
             Vector2 previousOffset = scroller != null ? scroller.scrollOffset : Vector2.zero;
@@ -1247,6 +1404,12 @@ namespace ZPunk.DAW
                 (IsMidi ? "PIANO ROLL" : content != null && content.kind==ClipKind.Drums ? "DRUM STEP EDITOR" : "SAMPLE STEP EDITOR") +
                 "  /  Bar " + (clip.startTick / SongData.TicksPerBar4 + 1)) + "  /  HOLD TRACK TO GEN";
             gridScrollContainer.Clear();
+            labelViewport?.Clear();
+            labelColumn = null;
+            if (labelViewport != null)
+                labelViewport.style.display = clip != null && content != null ? DisplayStyle.Flex : DisplayStyle.None;
+            velocityDisplays.Clear();
+            RefreshVelocityRail();
             editorPlayhead = null;
             lastPlayheadX = -1f;
             if (clip==null || content==null) return;
@@ -1254,8 +1417,13 @@ namespace ZPunk.DAW
             steps=Mathf.Clamp(Mathf.CeilToInt((float)editLength/quantum),16,128);
             var names=Box(new Color(.095f,.13f,.18f));
             names.style.width=IsMidi ? 57f : 83f;
+            names.style.position=Position.Absolute;
+            names.style.left=0;
+            names.style.top=0;
             names.style.flexShrink=0;
             names.style.flexGrow=0;
+            if (labelViewport != null)
+                labelViewport.style.width = IsMidi ? 57f : 83f;
             names.style.borderTopLeftRadius=0;
             names.style.borderTopRightRadius=0;
             names.style.borderBottomLeftRadius=0;
@@ -1267,7 +1435,7 @@ namespace ZPunk.DAW
             rulerGutter.style.flexShrink=0;
             names.Add(rulerGutter);
             // Exact DrumKit.GetClipByDrumId() order: 1..8. No Tom/FX lanes.
-            string[] drums={"KICK","SNARE","CLAP","CLOSED HAT","OPEN HAT","RIDE","RIM","CRASH"};
+            string[] drums={"KICK","SNARE","CLAP","CLOSED","OPEN","RIDE","RIM","CRASH"};
             for(int row=0;row<RowCount;row++)
             {
                 string name=IsMidi? NoteName(PitchForRow(row)) : content.kind==ClipKind.Drums ? drums[row] : "S"+(row+1).ToString("00");
@@ -1285,7 +1453,9 @@ namespace ZPunk.DAW
                 label.style.unityTextAlign=TextAnchor.MiddleLeft;
                 names.Add(label);
             }
-            gridScrollContainer.Add(names);
+            labelColumn = names;
+            labelViewport.Add(names);
+            SyncPianoRollLabels();
             var grid=new VisualElement();
             canvas=grid;
             grid.style.position=Position.Relative;
@@ -1344,7 +1514,7 @@ namespace ZPunk.DAW
                     if(n==null) continue;
                     int row=RowForPitch(n.pitch);
                     if(row<0 || row>=RowCount) continue;
-                    DrawEvent(plane,n.startTick,n.durationTicks,row,i,selectedNote==i);
+                    DrawEvent(plane,n.startTick,n.durationTicks,row,i,n.velocity);
                 }
             }
             else if (content.kind == ClipKind.Drums && content.drums != null)
@@ -1352,7 +1522,7 @@ namespace ZPunk.DAW
                 foreach (var hit in content.drums)
                 {
                     if (hit != null && hit.lane >= 0 && hit.lane < RowCount)
-                        DrawEvent(plane, hit.startTick, quantum, hit.lane, -1, false);
+                        DrawEvent(plane, hit.startTick, quantum, hit.lane, -1, hit.velocity);
                 }
             }
             else if (content.kind == ClipKind.Chops && content.chops != null)
@@ -1360,9 +1530,10 @@ namespace ZPunk.DAW
                 foreach (var chop in content.chops)
                 {
                     if (chop != null && chop.sliceId >= 1 && chop.sliceId <= RowCount)
-                        DrawEvent(plane, chop.startTick, quantum, chop.sliceId - 1, -1, false);
+                        DrawEvent(plane, chop.startTick, quantum, chop.sliceId - 1, -1, chop.velocity);
                 }
             }
+            RefreshVelocityDisplays();
             // Shared transport playhead for all clip editors.
             // Covers both the timeline ruler and the note grid.
             editorPlayhead = new VisualElement
@@ -1394,26 +1565,46 @@ namespace ZPunk.DAW
                     int index = FindNote(PitchForRow(row), step * quantum);
                     if (index >= 0)
                     {
-                        selectedNote = index;
+                        SelectNoteVelocity(index);
                         var n = content.notes[index];
                         float right = (float)(n.startTick + n.durationTicks) / quantum * StepW;
                         drag = new Drag { index=index, start=p, startTick=n.startTick, duration=n.durationTicks,
                             pitch=n.pitch, resizing=(right-p.x)<10f, pointerId=evt.pointerId };
                         plane.CapturePointer(evt.pointerId);
-                        if (selectedInfo != null) selectedInfo.text = n.velocity.ToString();
                         evt.StopPropagation();
                         return;
                     }
                 }
                 // A finger may be scrolling the piano roll. Defer creating a new
                 // note/step until pointer up, and never create one during a swipe.
-                pendingTap = new Tap { pointerId=evt.pointerId, start=evt.position, row=row, step=step };
+                var tap = new Tap { pointerId = evt.pointerId, start = evt.position, row = row, step = step };
+                pendingTap = tap;
+                if (!IsMidi && HasStepEvent(row, step * quantum))
+                {
+                    tap.hold = plane.schedule.Execute(() =>
+                    {
+                        if (!ReferenceEquals(pendingTap, tap)) return;
+                        tap.handled = true;
+                        SelectStepVelocity(tap.row, tap.step * quantum);
+                        plane.CapturePointer(tap.pointerId);
+                    });
+
+                    tap.hold.ExecuteLater(440);
+                }
             });
             plane.RegisterCallback<PointerMoveEvent>(evt=>
             {
-                if (pendingTap != null && pendingTap.pointerId == evt.pointerId &&
+                if (pendingTap != null && pendingTap.pointerId == evt.pointerId && pendingTap.handled)
+                {
+                    evt.StopPropagation();
+                    return;
+                }
+                if (pendingTap != null && pendingTap.pointerId == evt.pointerId && !pendingTap.handled &&
                     ((Vector2)evt.position - pendingTap.start).sqrMagnitude > 49f)
+                {
+                    pendingTap.hold?.Pause();
                     pendingTap = null;
+                }
                 if (drag == null || drag.pointerId != evt.pointerId) return;
                 Vector2 p = plane.WorldToLocal(evt.position);
                 if ((p-drag.start).sqrMagnitude>16) drag.moved=true;
@@ -1425,7 +1616,9 @@ namespace ZPunk.DAW
                 {
                     var tap = pendingTap;
                     pendingTap = null;
-                    if (((Vector2)evt.position - tap.start).sqrMagnitude <= 49f)
+                    tap.hold?.Pause();
+                    if (plane.HasPointerCapture(evt.pointerId)) plane.ReleasePointer(evt.pointerId);
+                    if (!tap.handled && ((Vector2)evt.position - tap.start).sqrMagnitude <= 49f)
                         ToggleGrid(tap.row, tap.step);
                     evt.StopPropagation();
                     return;
@@ -1449,11 +1642,33 @@ namespace ZPunk.DAW
                 Changed();
                 evt.StopPropagation();
             });
-            plane.RegisterCallback<PointerCancelEvent>(_=>{ drag=null; pendingTap=null; });
+            plane.RegisterCallback<PointerCancelEvent>(evt =>
+            {
+                if (pendingTap != null && pendingTap.pointerId == evt.pointerId)
+                {
+                    pendingTap.hold?.Pause();
+                    pendingTap = null;
+                }
+                if (drag != null && drag.pointerId == evt.pointerId) drag = null;
+                if (plane.HasPointerCapture(evt.pointerId)) plane.ReleasePointer(evt.pointerId);
+            });
+            plane.RegisterCallback<PointerCaptureOutEvent>(evt =>
+            {
+                if (pendingTap != null && pendingTap.pointerId == evt.pointerId)
+                {
+                    pendingTap.hold?.Pause();
+                    pendingTap = null;
+                }
+                if (drag != null && drag.pointerId == evt.pointerId) drag = null;
+            });
             if (scroller != null)
                 scroller.schedule.Execute(() =>
                 {
-                    if (scroller != null) scroller.scrollOffset = previousOffset;
+                    if (scroller != null)
+                    {
+                        scroller.scrollOffset = previousOffset;
+                        SyncPianoRollLabels();
+                    }
                 }).ExecuteLater(0);
         }
         private void Update()
@@ -1524,29 +1739,60 @@ namespace ZPunk.DAW
             // Keep the position indicator visible even when stopped.
             editorPlayhead.style.display = DisplayStyle.Flex;
         }        
-        private void DrawEvent(VisualElement plane,long tick,long duration,int row,int index,bool selected)
+        private void DrawEvent(VisualElement plane, long tick, long duration, int row, int index, int eventVelocity)
         {
-            float x=(float)tick/quantum*StepW;
-            if(x>=steps*StepW) return;
-            float w=Mathf.Max(13,(float)duration/quantum*StepW-2);
-            var e=Box(selected?Accent:colors[Mathf.Min(trackIndex,4)],3);
-            e.style.position=Position.Absolute;
-            e.style.left=x+1;
-            e.style.top=row*RowH+4;
-            e.style.width=w;
-            e.style.height=RowH-7;
-            e.pickingMode=PickingMode.Ignore; // Events handled by one canvas for touch and mouse.
-            if(IsMidi && w>20)
+            float x = (float)tick / quantum * StepW;
+            if (x >= steps * StepW) return;
+            float w = Mathf.Max(13f, (float)duration / quantum * StepW - 2f);
+            var e = Box(colors[Mathf.Min(trackIndex, 4)], 3);
+            e.style.position = Position.Absolute;
+            e.style.left = x + 1;
+            e.style.top = row * RowH + 4;
+            e.style.width = w;
+            e.style.height = RowH - 7;
+            e.pickingMode = PickingMode.Ignore; // Single plane handles all touch gestures.
+
+            // Every occupied cell carries its own numerical velocity and a
+            // proportional mini-meter. Neither adds a touch target to the grid.
+            Label amount = null;
+            if (w >= 28f)
             {
-                var grip=Box(new Color(.08f,.18f,.21f,.55f),1);
-                grip.style.position=Position.Absolute;
-                grip.style.right=2;
-                grip.style.top=2;
-                grip.style.width=3;
-                grip.style.height=RowH-11;
-                grip.pickingMode=PickingMode.Ignore;
+                amount = new Label(Mathf.Clamp(eventVelocity, 1, 127).ToString());
+                amount.style.position = Position.Absolute;
+                amount.style.left = 2;
+                amount.style.top = 3;
+                amount.style.width = Mathf.Min(31f, w - 5f);
+                amount.style.height = 17;
+                amount.style.fontSize = 10;
+                amount.style.color = new Color(.045f, .07f, .10f);
+                amount.style.unityTextAlign = TextAnchor.MiddleCenter;
+                amount.pickingMode = PickingMode.Ignore;
+                e.Add(amount);
+            }
+            var meter = Box(new Color(.045f, .075f, .10f, .82f), 1);
+            meter.style.position = Position.Absolute;
+            meter.style.left = 3;
+            meter.style.bottom = 3;
+            meter.style.height = 3;
+            meter.style.width = 1;
+            meter.pickingMode = PickingMode.Ignore;
+            e.Add(meter);
+            if (IsMidi && w > 20)
+            {
+                var grip = Box(new Color(.08f, .18f, .21f, .55f), 1);
+                grip.style.position = Position.Absolute;
+                grip.style.right = 2;
+                grip.style.top = 2;
+                grip.style.width = 3;
+                grip.style.height = RowH - 11;
+                grip.pickingMode = PickingMode.Ignore;
                 e.Add(grip);
             }
+            velocityDisplays.Add(new VelocityDisplay
+            {
+                cell = e, meter = meter, number = amount, row = row, noteIndex = index,
+                tick = tick, width = w, velocity = eventVelocity
+            });
             plane.Add(e);
         }
         private static string NoteName(int pitch)
