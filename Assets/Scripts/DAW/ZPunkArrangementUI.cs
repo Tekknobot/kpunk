@@ -59,9 +59,11 @@ namespace ZPunk.DAW
             public long originalLength;
             public long candidateStart;
             public long candidateLength;
+            public Vector2 viewportOffset;
             public bool resize;
             public bool moved;
             public int pointerId;
+            public VisualElement rect;
         }
         private Gesture gesture;
         public string SelectedClipId => selectedClipId;
@@ -71,10 +73,26 @@ namespace ZPunk.DAW
         public void Initialize(VisualElement target)
         {
             if (target == null || (initialized && ReferenceEquals(page, target))) return;
+            // The arrangement intercepts clip drags before ScrollView's touch handler.
+            // Unregister if the workspace is rebuilt with a different root.
+            if (page != null)
+            {
+                page.UnregisterCallback<PointerDownEvent>(OnClipPointerDown, TrickleDown.TrickleDown);
+                page.UnregisterCallback<PointerMoveEvent>(OnClipPointerMove, TrickleDown.TrickleDown);
+                page.UnregisterCallback<PointerUpEvent>(OnClipPointerUp, TrickleDown.TrickleDown);
+                page.UnregisterCallback<PointerCancelEvent>(OnClipPointerCancel, TrickleDown.TrickleDown);
+                page.UnregisterCallback<PointerCaptureOutEvent>(OnClipCaptureLost);
+            }
+            gesture = null;
             page = target;
             projects = FindObjectOfType<KMusicProjectManager>();
             transport = FindObjectOfType<ZPunkSongTransport>();
             BuildLayout();
+            page.RegisterCallback<PointerDownEvent>(OnClipPointerDown, TrickleDown.TrickleDown);
+            page.RegisterCallback<PointerMoveEvent>(OnClipPointerMove, TrickleDown.TrickleDown);
+            page.RegisterCallback<PointerUpEvent>(OnClipPointerUp, TrickleDown.TrickleDown);
+            page.RegisterCallback<PointerCancelEvent>(OnClipPointerCancel, TrickleDown.TrickleDown);
+            page.RegisterCallback<PointerCaptureOutEvent>(OnClipCaptureLost);
             initialized = true;
         }
 
@@ -427,6 +445,8 @@ namespace ZPunk.DAW
         private void Refresh()
         {
             if (!initialized || song == null) return;
+            // Rebuilding clips must not snap a partially scrolled timeline to a whole bar.
+            Vector2 previousOffset = timelineViewport != null ? timelineViewport.scrollOffset : Vector2.zero;
             trackHeaders.Clear();
             canvas.Clear();
             int count = song.tracks != null ? song.tracks.Count : 0;
@@ -435,7 +455,6 @@ namespace ZPunk.DAW
             float width = renderedBars * pixelsPerBar;
             canvas.style.width = width;
             canvas.style.height = RulerHeight + count * RowHeight;
-            ApplyTimelinePage();
 
             var corner = new VisualElement();
             corner.style.height = RulerHeight;
@@ -573,6 +592,16 @@ namespace ZPunk.DAW
                 loopBarsLabel.text = Math.Max(1L, (loopTicks + SongData.TicksPerBar4 - 1) / SongData.TicksPerBar4).ToString();
             }
             RefreshTempoRail(song.bpm);
+            RestoreTimelineOffset(previousOffset);
+        }
+
+        private void RestoreTimelineOffset(Vector2 offset)
+        {
+            if (timelineViewport == null) return;
+            timelineViewport.scrollOffset = new Vector2(Mathf.Max(0f, offset.x), 0f);
+            viewStartBar = Mathf.Clamp(Mathf.FloorToInt(
+                timelineViewport.scrollOffset.x / pixelsPerBar), 0, Mathf.Max(0, renderedBars - 1));
+            if (visibleBarLabel != null) visibleBarLabel.text = "BAR " + (viewStartBar + 1);
         }
 
         private void AddClipView(VisualElement lane, ClipData clip, Color color)
@@ -611,66 +640,117 @@ namespace ZPunk.DAW
             resizeGrip.style.bottom = 2;
             resizeGrip.style.width = 9;
             resizeGrip.style.backgroundColor = new Color(.05f, .07f, .09f, .45f);
+            // Keep the visual grip slim; its parent provides a larger invisible touch target.
             resizeGrip.pickingMode = PickingMode.Ignore;
             rect.Add(resizeGrip);
-            rect.RegisterCallback<PointerDownEvent>(evt =>
+            lane.Add(rect);
+        }
+
+        // Clip interactions are handled in the page's trickle-down phase, before
+        // ScrollView receives PointerDown. This prevents native touch panning from
+        // stealing a resize when the right clip edge moves left of the finger.
+        // Blank lanes continue to use ordinary ScrollView swipes.
+        private void OnClipPointerDown(PointerDownEvent evt)
+        {
+            if (evt.button != 0 || gesture != null || song == null || canvas == null) return;
+            var rect = evt.target as VisualElement;
+            while (rect != null && rect != page &&
+                   (rect.name == null || !rect.name.StartsWith("Clip_", StringComparison.Ordinal)))
+                rect = rect.parent;
+            if (rect == null || rect == page || rect.parent == null || rect.parent.parent != canvas) return;
+
+            string id = rect.name.Substring(5);
+            var clip = ArrangementEditing.FindClip(song, id, out _);
+            if (clip == null) return;
+            selectedClipId = id;
+            selectedVisual = rect;
+            selectedTrackIndex = FindTrackIndex(id);
+            UpdateDetails();
+            float x = rect.WorldToLocal(evt.position).x;
+            gesture = new Gesture
             {
-                if (evt.button != 0 || gesture != null) return;
-                selectedClipId = id;
-                selectedVisual = rect;
-                selectedTrackIndex = FindTrackIndex(id);
-                UpdateDetails();
-                var local = rect.WorldToLocal(evt.position);
-                gesture = new Gesture { id = id, position = evt.position, pointerId = evt.pointerId,
-                    originalStart = clip.startTick, originalLength = clip.lengthTicks,
-                    candidateStart = clip.startTick, candidateLength = clip.lengthTicks,
-                    resize = local.x >= rect.layout.width - 13f };
-                rect.CapturePointer(evt.pointerId);
-                evt.StopPropagation();
-            });
-            rect.RegisterCallback<PointerMoveEvent>(evt =>
+                id = id,
+                rect = rect,
+                position = evt.position,
+                pointerId = evt.pointerId,
+                originalStart = clip.startTick,
+                originalLength = clip.lengthTicks,
+                candidateStart = clip.startTick,
+                candidateLength = clip.lengthTicks,
+                viewportOffset = timelineViewport != null ? timelineViewport.scrollOffset : Vector2.zero,
+                resize = x >= rect.layout.width - Mathf.Min(24f, rect.layout.width)
+            };
+            // Capture on the page: unlike the clip itself, this target never
+            // shrinks out from under the finger during a leftward resize.
+            page.CapturePointer(evt.pointerId);
+            evt.StopPropagation();
+        }
+
+        private void OnClipPointerMove(PointerMoveEvent evt)
+        {
+            if (gesture == null || gesture.pointerId != evt.pointerId) return;
+            evt.StopPropagation();
+            RestoreTimelineOffset(gesture.viewportOffset);
+            float dx = evt.position.x - gesture.position.x;
+            if (Mathf.Abs(dx) > 3f) gesture.moved = true;
+            if (!gesture.moved) return;
+            long offset = ArrangementEditing.SnapDelta(PixelToTick(dx), snapQuantum);
+            if (gesture.resize)
             {
-                if (gesture == null || gesture.id != id || gesture.pointerId != evt.pointerId) return;
-                float dx = evt.position.x - gesture.position.x;
-                if (Mathf.Abs(dx) > 3f) gesture.moved = true;
-                if (!gesture.moved) return;
-                long offset = ArrangementEditing.SnapDelta(PixelToTick(dx), snapQuantum);
-                if (gesture.resize)
-                {
-                    gesture.candidateLength = Math.Max(snapQuantum, Math.Min(ArrangementEditing.MaxSongTicks - clip.startTick,
+                gesture.candidateLength = Math.Max(snapQuantum,
+                    Math.Min(ArrangementEditing.MaxSongTicks - gesture.originalStart,
                         gesture.originalLength + offset));
-                    rect.style.width = Mathf.Max(8f, TickToPixel(gesture.candidateLength) - 2f);
-                }
-                else
-                {
-                    gesture.candidateStart = Math.Max(0, Math.Min(ArrangementEditing.MaxSongTicks - clip.lengthTicks,
-                        gesture.originalStart + offset));
-                    rect.style.left = TickToPixel(gesture.candidateStart);
-                }
-                evt.StopPropagation();
-            });
-            rect.RegisterCallback<PointerUpEvent>(evt =>
+                gesture.rect.style.width = Mathf.Max(8f, TickToPixel(gesture.candidateLength) - 2f);
+            }
+            else
             {
-                if (gesture == null || gesture.id != id || gesture.pointerId != evt.pointerId) return;
-                var drag = gesture;
-                gesture = null;
-                if (rect.HasPointerCapture(evt.pointerId)) rect.ReleasePointer(evt.pointerId);
-                if (drag.moved && MakeEditable())
+                gesture.candidateStart = Math.Max(0,
+                    Math.Min(ArrangementEditing.MaxSongTicks - gesture.originalLength,
+                        gesture.originalStart + offset));
+                gesture.rect.style.left = TickToPixel(gesture.candidateStart);
+            }
+        }
+
+        private void OnClipPointerUp(PointerUpEvent evt)
+        {
+            if (gesture == null || gesture.pointerId != evt.pointerId) return;
+            evt.StopPropagation();
+            var drag = gesture;
+            gesture = null;
+            if (page.HasPointerCapture(evt.pointerId)) page.ReleasePointer(evt.pointerId);
+            RestoreTimelineOffset(drag.viewportOffset);
+            if (drag.moved && MakeEditable())
+            {
+                var current = ArrangementEditing.FindClip(song, drag.id, out _);
+                if (current != null)
                 {
-                    var current = ArrangementEditing.FindClip(song, id, out _);
                     if (drag.resize) ArrangementEditing.Resize(song, current, drag.candidateLength);
                     else ArrangementEditing.Move(song, current, drag.candidateStart);
-                    UpdateAfterChange();
                 }
-                else if(evt.clickCount >= 2) EditRequested?.Invoke(selectedTrackIndex, selectedClipId);
-                else Refresh();
-                evt.StopPropagation();
-            });
-            rect.RegisterCallback<PointerCancelEvent>(evt =>
-            {
-                if (gesture != null && gesture.id == id) { gesture = null; Refresh(); }
-            });
-            lane.Add(rect);
+                UpdateAfterChange();
+            }
+            else if (evt.clickCount >= 2) EditRequested?.Invoke(selectedTrackIndex, selectedClipId);
+            else Refresh();
+        }
+
+        private void OnClipPointerCancel(PointerCancelEvent evt)
+        {
+            if (gesture == null || gesture.pointerId != evt.pointerId) return;
+            evt.StopPropagation();
+            var offset = gesture.viewportOffset;
+            gesture = null;
+            if (page.HasPointerCapture(evt.pointerId)) page.ReleasePointer(evt.pointerId);
+            RestoreTimelineOffset(offset);
+            Refresh();
+        }
+
+        private void OnClipCaptureLost(PointerCaptureOutEvent evt)
+        {
+            if (gesture == null || gesture.pointerId != evt.pointerId) return;
+            var offset = gesture.viewportOffset;
+            gesture = null;
+            RestoreTimelineOffset(offset);
+            Refresh();
         }
 
         /// <summary>Compact event preview: shows real note and drum locations,
@@ -971,6 +1051,8 @@ namespace ZPunk.DAW
             if (projects != null && (projects.CurrentSlot != projectSlot ||
                 (ownsSong && !ReferenceEquals(projects.CurrentSong, song)))) { OnShown(); return; }
             RefreshPlayhead();
+            // Defend against ScrollView touch inertia during a captured clip gesture.
+            if (gesture != null) RestoreTimelineOffset(gesture.viewportOffset);
             // Reflect touch scrolling in the existing bar counter. Do not assign
             // scrollOffset here: that would interfere with native drag inertia.
             if (timelineViewport != null && visibleBarLabel != null)
