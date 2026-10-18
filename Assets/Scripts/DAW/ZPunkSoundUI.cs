@@ -280,12 +280,14 @@ namespace ZPunk.DAW
                 Choices("arp.octaves", "OCTAVES", Param.kArpOctaves,
                     "1 OCT", "2 OCT", "3 OCT", "4 OCT")
             });
+            /*
             BuildModule("DISTORTION", Pink, "fx.dist.on", null, new[] {
                 Choices("fx.dist.type", "TYPE", Param.kDistortionType,
                     "SOFT CLIP", "HARD CLIP", "LINEAR FOLD", "SINE FOLD"),
                 K("fx.dist.drive", "DRIVE", Param.kDistortionDrive),
                 K("fx.dist.mix", "DRY / WET", Param.kDistortionMix)
             });
+            */
             BuildModule("DELAY", Gold, "fx.delay.on", "fx.delay.sync", new[] {
                 K("fx.delay.time", "TIME / RATE", Param.kDelayTempo),
                 K("fx.delay.fb", "FEEDBACK", Param.kDelayFeedback),

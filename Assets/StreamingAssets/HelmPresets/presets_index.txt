@@ -9,41 +9,6 @@ Bass/CM Diddly.helm
 Bass/CM Electro Bass.helm
 Bass/CM Grit Bass.helm
 Bass/CM Subsine.helm
-Bass/COA Hard Bass 1.helm
-Bass/COA Hard Bass 10.helm
-Bass/COA Hard Bass 11.helm
-Bass/COA Hard Bass 2.helm
-Bass/COA Hard Bass 3.helm
-Bass/COA Hard Bass 4.helm
-Bass/COA Hard Bass 5.helm
-Bass/COA Hard Bass 6.helm
-Bass/COA Hard Bass 7.helm
-Bass/COA Hard Bass 8.helm
-Bass/COA Hard Bass 9.helm
-Bass/COA Killer Chipsound Pluck 1.helm
-Bass/COA Killer Chipsound Pluck 2.helm
-Bass/COA Scary Rotten DNB.helm
-Bass/COA Stab Bass Vocal Sound.helm
-Bass/COA Stab Bass.helm
-Bass/COA Sub-Layer for Trap Kick 1.helm
-Bass/COA Sub-Layer for Trap Kick 2.helm
-Bass/COA Sub-Layer for Trap Kick 3.helm
-Bass/COA Sub-Layer for Trap Kick 4.helm
-Bass/COA Sub-Layer for Trap Kick 5.helm
-Bass/COA Terror Bass 1.helm
-Bass/COA Terror Bass 2.helm
-Bass/COA Terror Bass 3.helm
-Bass/COA Terror Bass 4.helm
-Bass/COA Timpani Digital Bass.helm
-Bass/COA Trap Bass 1.helm
-Bass/COA Trap Bass 2.helm
-Bass/COA Trap Bass 3.helm
-Bass/COA Trap Bass 4.helm
-Bass/COA Trap Bass 5.helm
-Bass/COA Trap Bass 6.helm
-Bass/COA Trap Bass 7.helm
-Bass/COA Trap Bass 8.helm
-Bass/COA Trap Bass 9.helm
 Bass/MT Cracklette.helm
 Bass/MT Filtered Bass 1.helm
 Bass/MT Filtered Bass 2.helm
@@ -68,14 +33,24 @@ Bass/UG Ravers Unite!.helm
 Bass/UG Show Me the M1.helm
 Bass/UG Taiko Attacks Bass (Try Vel=74).helm
 Bass/UG Who Plays the Doctor.helm
+Bass/ZOR Arcade Spring.helm
 Bass/ZOR Blue Current.helm
+Bass/ZOR Chrome Pluck.helm
 Bass/ZOR Clear Pulse.helm
+Bass/ZOR Copper Coil.helm
+Bass/ZOR Deep Lantern.helm
+Bass/ZOR Emberline.helm
+Bass/ZOR FM Bloom.helm
 Bass/ZOR Glassline.helm
 Bass/ZOR Hollow Motion.helm
 Bass/ZOR Metro Pluck.helm
+Bass/ZOR Monsoon Wobble.helm
 Bass/ZOR Night Runner.helm
+Bass/ZOR Paper Lantern.helm
+Bass/ZOR Quartz Bounce.helm
 Bass/ZOR Roundabout.helm
 Bass/ZOR Rubber Circuit.helm
+Bass/ZOR Satellite Glide.helm
 Bass/ZOR Satin Square.helm
 Bass/ZOR Velvet Sub.helm
 Chip/COA Insane Gamer.helm
