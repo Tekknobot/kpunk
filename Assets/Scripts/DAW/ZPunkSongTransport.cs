@@ -490,9 +490,13 @@ namespace ZPunk.DAW
 
         public void StopSong()
         {
-            if (!playing) return;
+            // STOP can come from pointer-down and the following ClickEvent.
+            // It must always silence native notes and cancel pre-scheduled sample
+            // voices, even when a second stop arrives after playing is cleared.
+            Resolve();
             playing = false;
             exportingOneShot = false;
+            paused = false;
             StopAllSynthNotes();
             if (drums != null)
             {
@@ -501,7 +505,6 @@ namespace ZPunk.DAW
             }
             if (clock != null) clock.pause = true;
             CurrentTick = 0;
-            paused = false;
         }
 
         public void Seek(long tick)

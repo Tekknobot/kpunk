@@ -765,15 +765,16 @@ public class KMusicDrumSequencer : MonoBehaviour
                 }
 
                 Debug.Log("STOP CLICK");
-                if (_songTransport != null && _songTransport.SongMode)
-                    _songTransport.StopSong();
-                else
-                    OnStopClicked();
+                StopTransportFromButton();
             };
 
-            _stopBtn.RegisterCallback<PointerDownEvent>(_ =>
+            _stopBtn.RegisterCallback<PointerDownEvent>(evt =>
             {
-                Debug.Log("[Random Beat] STOP pointer down");
+                if (evt.button != 0) return;
+                // UI Toolkit 6 can cancel ClickEvent after pointer capture or a
+                // long press. Transport STOP must not depend on that click.
+                // Stop on touch/mouse DOWN, then preserve the optional hold gesture.
+                StopTransportFromButton();
                 BeginButtonLongPress(_stopBtn, RandomizeWholeBeatFromLongPress);
             }, TrickleDown.TrickleDown);
 
@@ -2253,6 +2254,19 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
             Debug.Log($"[KMusicDrumSequencer] PLAY bpm={_playBpm:0.##} stepDur={_stepDur:0.0000} start={_playStartDspTime:0.000}");
     }
 
+    // One idempotent stop path for normal clicks and pointer-down on Unity 6.
+    // StopSong() handles the arrangement; StopDAWVoices() also cancels sample
+    // voices queued ahead of the transport, even if it already reports stopped.
+    private void StopTransportFromButton()
+    {
+        if (_songTransport == null) _songTransport = GetComponent<ZPunkSongTransport>();
+        if (_songTransport != null && _songTransport.IsPlaying)
+            _songTransport.StopSong();
+        OnStopClicked();
+        StopDAWVoices();
+        if (_clock != null) _clock.pause = true;
+    }
+
     private void OnStopClicked()
     {
         if (_songTransport != null && _songTransport.IsPlaying)
@@ -2278,7 +2292,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
 
     public void StopPlayback()
     {
-        OnStopClicked();
+        StopTransportFromButton();
     }
 
     private void Update()

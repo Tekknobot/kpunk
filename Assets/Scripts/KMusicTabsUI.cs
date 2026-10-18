@@ -66,6 +66,11 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void OnDisable()
     {
+        if(headerStop!=null)
+        {
+            headerStop.clicked -= StopFromHeader;
+            headerStop.UnregisterCallback<PointerDownEvent>(StopOnHeaderPointerDown, TrickleDown.TrickleDown);
+        }
         if(wavExportRoutine!=null)
         {
             StopCoroutine(wavExportRoutine);
@@ -233,6 +238,13 @@ public sealed class KMusicTabsUI : MonoBehaviour
             SetTransport(headerStop);
             SetTransportIcon(headerStop,false);
             headerRow.Add(headerStop);
+            // The top-bar button is reparented from legacy UXML during setup.
+            // Bind the *visible* button directly here: the legacy drum binder
+            // may have run against a different/old tree in Unity 6.
+            headerStop.clicked -= StopFromHeader;
+            headerStop.clicked += StopFromHeader;
+            headerStop.UnregisterCallback<PointerDownEvent>(StopOnHeaderPointerDown, TrickleDown.TrickleDown);
+            headerStop.RegisterCallback<PointerDownEvent>(StopOnHeaderPointerDown, TrickleDown.TrickleDown);
         }
         headerSignature=Label("4/4",12,Dim);
         headerSignature.style.flexShrink=0;
@@ -518,6 +530,28 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(play)playTransportTexture=texture;
         else stopTransportTexture=texture;
         return texture;
+    }
+
+    private void StopOnHeaderPointerDown(PointerDownEvent evt)
+    {
+        // On touchscreens and under pointer capture, Unity UI Toolkit can drop
+        // the eventual ClickEvent. Never wait for a release to stop audio.
+        if (evt.button == 0) StopFromHeader();
+    }
+
+    private void StopFromHeader()
+    {
+        // Idempotent: pointer-down and click may both arrive for one gesture.
+        if (transport == null) transport = GetComponent<ZPunkSongTransport>();
+        if (transport == null) transport = FindObjectOfType<ZPunkSongTransport>();
+        if (transport != null) transport.StopSong();
+        var drumEngine = GetComponent<KMusicDrumSequencer>();
+        if (drumEngine == null) drumEngine = FindObjectOfType<KMusicDrumSequencer>();
+        if (drumEngine != null) drumEngine.StopPlayback();
+        // The sample preview is an independent AudioSource, not a DAW voice.
+        var preview = GetComponent<KMusicPlayerUI>();
+        if (preview != null) preview.DawStopSample();
+        Debug.Log("[ZPunk STOP] Transport and audio voices stopped from visible header.");
     }
 
     private void SetTransport(Button b)

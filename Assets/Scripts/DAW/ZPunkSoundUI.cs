@@ -211,30 +211,6 @@ namespace ZPunk.DAW
             pageScroll.Add(moduleLayout);
             moduleLayout.RegisterCallback<GeometryChangedEvent>(OnLayoutChanged);
 
-            BuildModule("DISTORTION", Pink, "fx.dist.on", null, new[] {
-                Choices("fx.dist.type", "TYPE", Param.kDistortionType,
-                    "SOFT CLIP", "HARD CLIP", "LINEAR FOLD", "SINE FOLD"),
-                K("fx.dist.drive", "DRIVE", Param.kDistortionDrive),
-                K("fx.dist.mix", "DRY / WET", Param.kDistortionMix)
-            });
-            BuildModule("DELAY", Gold, "fx.delay.on", "fx.delay.sync", new[] {
-                K("fx.delay.time", "TIME / RATE", Param.kDelayTempo),
-                K("fx.delay.fb", "FEEDBACK", Param.kDelayFeedback),
-                K("fx.delay.mix", "DRY / WET", Param.kDelayDryWet)
-            });
-            BuildModule("REVERB", Blue, "fx.rev.on", null, new[] {
-                K("fx.rev.fb", "DECAY / FB", Param.kReverbFeedback),
-                K("fx.rev.damp", "DAMPING", Param.kReverbDamping),
-                K("fx.rev.mix", "DRY / WET", Param.kReverbDryWet)
-            });
-            BuildModule("ARPEGGIATOR", Aqua, "arp.on", "arp.sync", new[] {
-                Choices("arp.pattern", "PATTERN", Param.kArpPattern,
-                    "UP", "DOWN", "UP / DOWN", "AS PLAYED", "RANDOM"),
-                K("arp.rate", "RATE", Param.kArpTempo),
-                K("arp.gate", "GATE", Param.kArpGate),
-                Choices("arp.octaves", "OCTAVES", Param.kArpOctaves,
-                    "1 OCT", "2 OCT", "3 OCT", "4 OCT")
-            });
             BuildModule("OSCILLATORS", Pink, null, null, new[] {
                 K("osc1.vol", "OSC 1 LEVEL", Param.kOsc1Volume),
                 K("osc2.vol", "OSC 2 LEVEL", Param.kOsc2Volume),
@@ -243,7 +219,7 @@ namespace ZPunk.DAW
                 K("osc1.detune", "OSC 1 DETUNE", Param.kOsc1UnisonDetune),
                 K("osc2.detune", "OSC 2 DETUNE", Param.kOsc2UnisonDetune)
             });
-            BuildModule("FILTER", Gold, "filter.on", null, new[] {
+            BuildModule("FILTER", Gold, null, null, new[] {
                 K("filter.cutoff", "CUTOFF", Param.kFilterCutoff),
                 K("filter.res", "RESONANCE", Param.kResonance),
                 K("filter.drive", "FILTER DRIVE", Param.kFilterDrive),
@@ -266,7 +242,31 @@ namespace ZPunk.DAW
                     "SIN", "TRI", "SQR", "SAW +", "SAW -", "3 STEP", "4 STEP",
                     "8 STEP", "3 PYR", "5 PYR", "9 PYR", "RAND 1", "RAND 2")
             });
-            var note = T("Drag a knob vertically to adjust. Use the ON / OFF switches to bypass effects.", 10, Dim);
+            BuildModule("ARPEGGIATOR", Aqua, "arp.on", "arp.sync", new[] {
+                Choices("arp.pattern", "PATTERN", Param.kArpPattern,
+                    "UP", "DOWN", "UP / DOWN", "AS PLAYED", "RANDOM"),
+                K("arp.rate", "RATE", Param.kArpTempo),
+                K("arp.gate", "GATE", Param.kArpGate),
+                Choices("arp.octaves", "OCTAVES", Param.kArpOctaves,
+                    "1 OCT", "2 OCT", "3 OCT", "4 OCT")
+            });
+            BuildModule("DISTORTION", Pink, "fx.dist.on", null, new[] {
+                Choices("fx.dist.type", "TYPE", Param.kDistortionType,
+                    "SOFT CLIP", "HARD CLIP", "LINEAR FOLD", "SINE FOLD"),
+                K("fx.dist.drive", "DRIVE", Param.kDistortionDrive),
+                K("fx.dist.mix", "DRY / WET", Param.kDistortionMix)
+            });
+            BuildModule("DELAY", Gold, "fx.delay.on", "fx.delay.sync", new[] {
+                K("fx.delay.time", "TIME / RATE", Param.kDelayTempo),
+                K("fx.delay.fb", "FEEDBACK", Param.kDelayFeedback),
+                K("fx.delay.mix", "DRY / WET", Param.kDelayDryWet)
+            });
+            BuildModule("REVERB", Blue, "fx.rev.on", null, new[] {
+                K("fx.rev.fb", "DECAY / FB", Param.kReverbFeedback),
+                K("fx.rev.damp", "DAMPING", Param.kReverbDamping),
+                K("fx.rev.mix", "DRY / WET", Param.kReverbDryWet)
+            });
+            var note = T("Drag a knob vertically to adjust. ON / OFF switches apply to effects and the arpeggiator.", 10, Dim);
             note.style.whiteSpace = WhiteSpace.Normal;
             note.style.marginBottom = 16;
             note.style.marginLeft = 6;
@@ -297,6 +297,14 @@ namespace ZPunk.DAW
         {
             return param == Param.kDistortionOn || param == Param.kDistortionType ||
                 param == Param.kDistortionDrive || param == Param.kDistortionMix;
+        }
+        private static bool IsNativeOnSwitch(Param param)
+        {
+            // Helm's switches are binary native values; its normalized getter
+            // isn't a reliable ON/OFF source on every plugin build.
+            return param == Param.kDistortionOn || param == Param.kFilterOn ||
+                   param == Param.kDelayOn || param == Param.kReverbOn ||
+                   param == Param.kArpOn;
         }
 
         // The distortion values are normalized by Helm's own native API.
@@ -399,10 +407,9 @@ namespace ZPunk.DAW
             if (controller == null) return false;
             try
             {
-                // ON is a native boolean, not a continuous drive/mix control.
-                // The raw value is unambiguous even if the plugin's percent
-                // conversion handles toggles differently from its linear knobs.
-                amount = param == Param.kDistortionOn
+                // Read binary switches in native units; the percent getter
+                // can return stale/rounded values that cause toggle snapback.
+                amount = IsNativeOnSwitch(param)
                     ? (controller.GetParameterValue(param) >= .5f ? 1f : 0f)
                     : Mathf.Clamp01(controller.GetParameterPercent(param));
                 if (pendingController == controller && IsDistortion(param) &&
@@ -550,7 +557,8 @@ namespace ZPunk.DAW
             var bus = CurrentBus();
             if (bus != null && bus.TryGet(id, out Parameter existing) && existing != null)
             {
-                if (IsDistortion(param)) bus.SetNormalizedSilently(id, amount);
+                if (IsDistortion(param) || IsNativeOnSwitch(param))
+                    bus.SetNormalizedSilently(id, amount);
                 else bus.SetNormalized(id, amount);
             }
 
@@ -582,8 +590,7 @@ namespace ZPunk.DAW
                         until = Time.unscaledTime + .45f
                     };
                 }
-                else if (id == "fx.delay.on" || id == "fx.rev.on" ||
-                         id == "filter.on" || id == "arp.on")
+                else if (IsNativeOnSwitch(param))
                     controller.SetParameterValue(param, amount >= 0.5f ? 1f : 0f);
                 else if (id == "fx.delay.sync" || id == "arp.sync")
                     controller.SetParameterValue(param, Mathf.RoundToInt(amount * 3f));
@@ -628,7 +635,17 @@ namespace ZPunk.DAW
             }
             WriteNormalized(sw.id, sw.param, next);
 
-            sw.lastState = -1;
+            // Paint the intended native switch value immediately. Subsequent
+            // refreshes read back from Helm; no persistent override or retry.
+            if (!sw.sync && sw.button != null)
+            {
+                int state = next >= .5f ? 1 : 0;
+                sw.lastState = state;
+                sw.button.text = state == 1 ? "ON" : "OFF";
+                sw.button.style.backgroundColor = state == 1 ? Aqua : Face;
+                sw.button.style.color = state == 1 ? Face : Ink;
+            }
+            else sw.lastState = -1;
             foreach (var m in macros)
                 if (m.id == "arp.rate" || m.id == "fx.delay.time") m.lastDisplay = -999;
             Refresh();
