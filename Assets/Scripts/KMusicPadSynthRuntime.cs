@@ -72,6 +72,7 @@ namespace KMusic
 
         public int CurrentPresetIndex => _index;
         public int PresetCount => _all.Count;
+        public string LastAppliedPresetRelPath { get; private set; }
 
         public string CurrentPresetRelPath
         {
@@ -167,10 +168,12 @@ public void ApplyMasterVolume(float normalized)
             { "mod.sus",   Param.kModSustain },
             { "mod.rel",   Param.kModRelease },
 
+            { "fx.delay.on",   Param.kDelayOn },
             { "fx.delay.mix",  Param.kDelayDryWet },
             { "fx.delay.fb",   Param.kDelayFeedback },
             { "fx.delay.time", Param.kDelayTempo },
 
+            { "fx.rev.on",   Param.kReverbOn },
             { "fx.rev.mix",  Param.kReverbDryWet },
             { "fx.rev.fb",   Param.kReverbFeedback },
             { "fx.rev.damp", Param.kReverbDamping },
@@ -217,6 +220,7 @@ public void ApplyMasterVolume(float normalized)
         private void OnDisable()
         {
             ++_loadRevision;
+            LastAppliedPresetRelPath = null;
             if (_co != null) StopCoroutine(_co);
             _co = null;
 
@@ -467,35 +471,11 @@ public void ApplyMasterVolume(float normalized)
         private void ApplyOne(string id)
         {
             if (_bus == null || helm == null || string.IsNullOrEmpty(id)) return;
+            if (!Map.TryGetValue(id, out var param)) return;
 
-            if (id == "fx.delay.on" || id == "fx.delay.mix")
-            {
-                ApplyPseudoBypass("fx.delay.mix", Param.kDelayDryWet, IsEffectEnabled("fx.delay.on"));
-                return;
-            }
-
-            if (id == "fx.rev.on" || id == "fx.rev.mix")
-            {
-                ApplyPseudoBypass("fx.rev.mix", Param.kReverbDryWet, IsEffectEnabled("fx.rev.on"));
-                return;
-            }
-
-            if (id == "fx.dist.on")
-            {
-                ApplyMappedParameter("fx.dist.on", Param.kDistortionOn, GetBusNormalizedSafe("fx.dist.on"));
-                ApplyPseudoBypass("fx.dist.mix", Param.kDistortionMix, IsEffectEnabled("fx.dist.on"));
-                return;
-            }
-
-            if (id == "fx.dist.mix")
-            {
-                ApplyPseudoBypass("fx.dist.mix", Param.kDistortionMix, IsEffectEnabled("fx.dist.on"));
-                return;
-            }
-
-            if (!Map.TryGetValue(id, out var param))
-                return;
-
+            // Native on/off switches are independent of wet mix. Never zero the
+            // wet mix just because a module was bypassed: reopening a project
+            // must sound identical to browsing that preset manually.
             ApplyMappedParameter(id, param, Mathf.Clamp01(GetBusNormalizedSafe(id)));
         }
 
@@ -506,10 +486,27 @@ public void ApplyMasterVolume(float normalized)
             helm.SetParameterPercent(param, t);
         }
 
-        private void ApplyPseudoBypass(string sendId, Param param, bool enabled)
+        public void ForceApplyProjectParameters(IEnumerable<string> ids)
         {
-            float t = enabled ? Mathf.Clamp01(GetBusNormalizedSafe(sendId)) : 0f;
-            ApplyMappedParameter(sendId, param, t);
+            if (_bus == null || helm == null || ids == null)
+                return;
+
+            _lastSent.Clear();
+
+            foreach (string id in ids)
+            {
+                if (string.IsNullOrEmpty(id))
+                    continue;
+
+                if (_bus.TryGet(id, out _))
+                    ApplyOne(id);
+            }
+        }
+
+        public void RequestPullFromHelm()
+        {
+            if (_bus == null || helm == null) return;
+            PullHelmToBus();
         }
 
         private void PullHelmToBus()
@@ -527,9 +524,7 @@ public void ApplyMasterVolume(float normalized)
                     _bus.SetNormalized(kvp.Key, GetHelmPercentSafe(kvp.Value));
                 }
 
-                if (_bus.TryGet("fx.delay.on", out _)) _bus.SetNormalized("fx.delay.on", GetHelmPercentSafe(Param.kDelayDryWet) > 0.001f ? 1f : 0f);
-                if (_bus.TryGet("fx.rev.on", out _)) _bus.SetNormalized("fx.rev.on", GetHelmPercentSafe(Param.kReverbDryWet) > 0.001f ? 1f : 0f);
-                if (_bus.TryGet("fx.dist.on", out _)) _bus.SetNormalized("fx.dist.on", GetHelmPercentSafe(Param.kDistortionOn) >= 0.5f ? 1f : 0f);
+
             }
             finally
             {
@@ -847,11 +842,13 @@ public void ApplyMasterVolume(float normalized)
             yield return null;
             if (revision != _loadRevision) yield break;
             _runtimePatch.patchData = fmt;
+            LastAppliedPresetRelPath = null;
             helm.LoadPatch(_runtimePatch);
             yield return null;
             yield return null;
             if (revision != _loadRevision) yield break;
 
+            LastAppliedPresetRelPath = relPath;
             PullHelmToBus();
             PresetApplied?.Invoke(_index, relPath);
         }

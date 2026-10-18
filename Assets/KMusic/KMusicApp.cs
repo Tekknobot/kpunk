@@ -104,10 +104,6 @@ namespace KMusic
             if (GetComponent<global::KMusic.KMusicChordTrackUI>() == null)
                 gameObject.AddComponent<global::KMusic.KMusicChordTrackUI>();
 
-            // Ensure project save/load manager exists (topbar NEW/LOAD)
-            if (GetComponent<global::KMusicProjectManager>() == null)
-                gameObject.AddComponent<global::KMusicProjectManager>();
-
             // Load saved mixer/fader values after defaults exist.
             KMusicSaveState.LoadBus(_bus, PrefKey_Bus, id =>
                 id.StartsWith("fx.") || id.StartsWith("arp.") ||
@@ -121,6 +117,12 @@ namespace KMusic
                 id == "sample.pitch" ||
                 id == "master.vol"
             );
+
+            // Load the project *after* global preferences, so global effect
+            // defaults can never replace the previous project's sound on launch.
+            // AddComponent invokes the manager's OnEnable immediately.
+            if (GetComponent<global::KMusicProjectManager>() == null)
+                gameObject.AddComponent<global::KMusicProjectManager>();
         }
 
         private void OnEnable()
@@ -182,12 +184,11 @@ namespace KMusic
                     bpmLabel.text = t.Format();
             };
             _bus.OnChanged += _onBusChanged;
-            _bus.OnChanged += OnSoundParameterChanged;
-            ResolveSoundHelms();
+            // Do not use the legacy global native FX sender here. It used to
+            // reapply saved distortion/delay/reverb 300ms after launch, sometimes
+            // to multiple Helm channels, overwriting freshly loaded presets.
+            // The main binder and independent Pad/Bass runtimes own their audio.
             BindSoundSwitches(root);
-            // Native Helm instances and preset scripts initialize after the
-            // workspace's early Awake. Apply saved effect switches after startup.
-            root.schedule.Execute(RestoreSoundState).ExecuteLater(300);
         }
 
     private void OnSafeRootGeometry(GeometryChangedEvent evt)

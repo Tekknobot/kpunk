@@ -1,10 +1,36 @@
-ZPunk 2.0 — Touch Scroll / Hidden Scrollbars
+ZPUNK - PROJECT RESTORE / HELM SOUND FIX
+========================================
+Merge the Assets folder into your project's Assets folder.
+Overwrite only these 4 files. Retain existing .meta files.
 
-Replace only these files in your existing Unity project:
-- Assets/Scripts/DAW/ZPunkArrangementUI.cs
-- Assets/Scripts/DAW/ZPunkClipEditorUI.cs
+CAUSE: Legacy project saves contain a full copy of UI sound-bus parameters.
+When the preset is selected on project load, those cached (possibly stale)
+UI values were written back into Helm after the .helm file loaded. That can
+turn distortion on, alter oscillators or filters, or make the sound incorrect.
+Changing to the next preset bypasses the project override and restores the
+correct native patch, explaining why patch navigation seems to fix it.
 
-Arrange: native finger-swipe horizontal scrolling with hidden scrollbar, fixed bar widths, existing BARS buttons retained. The BAR indicator follows touch navigation.
-Sampler: hides its vertical scrollbar, retaining the same vertical ScrollView and touch interactions.
+PATCH:
+* Legacy saves: restored project sound is the actual .helm preset. Ignore
+  old Synth/Pad UI cached parameters for native sound; retain project content,
+  presets, track arrangement and mixer/non-synth bus data.
+* New saves: persist the actual native Helm settings (not the UI cache).
+  Restore this sound snapshot only after the matching preset finishes loading.
+* Sync native sound back into UI after restore.
+* Restore each channel's master volume only after its preset loads.
+* Pads: use real native FX on/off controls, never zero the dry/wet mix as a
+  substitute for an off switch.
+* Remove a single zero-byte SFX .helm from the preset index (source file intact).
+* Log successful patch restores for diagnosis in Unity Console/device logs.
 
-Unity compilation and device gesture testing have not been performed here.
+BACKWARD COMPATIBILITY:
+Older projects remain readable and retain their musical content. Their saved
+Synth/Pad preset is now treated as authoritative. Individual sound adjustments
+saved only in the old UI parameter dumps cannot be reliably reconstructed.
+After verifying the sound, save the project again to capture a proper native
+snapshot for subsequent launches. Never delete project files to test this fix.
+
+VERIFICATION:
+Static source checks passed; Unity and native iOS runtime not available here.
+Do not resubmit a release to Apple until cold launch and project reload have
+been checked on a physical iOS device / TestFlight.

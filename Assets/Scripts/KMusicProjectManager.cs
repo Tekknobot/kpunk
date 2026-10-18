@@ -75,7 +75,18 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private VisualElement _presetBrowser;
     private ScrollView _presetBrowserList;
 
-    private readonly List<BusPair> _pendingSynthBusRestore = new();
+    // Native Helm snapshots are saved AFTER a preset finishes loading.
+    // The older BusPair dumps cannot be trusted for sound restoration: they can
+    // represent stale UI/default values rather than the actual patch.
+    private readonly List<NativeSoundValue> _pendingSynthNativeRestore = new();
+    private readonly List<NativeSoundValue> _pendingPadNativeRestore = new();
+    private float _pendingSynthMasterVolume = -1f;
+    private float _pendingPadMasterVolume = -1f;
+    private Coroutine _pendingSynthRestoreJob;
+    private Coroutine _pendingPadRestoreJob;
+    private int _projectLoadRevision;
+    private string _expectedSynthPresetPath;
+    private string _expectedPadPresetPath;
 
     private KMusicPadSynthRuntime _padSynthRuntime;
 
@@ -800,6 +811,59 @@ public sealed class KMusicProjectManager : MonoBehaviour
     [Serializable] private class BusPair { public string id; public float v; }
 
     [Serializable]
+    private class NativeSoundValue
+    {
+        public int param;
+        public float normalized;
+    }
+
+    // Capture the sound that ACTUALLY plays, not cached control values. A full
+    // parameter snapshot preserves user sound edits made on the SOUND page,
+    // including distortion, envelopes, filters, modulation and FX switches.
+    // Modulations themselves remain owned by the original .helm preset.
+    private static List<NativeSoundValue> CaptureNativeSound(AudioHelm.HelmController controller)
+    {
+        var result = new List<NativeSoundValue>();
+        if (controller == null) return result;
+        foreach (AudioHelm.Param param in Enum.GetValues(typeof(AudioHelm.Param)))
+        {
+            if (param == AudioHelm.Param.kNone) continue;
+            try
+            {
+                float n = controller.GetParameterPercent(param);
+                if (!float.IsNaN(n) && !float.IsInfinity(n) && n >= 0f && n <= 1f)
+                    result.Add(new NativeSoundValue { param = (int)param, normalized = n });
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[Project] Skipped native sound parameter " + param + ": " + ex.Message);
+            }
+        }
+        return result;
+    }
+
+    private static void ApplyNativeSound(AudioHelm.HelmController controller, List<NativeSoundValue> snapshot)
+    {
+        if (controller == null || snapshot == null) return;
+        foreach (var value in snapshot)
+        {
+            if (value == null || value.param <= 0 ||
+                !Enum.IsDefined(typeof(AudioHelm.Param), value.param) ||
+                float.IsNaN(value.normalized) || float.IsInfinity(value.normalized) ||
+                value.normalized < 0f || value.normalized > 1f)
+                continue;
+            try
+            {
+                controller.SetParameterPercent((AudioHelm.Param)value.param, value.normalized);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[Project] Couldn't restore native parameter " + value.param + ": " + ex.Message);
+            }
+        }
+    }
+
+    [Serializable]
     private class DrumState
     {
         public string stepMaskB64;
@@ -822,9 +886,18 @@ public sealed class KMusicProjectManager : MonoBehaviour
         public string presetRelPath;
         public int presetIndex;
         public float masterVolume = -1f;
+        // Deprecated legacy UI snapshot; do not replay onto a native Helm patch.
+        public List<BusPair> soundBus = new();
+        public List<NativeSoundValue> nativeSound = new();
     }
 
-    [Serializable] private class SynthState { public string presetRelPath; public int presetIndex; public float masterVolume = -1f; }
+    [Serializable] private class SynthState
+    {
+        public string presetRelPath;
+        public int presetIndex;
+        public float masterVolume = -1f;
+        public List<NativeSoundValue> nativeSound = new();
+    }
     [Serializable] private class PlayerState { public string lastTrackId; }
     [Serializable] private class ChopState { public string resourcesPath; public float[] sliceStart01; public float[] sliceEnd01; }
 
@@ -840,6 +913,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             || id.StartsWith("filter.", StringComparison.OrdinalIgnoreCase)
             || id.StartsWith("amp.", StringComparison.OrdinalIgnoreCase)
             || id.StartsWith("mod.", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("arp.", StringComparison.OrdinalIgnoreCase)
             || id.StartsWith("fx.", StringComparison.OrdinalIgnoreCase)
             || id.Equals("master.vol", StringComparison.OrdinalIgnoreCase)
             || id.Equals("master.porta", StringComparison.OrdinalIgnoreCase)
@@ -859,30 +933,80 @@ public sealed class KMusicProjectManager : MonoBehaviour
         }
     }
 
-    private void OnProjectPresetApplied(int _, string __)
+    private static bool PresetMatches(string expected, string loaded)
     {
-        if (_helm != null)
-            _helm.PresetApplied -= OnProjectPresetApplied;
-
-        if (!isActiveAndEnabled)
-        {
-            ApplyBusPairs(_pendingSynthBusRestore);
-            _pendingSynthBusRestore.Clear();
-            return;
-        }
-
-        StartCoroutine(ApplyPendingSynthBusAfterPresetCoroutine());
+        return string.IsNullOrEmpty(expected) ||
+            string.Equals(expected, loaded, StringComparison.OrdinalIgnoreCase);
     }
 
-    private System.Collections.IEnumerator ApplyPendingSynthBusAfterPresetCoroutine()
+    private void OnProjectPresetApplied(int _, string path)
     {
-        // Give Helm/binder one more beat before reapplying the project's saved synth overrides.
+        if (_helm != null) _helm.PresetApplied -= OnProjectPresetApplied;
+        if (!PresetMatches(_expectedSynthPresetPath, path))
+        {
+            _pendingSynthNativeRestore.Clear();
+            return;
+        }
+        if (_pendingSynthRestoreJob != null) StopCoroutine(_pendingSynthRestoreJob);
+        _pendingSynthRestoreJob = StartCoroutine(ApplyPendingSynthSoundAfterPresetCoroutine(
+            _projectLoadRevision, path));
+    }
+
+    private System.Collections.IEnumerator ApplyPendingSynthSoundAfterPresetCoroutine(int revision, string path)
+    {
         yield return null;
         yield return new WaitForEndOfFrame();
-        yield return null;
+        if (revision != _projectLoadRevision || _helm == null ||
+            !PresetMatches(path, _helm.CurrentPresetRelPath)) yield break;
 
-        ApplyBusPairs(_pendingSynthBusRestore);
-        _pendingSynthBusRestore.Clear();
+        // DO NOT reapply old ProjectData.bus synth values here. That old dump
+        // routinely reintroduces distortion / wrong oscillator and filter values.
+        var controller = _helm.ActiveHelmController;
+        ApplyNativeSound(controller, _pendingSynthNativeRestore);
+        // A legacy project's cached 0 volume may have been captured before
+        // Helm initialized. Don't turn an otherwise good preset silent on load.
+        if (controller != null && _pendingSynthMasterVolume >= 0f &&
+            (_pendingSynthNativeRestore.Count > 0 || _pendingSynthMasterVolume > 0f))
+            controller.SetParameterPercent(AudioHelm.Param.kVolume, Mathf.Clamp01(_pendingSynthMasterVolume));
+
+        var binder = FindObjectOfType<KMusicHelmSynthBinder>();
+        if (binder != null)
+            binder.RequestPullFromHelm();
+        Debug.Log($"[ZPUNK Project] Synth '{path}' restored; native parameters={_pendingSynthNativeRestore.Count} (zero means legacy preset only).");
+        _pendingSynthNativeRestore.Clear();
+        _pendingSynthRestoreJob = null;
+    }
+
+    private void OnProjectPadPresetApplied(int _, string path)
+    {
+        if (_padSynthRuntime != null)
+            _padSynthRuntime.PresetApplied -= OnProjectPadPresetApplied;
+        if (!PresetMatches(_expectedPadPresetPath, path))
+        {
+            _pendingPadNativeRestore.Clear();
+            return;
+        }
+        if (_pendingPadRestoreJob != null) StopCoroutine(_pendingPadRestoreJob);
+        _pendingPadRestoreJob = StartCoroutine(ApplyPendingPadSoundAfterPresetCoroutine(
+            _projectLoadRevision, path));
+    }
+
+    private System.Collections.IEnumerator ApplyPendingPadSoundAfterPresetCoroutine(int revision, string path)
+    {
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        if (revision != _projectLoadRevision || _padSynthRuntime == null ||
+            !PresetMatches(path, _padSynthRuntime.CurrentPresetRelPath)) yield break;
+
+        var controller = _padSynthRuntime.ActiveHelmController;
+        ApplyNativeSound(controller, _pendingPadNativeRestore);
+        if (controller != null && _pendingPadMasterVolume >= 0f &&
+            (_pendingPadNativeRestore.Count > 0 || _pendingPadMasterVolume > 0f))
+            controller.SetParameterPercent(AudioHelm.Param.kVolume, Mathf.Clamp01(_pendingPadMasterVolume));
+        _padSynthRuntime.RequestPullFromHelm();
+        Debug.Log($"[ZPUNK Project] Pads '{path}' restored; native parameters={_pendingPadNativeRestore.Count} (zero means legacy preset only).");
+        _pendingPadNativeRestore.Clear();
+        _pendingPadRestoreJob = null;
     }
 
     private float TryGetProjectTempoBpm()
@@ -1190,15 +1314,24 @@ public sealed class KMusicProjectManager : MonoBehaviour
             data.pad.presetRelPath = _padSynthRuntime.CurrentPresetRelPath;
             data.pad.presetIndex = _padSynthRuntime.CurrentPresetIndex;
             data.pad.masterVolume = _padSynthRuntime.CaptureMasterVolume();
+            if (string.Equals(_padSynthRuntime.LastAppliedPresetRelPath,
+                    data.pad.presetRelPath, StringComparison.OrdinalIgnoreCase))
+                data.pad.nativeSound = CaptureNativeSound(_padSynthRuntime.ActiveHelmController);
         }
 
         if (_helm != null)
         {
             data.synth.presetRelPath = _helm.CurrentPresetRelPath;
             data.synth.presetIndex = _helm.CurrentPresetIndex;
+            if (string.Equals(_helm.LastAppliedPresetRelPath,
+                    data.synth.presetRelPath, StringComparison.OrdinalIgnoreCase))
+                data.synth.nativeSound = CaptureNativeSound(_helm.ActiveHelmController);
         }
 
-        if (_app != null && _app.Bus != null)
+        if (_helm != null && _helm.ActiveHelmController != null &&
+            !string.IsNullOrEmpty(_helm.LastAppliedPresetRelPath))
+            data.synth.masterVolume = Mathf.Clamp01(_helm.ActiveHelmController.GetParameterPercent(AudioHelm.Param.kVolume));
+        else if (_app != null && _app.Bus != null)
             data.synth.masterVolume = Mathf.Clamp01(_app.Bus.GetValue("master.vol"));
 
         if (_player != null)
@@ -1299,6 +1432,18 @@ public sealed class KMusicProjectManager : MonoBehaviour
         var dawTransport = FindObjectOfType<ZPunkSongTransport>();
         if (dawTransport != null && dawTransport.IsPlaying) dawTransport.StopSong();
 
+        // Cancel any outstanding restores from the preceding project. A stale
+        // coroutine must never switch FX or volume after a later project loads.
+        CancelPendingAudioRestores();
+        _expectedSynthPresetPath = data.synth != null ? data.synth.presetRelPath : null;
+        _expectedPadPresetPath = data.pad != null ? data.pad.presetRelPath : null;
+        _pendingSynthMasterVolume = data.synth != null ? data.synth.masterVolume : -1f;
+        _pendingPadMasterVolume = data.pad != null ? data.pad.masterVolume : -1f;
+        if (data.synth != null && data.synth.nativeSound != null)
+            _pendingSynthNativeRestore.AddRange(data.synth.nativeSound);
+        if (data.pad != null && data.pad.nativeSound != null)
+            _pendingPadNativeRestore.AddRange(data.pad.nativeSound);
+
         // Version validation completed before changing any playback or pref state.
         CurrentSong = data.song;
 
@@ -1345,10 +1490,6 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 _player.RefreshAppliedMarkersFromState();
             }
 
-            _pendingSynthBusRestore.Clear();
-            if (_helm != null)
-                _helm.PresetApplied -= OnProjectPresetApplied;
-
             if (_app != null && _app.Bus != null && data.bus != null)
             {
                 var nonSynthBus = new List<BusPair>();
@@ -1358,9 +1499,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
                     var it = data.bus[i];
                     if (it == null || string.IsNullOrEmpty(it.id)) continue;
 
-                    if (IsSynthBusId(it.id))
-                        _pendingSynthBusRestore.Add(it);
-                    else
+                    // These values are only an old UI cache, NOT a faithful
+                    // snapshot of a Helm patch. Native sound is restored above.
+                    if (!IsSynthBusId(it.id))
                         nonSynthBus.Add(it);
                 }
 
@@ -1421,19 +1562,17 @@ public sealed class KMusicProjectManager : MonoBehaviour
             }
 
             if (_padSynthRuntime != null && data.pad != null)
+            {
+                _padSynthRuntime.PresetApplied -= OnProjectPadPresetApplied;
+                _padSynthRuntime.PresetApplied += OnProjectPadPresetApplied;
                 _padSynthRuntime.ApplyPresetChoice(data.pad.presetIndex, data.pad.presetRelPath);
+            }
 
             if (_helm != null && data.synth != null)
             {
-                if (_pendingSynthBusRestore.Count > 0)
-                    _helm.PresetApplied += OnProjectPresetApplied;
-
+                _helm.PresetApplied -= OnProjectPresetApplied;
+                _helm.PresetApplied += OnProjectPresetApplied;
                 _helm.ApplyPresetChoice(data.synth.presetIndex, data.synth.presetRelPath);
-            }
-            else
-            {
-                ApplyBusPairs(_pendingSynthBusRestore);
-                _pendingSynthBusRestore.Clear();
             }
 
             string chopsSampleId = data.chops != null ? data.chops.resourcesPath : null;
@@ -1461,9 +1600,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (_chainUi != null)
                 _chainUi.ReloadFromSaved();
 
-            float mainSynthVol = (data.synth != null) ? data.synth.masterVolume : -1f;
-            float padSynthVol = (data.pad != null) ? data.pad.masterVolume : -1f;
-            StartCoroutine(ApplySavedSynthVolumesAfterLoad(mainSynthVol, padSynthVol));
+            // Volumes are restored in the matching PresetApplied handlers,
+            // not after an unrelated fixed delay on startup.
         }
         catch (Exception e)
         {
@@ -1485,21 +1623,26 @@ public sealed class KMusicProjectManager : MonoBehaviour
     }
 
 
-private System.Collections.IEnumerator ApplySavedSynthVolumesAfterLoad(float mainSynthVolume, float padSynthVolume)
-{
-    yield return null;
-    yield return new WaitForEndOfFrame();
-    yield return null;
-
-    if (_app != null && _app.Bus != null && mainSynthVolume >= 0f)
-        _app.Bus.SetValue("master.vol", Mathf.Clamp01(mainSynthVolume));
-
-    if (_padSynthRuntime != null && padSynthVolume >= 0f)
-        _padSynthRuntime.ApplyMasterVolume(padSynthVolume);
-}
+    private void CancelPendingAudioRestores()
+    {
+        ++_projectLoadRevision;
+        if (_pendingSynthRestoreJob != null) StopCoroutine(_pendingSynthRestoreJob);
+        if (_pendingPadRestoreJob != null) StopCoroutine(_pendingPadRestoreJob);
+        _pendingSynthRestoreJob = null;
+        _pendingPadRestoreJob = null;
+        if (_helm != null) _helm.PresetApplied -= OnProjectPresetApplied;
+        if (_padSynthRuntime != null) _padSynthRuntime.PresetApplied -= OnProjectPadPresetApplied;
+        _pendingSynthNativeRestore.Clear();
+        _pendingPadNativeRestore.Clear();
+        _pendingSynthMasterVolume = -1f;
+        _pendingPadMasterVolume = -1f;
+        _expectedSynthPresetPath = null;
+        _expectedPadPresetPath = null;
+    }
 
     private void ResetToBlank()
     {
+        CancelPendingAudioRestores();
         CurrentSong = null;
         if (_drums != null)
         {

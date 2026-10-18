@@ -56,6 +56,8 @@ namespace KMusic
         private const string PrefKey_SynthPresetIndex = "kmusic.synth.preset.index.v1";
 
         // Project system hooks
+        public HelmController ActiveHelmController => helm;
+        public string LastAppliedPresetRelPath { get; private set; }
         public int CurrentPresetIndex => _index;
 
         public string CurrentPresetRelPath
@@ -211,6 +213,7 @@ namespace KMusic
         private void OnDisable()
         {
             ++_loadRevision;
+            LastAppliedPresetRelPath = null;
             if (_prevBtn != null) _prevBtn.clicked -= OnPrev;
             if (_nextBtn != null) _nextBtn.clicked -= OnNext;
 
@@ -398,6 +401,10 @@ namespace KMusic
             yield return null;
             if (revision != _loadRevision) yield break;
             _runtimePatch.patchData = fmt;
+            // Track the actual applied preset, not the UI's selected index.
+            // This prevents an in-flight preset change from being saved as if
+            // it were already the sound currently running in native Helm.
+            LastAppliedPresetRelPath = null;
             helm.LoadPatch(_runtimePatch);
 
             // Let Helm finish internal patch application before we mirror values back into the bus.
@@ -405,6 +412,7 @@ namespace KMusic
             yield return null;
 
             if (revision != _loadRevision) yield break;
+            LastAppliedPresetRelPath = relPath;
             // Replace stale bus values with the newly loaded patch's actual
             // parameters before project-specific overrides are restored.
             ResolveMainSynthBinder();

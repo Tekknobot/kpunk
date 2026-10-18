@@ -98,11 +98,13 @@ namespace KMusic
             { "mod.rel",   Param.kModRelease },
 
             // FX: DELAY
+            { "fx.delay.on",   Param.kDelayOn },
             { "fx.delay.mix",  Param.kDelayDryWet },
             { "fx.delay.fb",   Param.kDelayFeedback },
             { "fx.delay.time", Param.kDelayTempo },
 
             // FX: REVERB
+            { "fx.rev.on",    Param.kReverbOn },
             { "fx.rev.mix",  Param.kReverbDryWet },
             { "fx.rev.fb",   Param.kReverbFeedback },
             { "fx.rev.damp", Param.kReverbDamping },
@@ -377,31 +379,6 @@ namespace KMusic
         {
             if (_bus == null || helm == null || string.IsNullOrEmpty(id)) return;
 
-            if (id == "fx.delay.on" || id == "fx.delay.mix")
-            {
-                ApplyPseudoBypass("fx.delay.mix", Param.kDelayDryWet, IsEffectEnabled("fx.delay.on"));
-                return;
-            }
-
-            if (id == "fx.rev.on" || id == "fx.rev.mix")
-            {
-                ApplyPseudoBypass("fx.rev.mix", Param.kReverbDryWet, IsEffectEnabled("fx.rev.on"));
-                return;
-            }
-
-            if (id == "fx.dist.on")
-            {
-                ApplyMappedParameter("fx.dist.on", Param.kDistortionOn, GetBusNormalizedSafe("fx.dist.on"));
-                ApplyPseudoBypass("fx.dist.mix", Param.kDistortionMix, IsEffectEnabled("fx.dist.on"));
-                return;
-            }
-
-            if (id == "fx.dist.mix")
-            {
-                ApplyPseudoBypass("fx.dist.mix", Param.kDistortionMix, IsEffectEnabled("fx.dist.on"));
-                return;
-            }
-
             if (!Map.TryGetValue(id, out var param))
                 return;
 
@@ -624,6 +601,23 @@ namespace KMusic
             if (m4 != null) { m4.Invoke(bus, new object[] { id, t }); return true; }
 
             return false;
+        }
+
+        /// <summary>
+        /// Native Helm parameters have just been replaced by a preset. Re-send
+        /// the saved project's explicit overrides even when SetValue did not
+        /// fire OnChanged because the bus already contained the saved value.
+        /// </summary>
+        public void ForceApplyProjectParameters(IEnumerable<string> ids)
+        {
+            ResolveMainSynthHelm();
+            if (_bus == null || helm == null || ids == null) return;
+            _lastSent.Clear();
+            foreach (string id in ids)
+            {
+                if (Map.ContainsKey(id) && _bus.TryGet(id, out _))
+                    ApplyOne(id);
+            }
         }
 
         public void RequestPullFromHelm()

@@ -290,7 +290,6 @@ SFX/COA Digital Waterdrops.helm
 SFX/COA Lasersword.helm
 SFX/COA Satan in Your Headphones 1.helm
 SFX/COA Satan in Your Headphones 2.helm
-SFX/COA Scifi Gunshot.helm
 SFX/COA Sinister Ambient 1.helm
 SFX/COA Sinister Ambient 2.helm
 SFX/MT Elven Door Stop.helm
