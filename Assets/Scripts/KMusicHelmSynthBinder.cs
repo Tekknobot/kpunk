@@ -393,15 +393,12 @@ namespace KMusic
             if (logApply)
                 Debug.Log($"[APPLY] {id} -> {param} = {t:0.000}");
 
-            // Enum and power controls take exact native values. Percent-to-enum
-            // conversion may produce values just below a detent (e.g. 0.99 instead
-            // of distortion type 1) after a bus round trip.
-            if (id == "fx.dist.drive")
-                helm.SetParameterValue(param, Mathf.Lerp(-30f, 30f, t));
-            else if (id == "fx.dist.type")
-                helm.SetParameterValue(param, Mathf.RoundToInt(t * 3f));
-            else if (id == "fx.dist.on" || id == "fx.delay.on" || id == "fx.rev.on")
-                helm.SetParameterValue(param, t >= 0.5f ? 1f : 0f);
+            // Distortion uses the same normalized Helm API as FILTER.
+            // Discrete TYPE and ON values are quantized before the one write.
+            if (id == "fx.dist.type") t = Mathf.RoundToInt(t * 3f) / 3f;
+            else if (id == "fx.dist.on") t = t >= .5f ? 1f : 0f;
+            if (id == "fx.delay.on" || id == "fx.rev.on")
+                helm.SetParameterValue(param, t >= .5f ? 1f : 0f);
             else
                 helm.SetParameterPercent(param, t);
         }
@@ -568,19 +565,8 @@ namespace KMusic
 
         private float GetHelmPercentSafe(Param p)
         {
-            // Some plugin versions expose a percent different from native dB.
-            // Reading the actual Helm patch value makes preset pulls exact.
-            if (helm != null)
-            {
-                if (p == Param.kDistortionDrive)
-                    return Mathf.InverseLerp(-30f, 30f, helm.GetParameterValue(p));
-                if (p == Param.kDistortionType)
-                    return Mathf.Clamp01(Mathf.Round(helm.GetParameterValue(p)) / 3f);
-                if (p == Param.kDistortionOn)
-                    return helm.GetParameterValue(p) >= 0.5f ? 1f : 0f;
-            }
-
-            // Most HelmController versions have GetParameterPercent(Param)
+            // Pull the actual plugin percentage after preset load. Avoid
+            // cached distortion base values left over from previous patches.
             var mi = typeof(HelmController).GetMethod("GetParameterPercent", new[] { typeof(Param) });
             if (mi != null)
             {

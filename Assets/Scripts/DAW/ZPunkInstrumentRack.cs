@@ -109,6 +109,12 @@ namespace ZPunk.DAW
             if(kind==TrackKind.Bass)return bass;
             if(kind==TrackKind.Synth)
             {
+                // The preset picker is the authoritative owner of the Synth
+                // patch/channel. The piano-roll may reference another controller
+                // during reinitialization; SOUND must edit the preset's engine.
+                var picker=FindObjectOfType<KMusicHelmPresetPickerUI>();
+                if(picker!=null && picker.isActiveAndEnabled && picker.ActiveHelmController!=null)
+                    return picker.ActiveHelmController;
                 var painter=FindObjectOfType<KMusicPianoRollStepPainter>();
                 return painter!=null?painter.ActiveHelmController:null;
             }

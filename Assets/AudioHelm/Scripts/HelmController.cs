@@ -40,6 +40,10 @@ namespace AudioHelm
         /// </summary>
         public List<HelmParameter> synthParameters = new List<HelmParameter>();
 
+        // Live edits use Helm's normalized parameter API, exactly as FILTER does.
+        // Do not cache, verify, or replay distortion values in a coroutine: those
+        // delayed writes used to undo a user edit or a newly loaded preset.
+
         Dictionary<int, int> pressedNotes = new Dictionary<int, int>();
         Dictionary<float, int> pressedFrequencies = new Dictionary<float, int>();
 
@@ -76,32 +80,15 @@ namespace AudioHelm
                 {
                     float val = (float)field.GetValue(patch.patchData.settings);
 
-                    // HelmPatchSettings is declared in patch/JSON order
-                    // (distortion_drive, distortion_mix, distortion_on, distortion_type),
-                    // but the native plugin uses ON=21, TYPE=22, DRIVE=23, MIX=24.
-                    // Writing these by sequential reflection index mistakenly
-                    // places distortion_on (usually 1) into DRIVE, giving +1 dB
-                    // on almost every factory patch and wrong mix/type/on states.
+                    // The JSON's four distortion fields are not in native Param
+                    // order. Use their names rather than reflection field offsets.
                     int nativeIndex = index;
                     switch (field.Name)
                     {
-                        case "distortion_on":
-                            nativeIndex = (int)Param.kDistortionOn;
-                            val = val >= 0.5f ? 1f : 0f;
-                            break;
-                        case "distortion_type":
-                            nativeIndex = (int)Param.kDistortionType;
-                            val = Mathf.Clamp(Mathf.Round(val), 0f, 3f);
-                            break;
-                        case "distortion_drive":
-                            nativeIndex = (int)Param.kDistortionDrive;
-                            // This bundled native Helm plugin reports -30..+30.
-                            val = Mathf.Clamp(val, -30f, 30f);
-                            break;
-                        case "distortion_mix":
-                            nativeIndex = (int)Param.kDistortionMix;
-                            val = Mathf.Clamp01(val);
-                            break;
+                        case "distortion_on": nativeIndex = (int)Param.kDistortionOn; break;
+                        case "distortion_type": nativeIndex = (int)Param.kDistortionType; break;
+                        case "distortion_drive": nativeIndex = (int)Param.kDistortionDrive; break;
+                        case "distortion_mix": nativeIndex = (int)Param.kDistortionMix; break;
                     }
                     Native.HelmSetParameterValue(channel, nativeIndex, val);
                     values.Add(val);
@@ -109,14 +96,13 @@ namespace AudioHelm
                 }
             }
 
-            // The optional Unity animation mirror is indexed by native Param,
-            // so correct its four distortion entries too. Never use the
-            // original sequential field offsets for these parameters.
+            // The animation mirror is indexed by native Param rather than JSON
+            // field order. A patch load is the only preset-driven write.
             var settings = patch.patchData.settings;
-            values[(int)Param.kDistortionOn] = settings.distortion_on >= 0.5f ? 1f : 0f;
-            values[(int)Param.kDistortionType] = Mathf.Clamp(Mathf.Round(settings.distortion_type), 0f, 3f);
-            values[(int)Param.kDistortionDrive] = Mathf.Clamp(settings.distortion_drive, -30f, 30f);
-            values[(int)Param.kDistortionMix] = Mathf.Clamp01(settings.distortion_mix);
+            values[(int)Param.kDistortionOn] = settings.distortion_on;
+            values[(int)Param.kDistortionType] = settings.distortion_type;
+            values[(int)Param.kDistortionDrive] = settings.distortion_drive;
+            values[(int)Param.kDistortionMix] = settings.distortion_mix;
 
             for (int i = 0; i < synthParameters.Count; ++i)
                 SetParameterAtIndex(i, values[(int)synthParameters[i].parameter]);
@@ -291,6 +277,8 @@ namespace AudioHelm
         /// <param name="newValue">The value to change the parameter to.</param>
         public void SetParameterValue(Param parameter, float newValue)
         {
+            // Raw/native values are used for loading presets and restoring
+            // snapshots. Do not schedule an asynchronous distortion replay.
             Native.HelmSetParameterValue(channel, (int)parameter, newValue);
         }
 
@@ -335,7 +323,9 @@ namespace AudioHelm
         /// <param name="newPercent">The percent of range of values to use. 0.0 for lowest, 1.0 for highest.</param>
         public void SetParameterPercent(Param parameter, float newPercent)
         {
-            Native.HelmSetParameterPercent(channel, (int)parameter, newPercent);
+            // Identical live-control path for filter, distortion, and other
+            // knobs. Helm itself converts normalized values to native ranges.
+            Native.HelmSetParameterPercent(channel, (int)parameter, Mathf.Clamp01(newPercent));
         }
 
         /// <summary>

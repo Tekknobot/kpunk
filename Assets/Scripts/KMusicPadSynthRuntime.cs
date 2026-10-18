@@ -483,14 +483,11 @@ public void ApplyMasterVolume(float normalized)
         {
             t = Mathf.Clamp01(t);
             if (!ShouldSend(id, t)) return;
-            // Keep native effect enums/power switches on their real detents.
-            // Other parameters continue using Helm's own normalized scaling.
-            if (id == "fx.dist.drive")
-                helm.SetParameterValue(param, Mathf.Lerp(-30f, 30f, t));
-            else if (id == "fx.dist.type")
-                helm.SetParameterValue(param, Mathf.RoundToInt(t * 3f));
-            else if (id == "fx.dist.on" || id == "fx.delay.on" || id == "fx.rev.on")
-                helm.SetParameterValue(param, t >= 0.5f ? 1f : 0f);
+            // One normalized write for distortion, exactly like FILTER.
+            if (id == "fx.dist.type") t = Mathf.RoundToInt(t * 3f) / 3f;
+            else if (id == "fx.dist.on") t = t >= .5f ? 1f : 0f;
+            if (id == "fx.delay.on" || id == "fx.rev.on")
+                helm.SetParameterValue(param, t >= .5f ? 1f : 0f);
             else
                 helm.SetParameterPercent(param, t);
         }
@@ -546,18 +543,8 @@ public void ApplyMasterVolume(float normalized)
 
         private float GetHelmPercentSafe(Param p)
         {
-            // Some plugin versions expose a percent different from native dB.
-            // Reading the actual Helm patch value makes preset pulls exact.
-            if (helm != null)
-            {
-                if (p == Param.kDistortionDrive)
-                    return Mathf.InverseLerp(-30f, 30f, helm.GetParameterValue(p));
-                if (p == Param.kDistortionType)
-                    return Mathf.Clamp01(Mathf.Round(helm.GetParameterValue(p)) / 3f);
-                if (p == Param.kDistortionOn)
-                    return helm.GetParameterValue(p) >= 0.5f ? 1f : 0f;
-            }
-
+            // Do not use a per-controller distortion cache. Presets are
+            // loaded natively and immediately mirrored to the parameter bus.
             var mi = typeof(HelmController).GetMethod("GetParameterPercent", new[] { typeof(Param) });
             if (mi != null)
             {

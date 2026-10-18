@@ -29,6 +29,15 @@ namespace KMusic.Core
                 OnChanged?.Invoke(id, p.Value);
         }
 
+        // Mirror an edit made directly to a selected HelmController without
+        // triggering a second synth write through legacy OnChanged subscribers.
+        // Preset loads continue to use their normal pull/sync path.
+        public void SetNormalizedSilently(string id, float t)
+        {
+            if (_p.TryGetValue(id, out var p))
+                p.Normalized = t;
+        }
+
         public void SetValue(string id, float v)
         {
             if (!_p.TryGetValue(id, out var p)) return;
