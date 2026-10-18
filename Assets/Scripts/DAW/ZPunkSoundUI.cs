@@ -42,6 +42,17 @@ namespace ZPunk.DAW
         private TrackKind selected = TrackKind.Synth;
         private float nextRefresh;
         private float lastModuleWidth = -1f;
+        // Short-lived UI acknowledgement, never a replay queue. Native Helm is
+        // still authoritative after this grace interval; a preset change clears it.
+        private sealed class PendingDistortion
+        {
+            public float normalized;
+            public float until;
+        }
+        private readonly Dictionary<Param, PendingDistortion> pendingDistortion =
+            new Dictionary<Param, PendingDistortion>();
+        private HelmController pendingController;
+        private string pendingPreset;
         private Macro dragging;
         private int dragPointer = -1;
         private float dragY, dragStart, scrollLockUntil;
@@ -309,6 +320,7 @@ namespace ZPunk.DAW
                 root.ReleasePointer(dragPointer);
             dragging = null; dragPointer = -1;
             selected = track;
+            ClearPendingDistortion();
             OnShown();
         }
         public void OnShown(int requestedTrack = -1)
@@ -321,6 +333,7 @@ namespace ZPunk.DAW
             }
             if (root == null) return;
             FindServices();
+            ClearPendingDistortion();
             foreach (var entry in selectors)
             {
                 bool active = entry.Key == selected;
@@ -374,13 +387,34 @@ namespace ZPunk.DAW
                 default: return Param.kNone;
             }
         }
+        private void ClearPendingDistortion()
+        {
+            pendingDistortion.Clear();
+            pendingController = null;
+            pendingPreset = null;
+        }
         private bool ReadPercent(HelmController controller, Param param, out float amount)
         {
             amount = 0f;
             if (controller == null) return false;
             try
             {
-                amount = Mathf.Clamp01(controller.GetParameterPercent(param));
+                // ON is a native boolean, not a continuous drive/mix control.
+                // The raw value is unambiguous even if the plugin's percent
+                // conversion handles toggles differently from its linear knobs.
+                amount = param == Param.kDistortionOn
+                    ? (controller.GetParameterValue(param) >= .5f ? 1f : 0f)
+                    : Mathf.Clamp01(controller.GetParameterPercent(param));
+                if (pendingController == controller && IsDistortion(param) &&
+                    pendingDistortion.TryGetValue(param, out PendingDistortion pending))
+                {
+                    if (Mathf.Abs(amount - pending.normalized) < .008f)
+                        pendingDistortion.Remove(param);
+                    else if (Time.unscaledTime < pending.until)
+                        amount = pending.normalized; // Ignore transient stale read-back.
+                    else
+                        pendingDistortion.Remove(param); // Reveal a real native mismatch.
+                }
                 return true;
             }
             catch (Exception) { return false; }
@@ -420,6 +454,12 @@ namespace ZPunk.DAW
                 preset = padRuntime.PresetCount > 0
                     ? DisplayPath(padRuntime.CurrentPresetRelPath) + "  (" + (padRuntime.CurrentPresetIndex + 1) + "/" + padRuntime.PresetCount + ")"
                     : "PAD PRESETS UNAVAILABLE";
+            if (pendingController != controller || pendingPreset != preset)
+            {
+                pendingDistortion.Clear();
+                pendingController = controller;
+                pendingPreset = preset;
+            }
             if (presetName != null && presetName.text != preset) presetName.text = preset;
 
             var bus = CurrentBus();
@@ -518,11 +558,29 @@ namespace ZPunk.DAW
             {
                 if (IsDistortion(param))
                 {
-                    if (param == Param.kDistortionType)
+                    // A single native write per edit. Binary ON/OFF and TYPE
+                    // have discrete *native* values; DRIVE and MIX use Helm's
+                    // normalized setter, like the working FILTER controls.
+                    if (param == Param.kDistortionOn)
+                        amount = amount >= .5f ? 1f : 0f;
+                    else if (param == Param.kDistortionType)
                         amount = Mathf.RoundToInt(amount * 3f) / 3f;
-                    else if (param == Param.kDistortionOn)
-                        amount = amount >= 0.5f ? 1f : 0f;
-                    controller.SetParameterPercent(param, amount);
+
+                    if (param == Param.kDistortionOn)
+                        controller.SetParameterValue(param, amount);
+                    else if (param == Param.kDistortionType)
+                        controller.SetParameterValue(param, Mathf.RoundToInt(amount * 3f));
+                    else
+                        controller.SetParameterPercent(param, amount);
+
+                    if (pendingController != controller) pendingDistortion.Clear();
+                    pendingController = controller;
+                    pendingPreset = presetName != null ? presetName.text : null;
+                    pendingDistortion[param] = new PendingDistortion
+                    {
+                        normalized = amount,
+                        until = Time.unscaledTime + .45f
+                    };
                 }
                 else if (id == "fx.delay.on" || id == "fx.rev.on" ||
                          id == "filter.on" || id == "arp.on")
@@ -542,6 +600,9 @@ namespace ZPunk.DAW
         private void SetMacro(Macro m, float amount)
         {
             amount = Quantize(m, amount);
+            // Do not spam Helm with identical native values during a stationary
+            // drag (particularly the discrete distortion TYPE selector).
+            if (Mathf.Abs(amount - m.normalized) < .0005f) return;
             WriteNormalized(m.id, ActualParam(m.id, m.param), amount);
             m.normalized = amount;
             m.lastDisplay = Mathf.RoundToInt(amount * 1000f);

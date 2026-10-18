@@ -51,6 +51,7 @@ namespace ZPunk.DAW
         private int trackIndex;
         private string clipId;
         private int octave = 4;
+        private int noteFocusRevision;
         private long quantum = SongData.TicksPerSixteenth;
         private int selectedNote = -1;
         private int selectedEventRow = -1;
@@ -765,10 +766,10 @@ namespace ZPunk.DAW
             selectedEventRow = -1;
             selectedEventTick = -1;
             CloseGenerator();
-            if (content.kind == ClipKind.Midi && content.notes != null && content.notes.Count > 0)
-                octave = Mathf.Clamp(content.notes[0].pitch / 12 - 1,-1,9);
             Changed();
-            if (content.kind == ClipKind.Midi) ScrollToOctave();
+            // Generated melodies can span several octaves: bring their actual
+            // note cluster into view instead of using the first note as a guess.
+            if (content.kind == ClipKind.Midi) FocusPatternNotes();
         }
 
         private void FindDrumEngine()
@@ -1018,13 +1019,8 @@ namespace ZPunk.DAW
             if (!string.IsNullOrEmpty(requestedClip)) clipId = requestedClip;
             LoadClip();
             EnsureChopsEditable();
-            // Open existing melodies near their actual pitch rather than at the
-            // top of the 128-row keyboard where most tracks have no notes.
-            if (content != null && content.kind == ClipKind.Midi &&
-                content.notes != null && content.notes.Count > 0 && content.notes[0] != null)
-                octave = Mathf.Clamp(content.notes[0].pitch / 12 - 1, -1, 9);
             Redraw();
-            ScrollToOctave();
+            FocusPatternNotes();
         }
         private void LoadClip()
         {
@@ -1102,7 +1098,7 @@ namespace ZPunk.DAW
             LoadClip();
             EnsureChopsEditable();
             Redraw();
-            ScrollToOctave();
+            FocusPatternNotes();
         }
         private void ChangeLength(int direction)
         {
@@ -1245,9 +1241,69 @@ namespace ZPunk.DAW
                 new Length(-scroller.scrollOffset.y, LengthUnit.Pixel), 0f);
         }
 
+        // Auto-frame the populated pitch area on pattern load or generation.
+        // Never invoke this from an ordinary paint/drag redraw: doing so would
+        // fight the user's manual scrolling and touch gestures.
+        private void FocusPatternNotes()
+        {
+            if (scroller == null || !IsMidi) return;
+            if (content.notes == null || content.notes.Count == 0)
+            {
+                ScrollToOctave();
+                return;
+            }
+
+            var noteRows = new List<int>();
+            foreach (var note in content.notes)
+                if (note != null) noteRows.Add(RowForPitch(Mathf.Clamp(note.pitch, 0, 127)));
+            if (noteRows.Count == 0) { ScrollToOctave(); return; }
+            noteRows.Sort();
+            int revision = ++noteFocusRevision;
+            var intendedScroller = scroller;
+            intendedScroller.schedule.Execute(() =>
+            {
+                if (revision != noteFocusRevision || scroller != intendedScroller || !IsMidi) return;
+                float height = intendedScroller.contentViewport.resolvedStyle.height;
+                if (height < RowH * 2f) height = intendedScroller.resolvedStyle.height;
+                if (height < RowH * 2f) height = RowH * 7f;
+                int rowsVisible = Mathf.Max(2, Mathf.FloorToInt((height - 25f) / RowH));
+
+                // Fit all notes if possible. Otherwise show the densest group
+                // of notes within the visible rows (not merely the first note).
+                int top = noteRows[0], bottom = noteRows[noteRows.Count - 1];
+                if (bottom - top >= rowsVisible - 2)
+                {
+                    int bestStart = 0, bestEnd = 0, end = 0;
+                    for (int start = 0; start < noteRows.Count; start++)
+                    {
+                        if (end < start) end = start;
+                        while (end + 1 < noteRows.Count &&
+                               noteRows[end + 1] - noteRows[start] <= rowsVisible - 2)
+                            end++;
+                        if (end - start > bestEnd - bestStart)
+                        {
+                            bestStart = start;
+                            bestEnd = end;
+                        }
+                    }
+                    top = noteRows[bestStart];
+                    bottom = noteRows[bestEnd];
+                }
+                float middle = 0.5f * (top + bottom);
+                float y = Mathf.Max(0f, 25f + (middle + .5f) * RowH - height * .5f);
+                float maxY = Mathf.Max(0f, 25f + MidiRows * RowH - height);
+                intendedScroller.scrollOffset = new Vector2(intendedScroller.scrollOffset.x, Mathf.Min(y, maxY));
+                SyncPianoRollLabels();
+                int pitch = Mathf.Clamp(127 - Mathf.RoundToInt(middle), 0, 127);
+                octave = Mathf.Clamp(pitch / 12 - 1, -1, 9);
+            }).ExecuteLater(0);
+        }
+
         // Full 128-note keyboard: OCT buttons scroll vertically, not horizontally.
         private void ScrollToOctave()
         {
+            // Manual octave navigation must supersede an older scheduled auto-focus.
+            ++noteFocusRevision;
             if (scroller == null || !IsMidi) return;
             int desiredTopPitch = Mathf.Clamp((octave + 2) * 12 - 1, 0, 127);
             float y = 25f + (127 - desiredTopPitch) * RowH;

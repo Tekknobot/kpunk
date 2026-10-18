@@ -68,6 +68,16 @@ Bass/UG Ravers Unite!.helm
 Bass/UG Show Me the M1.helm
 Bass/UG Taiko Attacks Bass (Try Vel=74).helm
 Bass/UG Who Plays the Doctor.helm
+Bass/ZOR Blue Current.helm
+Bass/ZOR Clear Pulse.helm
+Bass/ZOR Glassline.helm
+Bass/ZOR Hollow Motion.helm
+Bass/ZOR Metro Pluck.helm
+Bass/ZOR Night Runner.helm
+Bass/ZOR Roundabout.helm
+Bass/ZOR Rubber Circuit.helm
+Bass/ZOR Satin Square.helm
+Bass/ZOR Velvet Sub.helm
 Chip/COA Insane Gamer.helm
 Chip/COA Random Chip Bass.helm
 Chip/MT Bounce.helm
