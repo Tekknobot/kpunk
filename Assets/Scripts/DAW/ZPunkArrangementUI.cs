@@ -26,6 +26,9 @@ namespace ZPunk.DAW
         private KMusicProjectManager projects;
         private ZPunkSongTransport transport;
         private VisualElement page;
+        // This viewport moves below the expanding project menu without
+        // compressing the timeline or its command strips.
+        private ScrollView arrangementPageScroll;
         private VisualElement timelineFrame;
         private VisualElement trackHeaders;
         private VisualElement canvas;
@@ -217,13 +220,34 @@ namespace ZPunk.DAW
             page.style.paddingBottom = 14 * uiScale;
             page.style.flexDirection = FlexDirection.Column;
             page.style.flexGrow = 1;
+            page.style.flexShrink = 1;
             page.style.minHeight = 0;
+            page.style.overflow = Overflow.Hidden;
+
+            // Let the visible area get shorter when the project menu opens,
+            // not the arrangement inside it. The top of the arrangement is
+            // pushed down; anything below the bottom dock remains reachable
+            // with a vertical swipe/scroll, as in the other DAW workspaces.
+            arrangementPageScroll = new ScrollView(ScrollViewMode.Vertical)
+            {
+                name = "ZPunkArrangementPageScroll"
+            };
+            arrangementPageScroll.style.flexGrow = 1;
+            arrangementPageScroll.style.flexShrink = 1;
+            arrangementPageScroll.style.minHeight = 0;
+            arrangementPageScroll.style.minWidth = 0;
+            arrangementPageScroll.style.width = new Length(100, LengthUnit.Percent);
+            arrangementPageScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            arrangementPageScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            arrangementPageScroll.contentContainer.style.flexDirection = FlexDirection.Column;
+            arrangementPageScroll.contentContainer.style.flexShrink = 0;
+            page.Add(arrangementPageScroll);
 
             var title = Label("SONG ARRANGEMENT", 14, Text);
             title.name = "ZPunkSongTitle";
             title.style.unityFontStyleAndWeight = FontStyle.Bold;
             title.style.marginBottom = 5;
-            page.Add(title);
+            arrangementPageScroll.Add(title);
 
             // Compact two-row toolbar: no offscreen controls in portrait.
             var editing = MakeCommandStrip("ZPunkClipActions");
@@ -231,7 +255,7 @@ namespace ZPunk.DAW
             editing.Add(Button("EDIT", EditSelected, 63));
             editing.Add(Button("DUP", DuplicateSelected, 57));
             editing.Add(Button("DEL", DeleteSelected, 57));
-            page.Add(editing);
+            arrangementPageScroll.Add(editing);
 
             var transportControls = MakeCommandStrip("ZPunkSongActions");
             transportControls.Add(Button("- ZOOM", () => Zoom(-14), 65));
@@ -243,7 +267,7 @@ namespace ZPunk.DAW
             loopSongButton = Button("LOOP OFF", ToggleSongLoop, 78);
             transportControls.Add(loopSongButton);
 
-            page.Add(transportControls);
+            arrangementPageScroll.Add(transportControls);
 
             var tempoRow=new VisualElement { name="ZPunkArrangementTempo" };
             tempoRow.style.flexDirection=FlexDirection.Row;
@@ -325,7 +349,7 @@ namespace ZPunk.DAW
             bpmValue.style.width=68;
             bpmValue.style.unityTextAlign=TextAnchor.MiddleRight;
             tempoRow.Add(bpmValue);
-            page.Add(tempoRow);
+            arrangementPageScroll.Add(tempoRow);
 
             // Independent loop length: the arrangement may contain more clips or
             // trailing empty bars than the section the musician wants repeated.
@@ -355,17 +379,20 @@ namespace ZPunk.DAW
             increase.style.paddingLeft = 0;
             increase.style.paddingRight = 0;
             loopRow.Add(increase);
-            page.Add(loopRow);
+            arrangementPageScroll.Add(loopRow);
 
             var arrangement = new VisualElement { name = "ZPunkArrangementBoard" };
             arrangement.style.flexDirection = FlexDirection.Row;
             timelineFrame = arrangement;
             arrangement.style.height = RulerHeight + 5 * RowHeight + 2;
+            // The timeline is never allowed to shrink just because the
+            // project menu takes vertical room from the workspace.
+            arrangement.style.flexShrink = 0;
             arrangement.style.marginTop = 12;
             arrangement.style.marginBottom = 6;
             arrangement.style.backgroundColor = new Color(.065f, .092f, .13f);
             arrangement.style.overflow = Overflow.Hidden;
-            page.Add(arrangement);
+            arrangementPageScroll.Add(arrangement);
 
             trackHeaders = new VisualElement();
             trackHeaders.style.width = HeaderWidth;
@@ -397,12 +424,12 @@ namespace ZPunk.DAW
             details = Label("Select track, + CLIP, then EDIT to compose.", 11, Text);
             details.style.marginTop = 5 * uiScale;
             details.style.marginBottom = 4 * uiScale;
-            page.Add(details);
+            arrangementPageScroll.Add(details);
             hint = Label("Drag clips to arrange. Tap EDIT for drums and piano roll.", 10, MutedText);
             hint.style.whiteSpace = WhiteSpace.Normal;
             hint.style.marginTop = 3 * uiScale;
             hint.style.marginBottom = 4 * uiScale;
-            page.Add(hint);
+            arrangementPageScroll.Add(hint);
         }
 
         private ScrollView MakeCommandStrip(string name)
