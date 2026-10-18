@@ -11,8 +11,8 @@ namespace ZPunk.DAW
     /// <summary>
     /// SOUND workspace for the three independent Helm instruments. Controls are
     /// generated here at runtime (the legacy Main.uxml SOUND panel is not used).
-    /// The native controller is the source of truth so preset changes update the
-    /// switches and values without silently applying another instrument's state.
+    /// The native controller is the source of truth for presets, live knob edits,
+    /// and bypass toggles; no stale knob cache may reapply an older patch.
     /// </summary>
     public sealed class ZPunkSoundUI : MonoBehaviour
     {
@@ -46,7 +46,6 @@ namespace ZPunk.DAW
         private int dragPointer = -1;
         private float dragY, dragStart, scrollLockUntil;
         private Vector2 lockedScroll;
-
         private sealed class Macro
         {
             public string id, label;
@@ -282,6 +281,39 @@ namespace ZPunk.DAW
             if (mainPicker == null) mainPicker = FindObjectOfType<KMusicHelmPresetPickerUI>();
             if (rack == null) rack = FindObjectOfType<ZPunkInstrumentRack>();
         }
+
+        private static bool IsDistortion(Param param)
+        {
+            return param == Param.kDistortionOn || param == Param.kDistortionType ||
+                param == Param.kDistortionDrive || param == Param.kDistortionMix;
+        }
+
+        private static float DistortionNativeValue(Param param, float normalized)
+        {
+            normalized = Mathf.Clamp01(normalized);
+            if (param == Param.kDistortionDrive) return Mathf.Lerp(-30f, 30f, normalized);
+            if (param == Param.kDistortionType) return Mathf.RoundToInt(normalized * 3f);
+            if (param == Param.kDistortionOn) return normalized >= 0.5f ? 1f : 0f;
+            return normalized; // MIX is 0..1.
+        }
+
+        private void CommitDistortion(HelmController controller, Param param, float normalized)
+        {
+            float nativeValue = DistortionNativeValue(param, normalized);
+            try
+            {
+                // Direct native write. Never continually force the previous
+                // edit back into Helm: that overwrites freshly loaded presets.
+                if (!Native.HelmSetParameterValue(controller.channel, (int)param, nativeValue))
+                    Debug.LogWarning("[ZPUNK SOUND] Helm rejected " + param +
+                        " on channel " + controller.channel + " (" + nativeValue + ").");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[ZPUNK SOUND] Distortion write failed for " +
+                    param + " on channel " + controller.channel + ": " + ex.Message);
+            }
+        }
         private HelmController Controller()
         {
             FindServices();
@@ -371,7 +403,16 @@ namespace ZPunk.DAW
             if (controller == null) return false;
             try
             {
-                amount = Mathf.Clamp01(controller.GetParameterPercent(param));
+                // Native DRIVE is dB (-30..30), not normalized. Preset loading
+                // now maps the patch's drive field to this exact native index.
+                if (param == Param.kDistortionDrive)
+                    amount = Mathf.InverseLerp(-30f, 30f, controller.GetParameterValue(param));
+                else if (param == Param.kDistortionType)
+                    amount = Mathf.Clamp01(Mathf.Round(controller.GetParameterValue(param)) / 3f);
+                else if (param == Param.kDistortionOn)
+                    amount = controller.GetParameterValue(param) >= 0.5f ? 1f : 0f;
+                else
+                    amount = Mathf.Clamp01(controller.GetParameterPercent(param));
                 return true;
             }
             catch (Exception) { return false; }
@@ -480,21 +521,50 @@ namespace ZPunk.DAW
                 }
                 catch (Exception) { }
             }
+            if (m.id == "fx.dist.drive")
+            {
+                // Render the actual native DRIVE value in dB.
+                float db = Mathf.Lerp(-30f, 30f, amount);
+                return (db > 0.05f ? "+" : "") + db.ToString("0.#") + " dB";
+            }
             return Mathf.RoundToInt(amount * 100f) + "%";
         }
+        // The preset is the initial state; knob edits go to the selected Helm
+        // channel. Switching ON/OFF never changes TYPE, DRIVE or MIX.
         private void WriteNormalized(string id, Param param, float amount)
         {
-            // Write the bus for existing project/pad preset state, then write the
-            // *selected* Helm channel. Older binders do not map every new param,
-            // and delay/reverb ON switches were previously pseudo-bypasses.
+            var controller = Controller();
+            if (controller == null || param == Param.kNone) return;
+            amount = Mathf.Clamp01(amount);
+
+            // Notify the legacy UI and project-persistence bus FIRST. Its
+            // synchronous listeners can otherwise put an old preset value back
+            // into native Helm after the knob has been adjusted.
             var bus = CurrentBus();
             if (bus != null && bus.TryGet(id, out Parameter existing) && existing != null)
                 bus.SetNormalized(id, amount);
-            var controller = Controller();
-            if (controller == null) return;
-            try { controller.SetParameterPercent(param, amount); }
-            catch (Exception) { }
+
+            // Write to the selected native channel LAST, after synchronous
+            // bus listeners. No edit cache survives to overwrite another preset.
+            try
+            {
+                if (IsDistortion(param))
+                    CommitDistortion(controller, param, amount);
+                else if (id == "fx.delay.on" || id == "fx.rev.on" ||
+                         id == "filter.on" || id == "arp.on")
+                    controller.SetParameterValue(param, amount >= 0.5f ? 1f : 0f);
+                else if (id == "fx.delay.sync" || id == "arp.sync")
+                    controller.SetParameterValue(param, Mathf.RoundToInt(amount * 3f));
+                else
+                    controller.SetParameterPercent(param, amount);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[ZPUNK SOUND] Helm write failed for " + id +
+                    " on channel " + controller.channel + ": " + ex.Message);
+            }
         }
+
         private void SetMacro(Macro m, float amount)
         {
             amount = Quantize(m, amount);
@@ -506,19 +576,29 @@ namespace ZPunk.DAW
         }
         private void Toggle(Switch sw)
         {
-            if (Controller() == null) return;
-            // Helm sync is a FOUR-state selector: free, tempo, dotted, triplet.
-            // Helm FX/module power switches are independent binary parameters.
-            float next = sw.sync ? ((GetSyncMode(sw.id) + 1) % 4) / 3f
-                                 : (IsOn(sw.id) ? 0f : 1f);
+            var controller = Controller();
+            if (controller == null) return;
+
+            // Read the native ON value, not a possibly stale bus toggle state.
+            // This must touch only the ON parameter: TYPE, DRIVE and MIX remain
+            // exactly as in the loaded patch when bypassing or re-enabling.
+            float next;
+            if (sw.sync)
+                next = ((GetSyncMode(sw.id) + 1) % 4) / 3f;
+            else
+            {
+                bool current = IsOn(sw.id);
+                // The native ON value is authoritative for this channel.
+                next = current ? 0f : 1f;
+            }
             WriteNormalized(sw.id, sw.param, next);
-            // These are real native Audio Helm enable parameters. Do not set
-            // wet/dry to zero as a substitute for turning a module off.
+
             sw.lastState = -1;
             foreach (var m in macros)
                 if (m.id == "arp.rate" || m.id == "fx.delay.time") m.lastDisplay = -999;
             Refresh();
         }
+
         private static void PositionMarker(Macro m, float amount)
         {
             if (m.marker == null) return;
@@ -699,6 +779,7 @@ namespace ZPunk.DAW
         }
         private void Update()
         {
+            FindServices();
             if (root == null || root.resolvedStyle.display == DisplayStyle.None) return;
             if (dragging != null || Time.unscaledTime < scrollLockUntil) LockScroll();
             if (Time.unscaledTime < nextRefresh) return;

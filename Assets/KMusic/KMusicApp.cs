@@ -391,14 +391,11 @@ namespace KMusic
 
         private void BindSoundSwitches(VisualElement root)
         {
-            BindSoundSwitch(root, "DistToggleButton", "fx.dist.on");
-            BindSoundSwitch(root, "DistToggleButton2", "fx.dist.on");
-            BindSoundSwitch(root, "DelayToggleButton", "fx.delay.on");
-            BindSoundSwitch(root, "DelayToggleButton2", "fx.delay.on");
+            // Legacy native FX on/off buttons are already owned by the main
+            // Helm binder and Pad runtime. A second clicked handler here could
+            // flip the same switch twice after their PointerDown handler ran.
             BindSoundSwitch(root, "DelaySyncToggleButton", "fx.delay.sync");
             BindSoundSwitch(root, "DelaySyncToggleButton2", "fx.delay.sync");
-            BindSoundSwitch(root, "ReverbToggleButton", "fx.rev.on");
-            BindSoundSwitch(root, "ReverbToggleButton2", "fx.rev.on");
             BindSoundSwitch(root, "ArpToggleButton", "arp.on");
             BindSoundSwitch(root, "ArpToggleButton2", "arp.on");
             BindSoundSwitch(root, "ArpSyncToggleButton", "arp.sync");
@@ -500,7 +497,17 @@ namespace KMusic
             foreach (var helm in _soundHelms)
             {
                 if (helm == null) continue;
-                try { helm.SetParameterPercent(helmParam, t); }
+                try
+                {
+                    if (id == "fx.dist.drive")
+                        helm.SetParameterValue(helmParam, Mathf.Lerp(-30f, 30f, t));
+                    else if (id == "fx.dist.type")
+                        helm.SetParameterValue(helmParam, Mathf.RoundToInt(t * 3f));
+                    else if (id == "fx.dist.on")
+                        helm.SetParameterValue(helmParam, t >= 0.5f ? 1f : 0f);
+                    else
+                        helm.SetParameterPercent(helmParam, t);
+                }
                 catch (Exception ex) when (ex is EntryPointNotFoundException || ex is DllNotFoundException)
                 {
                     if (!_warnedSoundRouting)

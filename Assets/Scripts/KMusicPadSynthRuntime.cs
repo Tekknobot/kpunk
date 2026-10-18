@@ -483,7 +483,16 @@ public void ApplyMasterVolume(float normalized)
         {
             t = Mathf.Clamp01(t);
             if (!ShouldSend(id, t)) return;
-            helm.SetParameterPercent(param, t);
+            // Keep native effect enums/power switches on their real detents.
+            // Other parameters continue using Helm's own normalized scaling.
+            if (id == "fx.dist.drive")
+                helm.SetParameterValue(param, Mathf.Lerp(-30f, 30f, t));
+            else if (id == "fx.dist.type")
+                helm.SetParameterValue(param, Mathf.RoundToInt(t * 3f));
+            else if (id == "fx.dist.on" || id == "fx.delay.on" || id == "fx.rev.on")
+                helm.SetParameterValue(param, t >= 0.5f ? 1f : 0f);
+            else
+                helm.SetParameterPercent(param, t);
         }
 
         public void ForceApplyProjectParameters(IEnumerable<string> ids)
@@ -537,6 +546,18 @@ public void ApplyMasterVolume(float normalized)
 
         private float GetHelmPercentSafe(Param p)
         {
+            // Some plugin versions expose a percent different from native dB.
+            // Reading the actual Helm patch value makes preset pulls exact.
+            if (helm != null)
+            {
+                if (p == Param.kDistortionDrive)
+                    return Mathf.InverseLerp(-30f, 30f, helm.GetParameterValue(p));
+                if (p == Param.kDistortionType)
+                    return Mathf.Clamp01(Mathf.Round(helm.GetParameterValue(p)) / 3f);
+                if (p == Param.kDistortionOn)
+                    return helm.GetParameterValue(p) >= 0.5f ? 1f : 0f;
+            }
+
             var mi = typeof(HelmController).GetMethod("GetParameterPercent", new[] { typeof(Param) });
             if (mi != null)
             {
@@ -594,7 +615,7 @@ public void ApplyMasterVolume(float normalized)
         {
             if (button == null || string.IsNullOrEmpty(paramId)) return;
             button.userData = paramId;
-            button.RegisterCallback<PointerDownEvent>(OnEffectTogglePointerDown, TrickleDown.TrickleDown);
+            button.RegisterCallback<ClickEvent>(OnEffectToggleClick);
         }
 
         private void UnregisterToggleButton(Button button, string paramId)
@@ -602,10 +623,10 @@ public void ApplyMasterVolume(float normalized)
             if (button == null) return;
             if (button.userData is string current && current == paramId)
                 button.userData = null;
-            button.UnregisterCallback<PointerDownEvent>(OnEffectTogglePointerDown, TrickleDown.TrickleDown);
+            button.UnregisterCallback<ClickEvent>(OnEffectToggleClick);
         }
 
-        private void OnEffectTogglePointerDown(PointerDownEvent evt)
+        private void OnEffectToggleClick(ClickEvent evt)
         {
             if (_bus == null) return;
             if (evt.currentTarget is not Button button) return;
@@ -986,7 +1007,10 @@ public void ApplyMasterVolume(float normalized)
             bus.Add(new Parameter("fx.rev.damp", 0f, 100f, 0f, unit: "%"));
 
             bus.Add(new Parameter("fx.dist.on",    0f, 1f, 0f));
-            bus.Add(new Parameter("fx.dist.type",  0f, 100f, 0f, unit: "%"));
+            // Helm distortion type is an integer enum: 0=soft, 1=hard, 2=linear fold, 3=sine fold.
+            // A 0..100 integer bus rounded the normalized thirds to 0.33/0.67,
+            // so subsequent parameter writes could land between native enum positions.
+            bus.Add(new Parameter("fx.dist.type",  0f, 3f, 0f));
             bus.Add(new Parameter("fx.dist.drive", 0f, 100f, 0f, unit: "%"));
             bus.Add(new Parameter("fx.dist.mix",   0f, 100f, 0f, unit: "%"));
 

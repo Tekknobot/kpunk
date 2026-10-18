@@ -393,7 +393,17 @@ namespace KMusic
             if (logApply)
                 Debug.Log($"[APPLY] {id} -> {param} = {t:0.000}");
 
-            helm.SetParameterPercent(param, t);
+            // Enum and power controls take exact native values. Percent-to-enum
+            // conversion may produce values just below a detent (e.g. 0.99 instead
+            // of distortion type 1) after a bus round trip.
+            if (id == "fx.dist.drive")
+                helm.SetParameterValue(param, Mathf.Lerp(-30f, 30f, t));
+            else if (id == "fx.dist.type")
+                helm.SetParameterValue(param, Mathf.RoundToInt(t * 3f));
+            else if (id == "fx.dist.on" || id == "fx.delay.on" || id == "fx.rev.on")
+                helm.SetParameterValue(param, t >= 0.5f ? 1f : 0f);
+            else
+                helm.SetParameterPercent(param, t);
         }
 
         private void ApplyPseudoBypass(string sendId, Param param, bool enabled)
@@ -445,7 +455,7 @@ namespace KMusic
                 return;
 
             button.userData = paramId;
-            button.RegisterCallback<PointerDownEvent>(OnEffectTogglePointerDown, TrickleDown.TrickleDown);
+            button.RegisterCallback<ClickEvent>(OnEffectToggleClick);
         }
 
         private void UnregisterToggleButton(Button button, string paramId)
@@ -456,10 +466,10 @@ namespace KMusic
             if (button.userData is string current && current == paramId)
                 button.userData = null;
 
-            button.UnregisterCallback<PointerDownEvent>(OnEffectTogglePointerDown, TrickleDown.TrickleDown);
+            button.UnregisterCallback<ClickEvent>(OnEffectToggleClick);
         }
 
-        private void OnEffectTogglePointerDown(PointerDownEvent evt)
+        private void OnEffectToggleClick(ClickEvent evt)
         {
             if (_bus == null)
                 return;
@@ -558,6 +568,18 @@ namespace KMusic
 
         private float GetHelmPercentSafe(Param p)
         {
+            // Some plugin versions expose a percent different from native dB.
+            // Reading the actual Helm patch value makes preset pulls exact.
+            if (helm != null)
+            {
+                if (p == Param.kDistortionDrive)
+                    return Mathf.InverseLerp(-30f, 30f, helm.GetParameterValue(p));
+                if (p == Param.kDistortionType)
+                    return Mathf.Clamp01(Mathf.Round(helm.GetParameterValue(p)) / 3f);
+                if (p == Param.kDistortionOn)
+                    return helm.GetParameterValue(p) >= 0.5f ? 1f : 0f;
+            }
+
             // Most HelmController versions have GetParameterPercent(Param)
             var mi = typeof(HelmController).GetMethod("GetParameterPercent", new[] { typeof(Param) });
             if (mi != null)
