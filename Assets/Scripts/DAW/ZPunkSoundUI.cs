@@ -51,6 +51,36 @@ namespace ZPunk.DAW
         }
         private readonly Dictionary<Param, PendingDistortion> pendingDistortion =
             new Dictionary<Param, PendingDistortion>();
+        // Live SOUND edits are the user's patch, not the factory preset. Helm's
+        // native read-back can lag behind writes, so project save overlays these
+        // explicit edits on its full native parameter snapshot. Each preset
+        // loader clears the corresponding controller's edits before LoadPatch.
+        private static readonly Dictionary<HelmController, Dictionary<Param, float>> liveSoundEdits =
+            new Dictionary<HelmController, Dictionary<Param, float>>();
+
+        public static Dictionary<Param, float> CaptureLiveEdits(HelmController controller)
+        {
+            if (controller != null && liveSoundEdits.TryGetValue(controller, out var values))
+                return new Dictionary<Param, float>(values);
+            return new Dictionary<Param, float>();
+        }
+
+        public static void ClearLiveEdits(HelmController controller)
+        {
+            if (controller != null) liveSoundEdits.Remove(controller);
+        }
+
+        public static void RecordLiveEdit(HelmController controller, Param param, float normalized)
+        {
+            if (controller == null || param == Param.kNone) return;
+            if (!liveSoundEdits.TryGetValue(controller, out var values))
+            {
+                values = new Dictionary<Param, float>();
+                liveSoundEdits[controller] = values;
+            }
+            values[param] = Mathf.Clamp01(normalized);
+        }
+
         private HelmController pendingController;
         private string pendingPreset;
         private Macro dragging;
@@ -596,6 +626,8 @@ namespace ZPunk.DAW
                     controller.SetParameterValue(param, Mathf.RoundToInt(amount * 3f));
                 else
                     controller.SetParameterPercent(param, amount);
+
+                RecordLiveEdit(controller, param, amount);
             }
             catch (Exception ex)
             {

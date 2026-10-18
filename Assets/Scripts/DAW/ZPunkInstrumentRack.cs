@@ -31,6 +31,25 @@ namespace ZPunk.DAW
         public string BassPresetName => bassPresetIndex>=0 && bassPresetIndex<bassPresets.Count
             ? Path.GetFileNameWithoutExtension(bassPresets[bassPresetIndex]):"INITIALIZING";
         public int BassPresetCount => bassPresets.Count;
+        public int BassPresetIndex => bassPresetIndex;
+        public string CurrentBassPresetRelPath => bassPresetIndex >= 0 && bassPresetIndex < bassPresets.Count
+            ? bassPresets[bassPresetIndex] : null;
+        public bool BassPresetsReady => presetsReady && bass != null && loadingPresetIndex < 0;
+
+        // Project restore must be able to request a preset even when it is the
+        // current preset, without changing the arrangement or saving a new choice.
+        public bool RequestProjectBassPreset(string relPath)
+        {
+            if (!presetsReady || bassPresets.Count == 0 || string.IsNullOrEmpty(relPath))
+                return false;
+            int index = bassPresets.FindIndex(x =>
+                string.Equals(x, relPath, StringComparison.OrdinalIgnoreCase));
+            if (index < 0) return false;
+            if (loadingPresetIndex == index || (bassPresetIndex == index && loadingPresetIndex < 0))
+                return true;
+            StartCoroutine(LoadBassPreset(index, false));
+            return true;
+        }
         public event Action PresetChanged;
 
         private void Awake()
@@ -161,6 +180,7 @@ namespace ZPunk.DAW
             yield return null;
             if(revision!=loadRevision)yield break;
             bassPatch.patchData=patch;
+            ZPunkSoundUI.ClearLiveEdits(bass);
             bass.LoadPatch(bassPatch);
             bassPresetIndex=choice;
             loadingPresetIndex=-1;

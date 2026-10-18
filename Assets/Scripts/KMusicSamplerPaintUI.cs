@@ -47,17 +47,23 @@ public class KMusicSamplerPaintUI : MonoBehaviour
         if (!doc) return;
 
         var root = doc.rootVisualElement;
-        var samplerPage = root != null ? root.Q<VisualElement>("PageSampler") : null;
-        var scope = samplerPage ?? root;
+        if (root == null) return;
+
+        // This component supports the original PageSampler StepGrid UI.
+        // The newer ZPUNK DAW can replace that page with its own sequencer controls;
+        // those controls do not need this legacy paint handler.
+        var scope = root.Q<VisualElement>("PageSampler");
+        if (scope == null) return;
+
+        sampleGrid = scope.Q<StepGrid>("SampleStepGrid");
+        drumGrid = scope.Q<StepGrid>("DrumStepGrid");
+
+        // Don't bind old chop/drum buttons to an unrelated modern page when
+        // neither legacy grid is present. Other scripts own the new sequencers.
+        if (sampleGrid == null && drumGrid == null) return;
 
         sequencer = FindObjectOfType<KMusicDrumSequencer>();
         chainUI = FindObjectOfType<KMusicChainUI>();
-
-        sampleGrid = scope.Q<StepGrid>("SampleStepGrid");
-        drumGrid   = scope.Q<StepGrid>("DrumStepGrid");
-
-        if (sampleGrid == null) Debug.LogError("SampleStepGrid not found");
-        if (drumGrid == null)   Debug.LogError("DrumStepGrid not found");
 
         // KMusicDrumSequencer is the authoritative owner of DrumStepGrid.
         // If it is present, this UI must not also subscribe to / mutate the drum grid,

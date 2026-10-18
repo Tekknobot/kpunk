@@ -851,6 +851,7 @@ public void ApplyMasterVolume(float normalized)
             if (revision != _loadRevision) yield break;
             _runtimePatch.patchData = fmt;
             LastAppliedPresetRelPath = null;
+            ZPunk.DAW.ZPunkSoundUI.ClearLiveEdits(helm);
             helm.LoadPatch(_runtimePatch);
             yield return null;
             yield return null;

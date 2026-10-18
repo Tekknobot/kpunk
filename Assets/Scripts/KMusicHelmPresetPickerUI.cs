@@ -405,6 +405,8 @@ namespace KMusic
             // This prevents an in-flight preset change from being saved as if
             // it were already the sound currently running in native Helm.
             LastAppliedPresetRelPath = null;
+            // A newly selected factory patch invalidates edits from the old one.
+            ZPunk.DAW.ZPunkSoundUI.ClearLiveEdits(helm);
             helm.LoadPatch(_runtimePatch);
 
             // Let Helm finish internal patch application before we mirror values back into the bus.
