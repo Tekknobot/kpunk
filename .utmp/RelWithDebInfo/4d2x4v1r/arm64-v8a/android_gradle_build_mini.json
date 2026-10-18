@@ -1,0 +1,28 @@
+{
+  "buildFiles": [
+    "/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/CMakeLists.txt",
+    "/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/FramePacing/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/Applications/Unity/Unity-6000.5.5f1/PlaybackEngines/AndroidPlayer/SDK/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/.utmp/RelWithDebInfo/4d2x4v1r/arm64-v8a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/Applications/Unity/Unity-6000.5.5f1/PlaybackEngines/AndroidPlayer/SDK/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/.utmp/RelWithDebInfo/4d2x4v1r/arm64-v8a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "swappywrapper::@7e25bd1f32ce224db4e9": {
+      "artifactName": "swappywrapper",
+      "abi": "arm64-v8a",
+      "output": "/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/4d2x4v1r/obj/arm64-v8a/libswappywrapper.so",
+      "runtimeFiles": []
+    }
+  }
+}

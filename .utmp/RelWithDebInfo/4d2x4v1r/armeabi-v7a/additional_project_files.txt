@@ -1,0 +1,1 @@
+/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/FramePacing/UnitySwappyWrapper.h

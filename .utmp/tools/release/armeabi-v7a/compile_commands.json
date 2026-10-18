@@ -1,0 +1,7 @@
+[
+{
+  "directory": "/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/.utmp/RelWithDebInfo/4d2x4v1r/armeabi-v7a",
+  "command": "/Applications/Unity/Unity-6000.5.5f1/PlaybackEngines/AndroidPlayer/NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++ --target=armv7-none-linux-androideabi26 --sysroot=/Applications/Unity/Unity-6000.5.5f1/PlaybackEngines/AndroidPlayer/NDK/toolchains/llvm/prebuilt/darwin-x86_64/sysroot -DEXTERNAL_FRAME_PACING_CODE -Dswappywrapper_EXPORTS -I/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/FramePacing -isystem /Users/machome/.gradle/caches/9.1.0/transforms/4ebbe5df63d1eb82789c97756ba50259/transformed/jetified-games-frame-pacing-2.1.2/prefab/modules/swappy_static/include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D__BIONIC_NO_PAGE_SIZE_MACRO -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security   -Wall -Wextra -pedantic -Werror -O2 -g -DNDEBUG -fPIC -o FramePacing/CMakeFiles/swappywrapper.dir/UnitySwappyWrapper.cpp.o -c /Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/FramePacing/UnitySwappyWrapper.cpp",
+  "file": "/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/src/main/cpp/FramePacing/UnitySwappyWrapper.cpp"
+}
+]
