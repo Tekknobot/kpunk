@@ -77,6 +77,28 @@ public class KMusicPlayerUI : MonoBehaviour
     private string _warpStatus = "NO SAMPLE";
     private KMusicProjectManager _warpProjects;
     private KMusicApp _pitchApp;
+    private KMusic.Core.ParameterBus _pitchBus;
+    private Action<string, float> _onPitchBusChanged;
+
+    // Sampler preview and CHOPS must react to the same pitch parameter.
+    // This listener also covers edits from the older sampler knob, not just
+    // the DAW's +/- semitone buttons.
+    private void BindSamplePitchPreview()
+    {
+        var app = PitchApp();
+        var bus = app != null ? app.Bus : null;
+        if (bus == null) return;
+        if (_pitchBus != null && _onPitchBusChanged != null)
+            _pitchBus.OnChanged -= _onPitchBusChanged;
+        _pitchBus = bus;
+        if (_onPitchBusChanged == null)
+            _onPitchBusChanged = (id, value) =>
+            {
+                if (id == "sample.pitch" && audioSource != null && audioSource.isPlaying)
+                    audioSource.pitch = Mathf.Pow(2f, Mathf.Round(Mathf.Clamp(value, -12f, 12f)) / 12f);
+            };
+        _pitchBus.OnChanged += _onPitchBusChanged;
+    }
     private KMusicDrumSequencer _chopEngine;
     private const string WarpEnabledKey = "zpunk.sampler.warp.enabled";
 
@@ -242,6 +264,9 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private float GetCurrentSamplePitchSemitones()
     {
+        // The project may restore the bus after this component is enabled.
+        // Attach on first access if it was not ready during OnEnable.
+        if (_pitchBus == null) BindSamplePitchPreview();
         var app = PitchApp();
         return app != null && app.Bus != null
             ? Mathf.Round(Mathf.Clamp(app.Bus.GetValue("sample.pitch"), -12f, 12f))
@@ -507,6 +532,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private void OnEnable()
     {
         EnsureDedicatedPlayerAudioSource();
+        BindSamplePitchPreview();
         // UI initialization and automatic project restore must be silent.
         if (audioSource != null) audioSource.Stop();
 
@@ -763,6 +789,9 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private void OnDisable()
     {
+        if (_pitchBus != null && _onPitchBusChanged != null)
+            _pitchBus.OnChanged -= _onPitchBusChanged;
+        _pitchBus = null;
         if (_wave != null)
         {
             _wave.UserPointer01 -= OnWavePointer01;
@@ -1693,22 +1722,23 @@ public class KMusicPlayerUI : MonoBehaviour
 
         float startTime = Mathf.Clamp(start01 * _clip.length, 0f, Mathf.Max(0f, _clip.length - 0.001f));
 
-        float pitchRate = Mathf.Max(0.01f, GetCurrentSamplePitchRate());
         float activeLength = (_warpedClip != null ? _warpedClip : _clip).length;
         startTime = Mathf.Clamp(start01 * activeLength, 0f, Mathf.Max(0f, activeLength - .001f));
-        float rawSliceDur = Mathf.Clamp((end01 - start01) * activeLength, 0.03f, activeLength);
         // Preview the same bounded duration heard in the sequenced chop engine.
         if (_chopEngine == null) _chopEngine = FindObjectOfType<KMusicDrumSequencer>();
         float cap = _chopEngine != null ? _chopEngine.MaxChopDurationSeconds : 4f;
-        float pitchedDur = Mathf.Clamp(rawSliceDur / pitchRate, 0.02f, cap);
+        float endTime = Mathf.Clamp(end01 * activeLength, startTime, activeLength);
 
         if (_markerPreviewCoroutine != null)
             StopCoroutine(_markerPreviewCoroutine);
 
-        _markerPreviewCoroutine = StartCoroutine(CoPreviewSlice(startTime, pitchedDur));
+        // Watch source position, not the original pitch-dependent stopwatch:
+        // a live semitone edit must not spill into the following chop or cut
+        // the current one short. Keep the existing duration safety cap.
+        _markerPreviewCoroutine = StartCoroutine(CoPreviewSlice(startTime, endTime, cap));
     }
 
-    private IEnumerator CoPreviewSlice(float startTime, float duration)
+    private IEnumerator CoPreviewSlice(float startTime, float endTime, float maxSeconds)
     {
         if (_clip == null || audioSource == null)
             yield break;
@@ -1720,10 +1750,16 @@ public class KMusicPlayerUI : MonoBehaviour
         audioSource.clip = sampleToPlay;
         audioSource.loop = false;
         audioSource.pitch = pitchRate;
-        audioSource.time = Mathf.Clamp(startTime, 0f, Mathf.Max(0f, _clip.length - 0.001f));
+        audioSource.time = Mathf.Clamp(startTime, 0f, Mathf.Max(0f, sampleToPlay.length - 0.001f));
         audioSource.Play();
 
-        yield return new WaitForSecondsRealtime(duration);
+        float elapsed = 0f;
+        while (audioSource != null && audioSource.isPlaying && elapsed < maxSeconds)
+        {
+            if (audioSource.time >= endTime - 0.002f) break;
+            elapsed += Time.unscaledDeltaTime;
+            yield return null;
+        }
 
         if (audioSource != null && (audioSource.clip == _clip || audioSource.clip == _warpedClip))
         {

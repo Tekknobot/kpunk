@@ -625,8 +625,43 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (_songTransport == null) _songTransport = gameObject.AddComponent<ZPunkSongTransport>();
     }
 
+    // Audio binding must not depend on the legacy StepGrid UXML. Modern ZPUNK
+    // uses DAW clip editors, so DrumStepGrid/SampleStepGrid may not exist.
+    // CHOPS scheduling and audition still require the same sample.pitch bus as
+    // the sampler's waveform player.
+    private void EnsureSampleBusBound()
+    {
+        if (_app == null) _app = GetComponent<KMusicApp>();
+        if (_app == null) _app = FindObjectOfType<KMusicApp>();
+
+        var currentBus = _app != null ? _app.Bus : null;
+        if (_bus == currentBus && _bus != null && _onBusChanged != null)
+            return;
+
+        if (_bus != null && _onBusChanged != null)
+            _bus.OnChanged -= _onBusChanged;
+        _bus = currentBus;
+        if (_bus == null) return;
+
+        if (_onBusChanged == null)
+        {
+            _onBusChanged = (id, value) =>
+            {
+                if (id == "sample.master")
+                    ApplySampleMasterVolume();
+                else if (id == "sample.pitch")
+                    ApplySamplePitch();
+                else if (driveMixerFromBus && id != null &&
+                         id.StartsWith("drum.vol", StringComparison.OrdinalIgnoreCase))
+                    ApplyDrumMixerFromBus();
+            };
+        }
+        _bus.OnChanged += _onBusChanged;
+    }
+
     private void OnEnable()
     {
+        EnsureSampleBusBound();
         if (uiDocument == null)
             uiDocument = GetComponent<UIDocument>();
 
@@ -790,32 +825,9 @@ public class KMusicDrumSequencer : MonoBehaviour
                 CancelButtonLongPress(_stopBtn);
             }, TrickleDown.TrickleDown);
         }
-        // Cache bus for drum volume faders.
-        if (_app == null) _app = FindObjectOfType<KMusicApp>();
-        _bus = _app != null ? _app.Bus : null;
+        // Modern and legacy UIs use the same audio parameter subscription.
+        EnsureSampleBusBound();
         ApplySampleMasterVolume();
-
-        // Keep mixer params in sync with ParameterBus changes.
-        if (_bus != null)
-        {
-            if (_onBusChanged == null)
-            {
-                _onBusChanged = (id, v) =>
-                {
-                    if (id == "sample.master")
-                        ApplySampleMasterVolume();
-                    else if (id == "sample.pitch")
-                        ApplySamplePitch();
-
-                    // Only drive mixer automatically if enabled
-                    if (driveMixerFromBus && id != null && id.StartsWith("drum.vol", StringComparison.OrdinalIgnoreCase))
-                        ApplyDrumMixerFromBus();
-                };
-            }
-
-            _bus.OnChanged -= _onBusChanged;
-            _bus.OnChanged += _onBusChanged;
-        }
 
         // Push current drum faders into the mixer right away (if assigned).
         ApplyDrumMixerFromBus();
@@ -887,6 +899,9 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private float GetSamplePitchSemitones()
     {
+        // Project/player startup can precede KMusicApp's parameter setup;
+        // lazily bind if the UI was never initialized or bus was not ready.
+        if (_bus == null) EnsureSampleBusBound();
         if (_bus != null)
         {
             float v = Mathf.Clamp(_bus.GetValue("sample.pitch"), -12f, 12f);
@@ -1286,6 +1301,9 @@ private void ApplySamplePitch()
 
     private void OnDisable()
     {
+        if (_bus != null && _onBusChanged != null)
+            _bus.OnChanged -= _onBusChanged;
+        _bus = null;
         SaveDrumState();
         foreach (var kv in _buttonLongPressJobs)
         {
