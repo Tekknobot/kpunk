@@ -22,6 +22,8 @@ namespace ZPunk.DAW
         };
         private VisualElement root, canvas, gridScrollContainer, chips, labelViewport, labelColumn;
         private VisualElement generatorPanel, generatorGenres, generatorStyles, generatorBarsRow, generatorSynthModeRow;
+        private VisualElement generatorHistoryRows;
+        private Label generatorHistoryLabel;
         private Button generatorQuickButton, generatorMelodyButton, generatorChordsButton;
         private Label generatorHeading, generatorSummary, generatorHint, generatorKeyLabel, generatorVariationLabel;
         private int generatorGenre = 1, generatorStyle, generatorBars = 2, generatorKey = 9, generatorVariation;
@@ -639,6 +641,24 @@ namespace ZPunk.DAW
             variationRow.Add(Btn("NEW VARIATION",() => { generatorVariation++; RefreshGeneratorPanel(); },118));
             body.Add(variationRow);
 
+            // Persistent history is scoped to the selected project, instrument, genre
+            // and melodic/chord mode. It lives within the sheet's existing scroll area.
+            generatorHistoryLabel = Txt("PREVIOUS GENERATIONS",11,Muted);
+            generatorHistoryLabel.style.marginTop = 12;
+            generatorHistoryLabel.style.marginBottom = 5;
+            body.Add(generatorHistoryLabel);
+            var past = new ScrollView(ScrollViewMode.Vertical);
+            generatorHistoryRows = past.contentContainer;
+            generatorHistoryRows.style.paddingRight = 1;
+            // Share the same complete-height, draggable scrollbar as Project Library
+            // and Browse Samples. No native white UI Toolkit arrow controls.
+            var historyHost = ZPunkOverlaySkin.ScrollWithRail(past);
+            historyHost.style.height = 184;
+            historyHost.style.flexGrow = 0;
+            historyHost.style.flexShrink = 0;
+            historyHost.style.marginBottom = 7;
+            body.Add(historyHost);
+
             var actionRow = new VisualElement();
             actionRow.style.flexDirection = FlexDirection.Row;
             actionRow.style.height = 52;
@@ -715,8 +735,10 @@ namespace ZPunk.DAW
                 generatorChordsButton.style.color = generatorSynthChords ? Accent : Ink;
             }
             bool chords = isSynth && generatorSynthChords;
+            TrackKind generatorKind = song.tracks[generatorTargetTrack].kind;
             generatorSummary.text = (chords ?
                 ZPunkGenreGenerator.ChordsDescription(generatorGenre, generatorStyle) :
+                generatorKind == TrackKind.Bass ? ZPunkGenreGenerator.BassDescription(generatorGenre, generatorStyle) :
                 ZPunkGenreGenerator.Description(generatorGenre, generatorStyle)) + "\n" +
                 "READY: " + ZPunkGenreGenerator.Label(generatorGenre, generatorStyle, generatorKey, generatorMinor, chords) +
                 (isSynth && !chords ? " / MELODY" : "");
@@ -731,22 +753,99 @@ namespace ZPunk.DAW
                 generatorBarsRow.Add(button);
             }
             generatorVariationLabel.text = "VARIATION " + generatorVariation.ToString();
+            RefreshGenerationHistory();
         }
+
+        private void RefreshGenerationHistory()
+        {
+            if (generatorHistoryRows == null || generatorHistoryLabel == null || projects == null ||
+                song == null || song.tracks == null || generatorTargetTrack < 0 ||
+                generatorTargetTrack >= song.tracks.Count) return;
+            generatorHistoryRows.Clear();
+            TrackKind kind = song.tracks[generatorTargetTrack].kind;
+            bool chords = kind == TrackKind.Synth && generatorSynthChords;
+            var entries = ZPunkGenerationHistory.Read(projects.CurrentSlot, kind, generatorGenre, chords);
+            generatorHistoryLabel.text = "PREVIOUS / " + ZPunkGenreGenerator.Genres[generatorGenre] +
+                "  (" + entries.Count + ")";
+            if (entries.Count == 0)
+            {
+                var empty = Txt("No saved generations yet. Generate a pattern to keep it here.", 11, Muted);
+                empty.style.whiteSpace = WhiteSpace.Normal;
+                empty.style.marginTop = 10;
+                generatorHistoryRows.Add(empty);
+                return;
+            }
+            for (int historyIndex = 0; historyIndex < entries.Count; historyIndex++)
+            {
+                var entry = entries[historyIndex];
+                if (entry == null || entry.snapshot == null) continue;
+                int deleteIndex = historyIndex;
+                var row = new VisualElement();
+                row.style.flexDirection = FlexDirection.Row;
+                row.style.alignItems = Align.Center;
+                row.style.marginBottom = 6;
+                row.style.paddingLeft = 8;
+                row.style.backgroundColor = Raised;
+                row.style.borderTopLeftRadius = 6;
+                row.style.borderBottomLeftRadius = 6;
+                row.style.borderTopRightRadius = 6;
+                row.style.borderBottomRightRadius = 6;
+                string styleName = ZPunkGenreGenerator.Styles[generatorGenre][Mathf.Clamp(entry.style, 0, 2)];
+                var details = Txt(styleName + "  /  " + ZPunkGenreGenerator.Keys[Mathf.Clamp(entry.key, 0, 11)] +
+                    (entry.minor ? "m" : "") + "  /  " + entry.bars + " BAR" +
+                    (entry.bars == 1 ? "" : "S") + "  /  V" + entry.variation, 12, Ink);
+                details.style.flexGrow = 1;
+                details.style.minWidth = 0;
+                details.style.overflow = Overflow.Hidden;
+                details.style.textOverflow = TextOverflow.Ellipsis;
+                details.style.whiteSpace = WhiteSpace.NoWrap;
+                row.style.paddingRight = 5;
+                row.style.minHeight = 48;
+                row.Add(details);
+                var use = Btn("USE", () => RestoreGeneration(entry), 53);
+                use.style.height = 42;
+                use.style.minWidth = 53;
+                use.style.backgroundColor = SelectedColor();
+                use.style.color = Accent;
+                row.Add(use);
+                var del = Btn("DEL", () => DeleteGeneration(deleteIndex), 49);
+                del.style.height = 42;
+                del.style.minWidth = 49;
+                del.style.marginLeft = 4;
+                del.style.color = new Color(1f,.69f,.67f);
+                del.style.backgroundColor = Surface;
+                row.Add(del);
+                generatorHistoryRows.Add(row);
+            }
+        }
+
+        private void DeleteGeneration(int index)
+        {
+            if (projects == null || song == null || song.tracks == null ||
+                generatorTargetTrack < 0 || generatorTargetTrack >= song.tracks.Count) return;
+            TrackKind kind = song.tracks[generatorTargetTrack].kind;
+            bool chords = kind == TrackKind.Synth && generatorSynthChords;
+            if (ZPunkGenerationHistory.Delete(projects.CurrentSlot, kind, generatorGenre, chords, index))
+                RefreshGenerationHistory();
+        }
+
         private static Color SelectedColor() { return new Color(.10f,.32f,.34f); }
 
-        private void ApplyGenerator()
+        // Both new generations and restored history use exactly the same clip-writing
+        // path, leaving sample content and other tracks untouched.
+        private bool PrepareGeneratorContent(int bars)
         {
             if (song == null || song.tracks == null || generatorTargetTrack != trackIndex ||
-                song.tracks[trackIndex].kind == TrackKind.Chops) return;
-            if (!Writable()) return;
+                song.tracks[trackIndex].kind == TrackKind.Chops) return false;
+            if (!Writable()) return false;
             TrackData track = song.tracks[trackIndex];
             if (clip == null)
             {
-                long start = ArrangementEditing.NextFreeStart(track,0, generatorBars * SongData.TicksPerBar4);
-                clip = ArrangementEditing.CreateClip(song,track,start);
-                if (clip == null) return;
+                long start = ArrangementEditing.NextFreeStart(track, 0, bars * SongData.TicksPerBar4);
+                clip = ArrangementEditing.CreateClip(song, track, start);
+                if (clip == null) return false;
                 clipId = clip.id;
-                content = ArrangementEditing.FindContent(song,clip.contentId);
+                content = ArrangementEditing.FindContent(song, clip.contentId);
             }
             if (content == null)
             {
@@ -755,9 +854,10 @@ namespace ZPunk.DAW
                 song.contents.Add(content);
                 clip.contentId = content.id;
             }
-            ZPunkGenreGenerator.Fill(content,track.kind,generatorGenre,generatorStyle,
-                generatorBars,generatorKey,generatorMinor,generatorVariation,
-                track.kind == TrackKind.Synth && generatorSynthChords);
+            return true;
+        }
+        private void FinishGeneratorContent()
+        {
             clip.sourceOffsetTick = 0;
             clip.loopEnabled = false;
             clip.lengthTicks = content.lengthTicks;
@@ -767,9 +867,34 @@ namespace ZPunk.DAW
             selectedEventTick = -1;
             CloseGenerator();
             Changed();
-            // Generated melodies can span several octaves: bring their actual
-            // note cluster into view instead of using the first note as a guess.
             if (content.kind == ClipKind.Midi) FocusPatternNotes();
+        }
+        private void ApplyGenerator()
+        {
+            if (!PrepareGeneratorContent(generatorBars)) return;
+            TrackKind kind = song.tracks[trackIndex].kind;
+            bool chords = kind == TrackKind.Synth && generatorSynthChords;
+            ZPunkGenreGenerator.Fill(content, kind, generatorGenre, generatorStyle,
+                generatorBars, generatorKey, generatorMinor, generatorVariation, chords);
+            ZPunkGenerationHistory.Add(projects.CurrentSlot, kind, generatorGenre, generatorStyle,
+                generatorKey, generatorMinor, generatorBars, generatorVariation, chords, content);
+            FinishGeneratorContent();
+        }
+        private void RestoreGeneration(ZPunkGenerationHistory.Entry entry)
+        {
+            ClipContentData saved = ZPunkGenerationHistory.Copy(entry);
+            if (saved == null || !PrepareGeneratorContent(Mathf.Clamp(entry.bars, 1, 4))) return;
+            // Preserve this clip's stable contentId so linked song references remain valid.
+            content.kind = saved.kind;
+            content.lengthTicks = saved.lengthTicks;
+            content.generatedTag = saved.generatedTag;
+            content.notes = saved.notes ?? new List<NoteEvent>();
+            content.drums = saved.drums ?? new List<DrumEvent>();
+            content.chops = new List<ChopEvent>();
+            // Older saved generations may still contain an empty first step.
+            // Bring restored patterns onto the same tick-zero convention.
+            ZPunkGenreGenerator.AlignToStart(content);
+            FinishGeneratorContent();
         }
 
         private void FindDrumEngine()

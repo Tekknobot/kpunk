@@ -4,21 +4,24 @@ using System.Collections.Generic;
 namespace ZPunk.DAW
 {
     /// <summary>
-    /// Four genre families, three deliberately different grooves per family.
-    /// Writes standard editable DAW drum/MIDI events, never CHOPS or old pattern buffers.
-    /// Every generated note is on a 1/16 grid; pitches follow a shared tonic and scale.
-    /// Uses a local seeded RNG so applying a pattern doesn't perturb other Unity randomness.
+    /// Deterministic, offline groove and harmony generator. All results are ordinary editable
+    /// SongData events, with no external models, samples or network dependencies.
+    /// Reusing a key/genre/style/variation yields the same phrase on every platform.
     /// </summary>
     public static class ZPunkGenreGenerator
     {
-        public static readonly string[] Genres = { "BOOM BAP", "HOUSE", "TECHNO", "BREAKS" };
+        public static readonly string[] Genres = { "BOOM BAP", "HOUSE", "TECHNO", "BREAKS", "FUNK" };
         public static readonly string[][] Styles = {
             new[] { "CLASSIC", "DUSTY", "SYNCOPATED" },
             new[] { "CLASSIC", "DEEP", "JACKIN" },
             new[] { "DRIVING", "MINIMAL", "INDUSTRIAL" },
-            new[] { "AMEN", "JUNGLE", "HALF-TIME" }
+            new[] { "AMEN", "JUNGLE", "HALF-TIME" },
+            new[] { "DISCO", "POCKET", "ELECTRO" }
         };
         public static readonly string[] Keys = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        private static readonly int[] Major = { 0, 2, 4, 5, 7, 9, 11 };
+        private static readonly int[] Minor = { 0, 2, 3, 5, 7, 8, 10 };
+
         public static string Label(int genre, int style, int key, bool minor, bool synthChords = false)
         {
             genre = Clamp(genre, 0, Genres.Length - 1);
@@ -26,525 +29,499 @@ namespace ZPunk.DAW
                    (synthChords ? " / CHORDS" : "") + " / " +
                    Keys[Mod(key, 12)] + (minor ? " MIN" : " MAJ");
         }
-        public static string Description(int genre, int style)
+        public static string Description(int g, int s)
         {
-            string[][] descriptions = {
-                new[] { "Backbeat kick and snare, laid-back hats", "Sparse kicks, ghost notes and dusty spaces", "Offbeat kicks and syncopated 16th-note hats" },
-                new[] { "Four-on-floor, claps and offbeat hats", "Deep sparse groove with long melodic tones", "Busy hats, percussion and upbeat stabs" },
-                new[] { "Relentless kicks and driving pulses", "Stripped-back machine groove and repetition", "Hard accents, metallic hats and dark motifs" },
-                new[] { "Amen-inspired syncopated break grid", "Fast broken kicks, snare ghosts and rolling hats", "Half-time snare hits with breakbeat details" }
+            string[][] d = {
+                new[] { "Weighted backbeat, broken kick and laid-back hats", "Spacious drums with ghosts and understated swing", "Off-grid-feeling syncopation with answering hits" },
+                new[] { "Four-to-floor, offbeat hats and rolling bass", "Warm, open spaces and restrained chord movement", "Jackin accents, swung-feel hats and chord stabs" },
+                new[] { "Steady machine pulse with evolving punctuation", "Sparse, hypnotic drums and focused low notes", "Hard syncopated percussion and clipped motifs" },
+                new[] { "Break-style ghost snares and rolling kick variations", "Denser jungle accents with restless hat patterns", "Half-time backbeat with spacious, heavy hits" },
+                new[] { "Disco pulse, tight claps and bright offbeat percussion", "Dry kick/snare pocket, ghost hits and loose syncopation", "Electro-funk accents, crisp hats and syncopated kicks" }
             };
-            genre = Clamp(genre, 0, 3);
-            return descriptions[genre][Clamp(style, 0, 2)];
+            return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, 2)];
+        }
+        public static string BassDescription(int g, int s)
+        {
+            string[][] d = {
+                new[] { "Lazy low-end pocket with octave replies", "Sparse soulful bass and muted pickups", "Broken sixteenth-note bass with syncopated fifths" },
+                new[] { "Disco-style offbeat bounce and octave movement", "Warm sustained roots with restrained funk accents", "Tight jackin sixteenths and chromatic turnarounds" },
+                new[] { "Hypnotic root pulse with occasional octave jumps", "Minimal long notes with deliberate gaps", "Clipped industrial syncopation and fifths" },
+                new[] { "Broken low-end call and response", "Restless bass movement with octave accents", "Heavy spaced roots with sharp pickups" },
+                new[] { "Disco-funk octave bounce and short plucked notes", "Deep pocket with sparse fifths and rhythmic silence", "Electro-funk sixteenths, octave pops and passing tones" }
+            };
+            return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, 2)];
+        }
+        public static string ChordsDescription(int g, int s)
+        {
+            string[][] d = {
+                new[] { "Soulful seventh/ninth voicings and late chord replies", "Slow-moving warm jazz colors and open space", "Short, syncopated extended chord punches" },
+                new[] { "Seventh chord offbeats with smooth voice leading", "Long deep-house voicings with warm extensions", "Clipped piano-style sevenths and quick answers" },
+                new[] { "Restrained dark triads with machine-like repeats", "Open fifths, suspended intervals and plenty of air", "Short, tense minor-flavored harmonic hits" },
+                new[] { "Tight soulful stabs between snare accents", "Chopped voicings with quick delayed replies", "Sustained seventh colors over a half-time pulse" },
+                new[] { "Short disco sevenths and ninths with rhythmic replies", "Sparse, warm ninth voicings and tightly muted stabs", "Bright clipped sevenths with synth-funk syncopation" }
+            };
+            return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, 2)];
         }
 
-        /// <summary>Describes the chord texture for the selected genre and style.</summary>
-        public static string ChordsDescription(int genre, int style)
-        {
-            string[][] descriptions = {
-                new[] { "Warm seventh and ninth chords, loose backbeat accents", "Dusty extended chords with spacious offbeat hits", "Jazz voicings with short syncopated stabs" },
-                new[] { "Bright seventh-chord stabs on the offbeats", "Deep sustained seventh and ninth chords", "Jackin chord hits with restless rhythmic accents" },
-                new[] { "Dark repeating triads with a driving pulse", "Sparse suspended chords and cold open space", "Hard minor-key clusters with industrial stabs" },
-                new[] { "Syncopated seventh chords against the break", "Fast chopped chord punches and octave shifts", "Wide half-time chords with delayed replies" }
-            };
-            genre = Clamp(genre, 0, Genres.Length - 1);
-            return descriptions[genre][Clamp(style, 0, 2)];
-        }
-
-        public static void Fill(ClipContentData clip, TrackKind instrument, int genre, int style,
+        public static void Fill(ClipContentData clip, TrackKind kind, int genre, int style,
                                 int bars, int key, bool minor, int variation, bool synthChords = false)
         {
             if (clip == null) throw new ArgumentNullException(nameof(clip));
-            if (instrument == TrackKind.Chops) return;
-            genre = Clamp(genre, 0, 3);
+            if (kind == TrackKind.Chops) return;
+            genre = Clamp(genre, 0, Genres.Length - 1);
             style = Clamp(style, 0, 2);
             bars = Clamp(bars, 1, 4);
             key = Mod(key, 12);
-            clip.kind = instrument == TrackKind.Drums ? ClipKind.Drums : ClipKind.Midi;
+            clip.kind = kind == TrackKind.Drums ? ClipKind.Drums : ClipKind.Midi;
             clip.lengthTicks = bars * SongData.TicksPerBar4;
-            clip.generatedTag = Label(genre, style, key, minor, synthChords && instrument == TrackKind.Synth) + " / V" + variation;
+            clip.generatedTag = Label(genre, style, key, minor, synthChords && kind == TrackKind.Synth) + " / V" + variation;
             if (clip.drums == null) clip.drums = new List<DrumEvent>();
             if (clip.notes == null) clip.notes = new List<NoteEvent>();
             clip.drums.Clear();
             clip.notes.Clear();
-            // In a malformed or converted document, never carry obsolete slice events forward.
             if (clip.chops != null) clip.chops.Clear();
-            var rng = new Random(unchecked(variation * 11749 + genre * 2129 + style * 103 + (int)instrument * 71 + key * 13));
+            int seed = unchecked(variation * 104729 + genre * 3659 + style * 1619 + (int)kind * 307 + key * 47 + (minor ? 173 : 97));
+            var rng = new Random(seed);
+            int[][] chordVoices = new int[bars][];
             for (int bar = 0; bar < bars; bar++)
             {
-                if (instrument == TrackKind.Drums) GenerateDrums(clip, genre, style, bar, bars, rng);
-                else if (instrument == TrackKind.Synth && synthChords)
-                    GenerateSynthChords(clip, genre, style, bar, key, minor, rng);
-                else GenerateNotes(clip, instrument, genre, style, bar, key, minor, rng);
-
-                // Style specifies the musical vocabulary; variation now changes
-                // the groove, pickups, note contour and phrase endings as well.
-                if (instrument == TrackKind.Drums)
-                    ApplyDrumVariation(clip, genre, style, bar, bars, variation, rng);
-                else
-                    ApplyMelodicVariation(clip, instrument, genre, style, bar,
-                                          key, minor, variation, synthChords, rng);
-            }
-        }
-
-        // Variation families are deliberately different rhythmic templates, not
-        // just a new RNG seed for the velocity of an otherwise identical pattern.
-        private static readonly int[][] HatGrooves = {
-            new[] { 0, 2, 4, 6, 8, 10, 12, 14 },
-            new[] { 2, 6, 10, 14 },
-            new[] { 0, 3, 6, 8, 11, 14 },
-            new[] { 1, 3, 5, 7, 9, 11, 13, 15 },
-            new[] { 0, 4, 7, 10, 12, 15 },
-            new[] { 0, 2, 5, 8, 10, 13, 14 }
-        };
-
-        private static void ApplyDrumVariation(ClipContentData clip, int genre, int style,
-                                               int bar, int bars, int variation, Random rng)
-        {
-            int family = Mod(variation - 1, HatGrooves.Length);
-            long barStart = bar * SongData.TicksPerBar4;
-            long barEnd = barStart + SongData.TicksPerBar4;
-            // Rebuild only the closed-hat voice; leave genre-specific kick,
-            // snare, clap and percussion anchors intact.
-            clip.drums.RemoveAll(hit => hit != null && hit.lane == 3 &&
-                hit.startTick >= barStart && hit.startTick < barEnd);
-
-            int hatFamily = (family + (bar % 2 == 1 && family > 0 ? 1 : 0)) % HatGrooves.Length;
-            int[] hats = HatGrooves[hatFamily];
-            double density = genre == 0 && style == 1 ? .69 :
-                             genre == 2 && style == 1 ? .72 : .96;
-            foreach (int step in hats)
-            {
-                int accent = step % 4 == 0 ? 87 : step % 2 == 0 ? 68 : 55;
-                Drum(clip, bar, step, 3, accent, rng, density);
-            }
-
-            // A different response at the end of every other bar and a few
-            // sparse pickups make two-bar and four-bar clips feel composed.
-            if (family == 1 || family == 4)
-            {
-                if (bar % 2 == 1) Drum(clip, bar, 15, 0, 77, rng, .85);
-                if (genre != 2) Drum(clip, bar, 11, 6, 49, rng, .66);
-            }
-            else if (family == 2 || family == 5)
-            {
-                Drum(clip, bar, genre == 1 || genre == 2 ? 14 : 9, 0, 75, rng, .72);
-                if (bar % 2 == 0) Drum(clip, bar, 3, 6, 43, rng, .75);
-            }
-            else if (family == 3)
-            {
-                Drum(clip, bar, 7, 6, 55, rng, .76);
-                if (genre == 0 || genre == 3) Drum(clip, bar, 13, 0, 86, rng, .74);
-            }
-            if (bars > 1 && bar == bars - 1 && family > 0)
-            {
-                Drum(clip, bar, 14, 6, 49, rng, .9);
-                Drum(clip, bar, 15, 7, 70, rng, .7);
-            }
-            // All generated drum clips have a downbeat at exactly tick zero.
-            Drum(clip, bar, 0, 0, 120, rng);
-        }
-
-        private static readonly int[][] RhythmOffsets = {
-            new[] { 0, 0, 0, 0 },
-            new[] { 0, -1, 1, -1 },
-            new[] { 0, 1, -1, 1 },
-            new[] { 0, -2, -1, 0 },
-            new[] { 0, 2, -1, -2 },
-            new[] { 0, 1, 2, -1 }
-        };
-        private static readonly int[][] Contours = {
-            new[] { 0, 0, 0, 0 },
-            new[] { 0, 2, -1, 1 },
-            new[] { 0, -2, 1, -1 },
-            new[] { 0, 1, 2, -2 },
-            new[] { 0, -1, -2, 1 },
-            new[] { 0, 2, -2, 1 }
-        };
-
-        // Shift a melody by scale degrees instead of arbitrary chromatic semitones.
-        private static int ShiftInScale(int pitch, int key, bool minor, int degrees)
-        {
-            if (degrees == 0) return pitch;
-            int approxOctave = (int)Math.Floor((pitch - key) / 12.0);
-            int nearestDegree = 0;
-            int nearestDistance = int.MaxValue;
-            for (int d = approxOctave * 7 - 1; d <= approxOctave * 7 + 8; d++)
-            {
-                int distance = Math.Abs(key + Scale(d, minor) - pitch);
-                if (distance < nearestDistance)
+                if (kind == TrackKind.Drums) { GenerateDrums(clip, genre, style, bar, bars, variation, rng); continue; }
+                int degree = Progression(genre, minor)[bar % 4];
+                if (kind == TrackKind.Bass) GenerateBass(clip, genre, style, bar, bars, degree, key, minor, variation, rng);
+                else if (kind == TrackKind.Pads || (kind == TrackKind.Synth && synthChords))
                 {
-                    nearestDistance = distance;
-                    nearestDegree = d;
+                    // Use actual semitones of the current chord, not the tonic triad transposed
+                    // mechanically. Nearby inversion choices keep successive bars connected.
+                    int[] previous = bar > 0 ? chordVoices[bar - 1] : null;
+                    bool pads = kind == TrackKind.Pads;
+                    chordVoices[bar] = VoiceChord(degree, key, minor, genre, style, pads, previous);
+                    GenerateHarmony(clip, genre, style, bar, pads, chordVoices[bar], variation, rng);
                 }
+                else GenerateMelody(clip, genre, style, bar, degree, key, minor, variation, rng);
             }
-            return Clamp(key + Scale(nearestDegree + degrees, minor), 0, 127);
+            // Some styles begin with an intentional offbeat. Generated clip content,
+            // however, must start at local tick zero: otherwise the piano roll and
+            // the arrangement can show an unwanted empty lead-in. Shift the whole
+            // phrase, preserving every note's relative timing and duration.
+            AlignToStart(clip);
+            if (clip.notes.Count > 0)
+                clip.notes.Sort((a, b) => a.startTick == b.startTick ? a.pitch.CompareTo(b.pitch) : a.startTick.CompareTo(b.startTick));
+            if (clip.drums.Count > 0)
+                clip.drums.Sort((a, b) => a.startTick == b.startTick ? a.lane.CompareTo(b.lane) : a.startTick.CompareTo(b.startTick));
         }
 
-        private static void ApplyMelodicVariation(ClipContentData clip, TrackKind kind,
-                                                   int genre, int style, int bar,
-                                                   int key, bool minor, int variation,
-                                                   bool synthChords, Random rng)
+        /// <summary>
+        /// Moves the earliest generated drum hit or MIDI note to clip-local tick 0,
+        /// preserving the exact timing differences between all events. This only
+        /// edits event offsets inside content: arrangement clip placements remain
+        /// where the user put them. Also repairs old generation-history snapshots
+        /// when they are restored.
+        /// </summary>
+        public static void AlignToStart(ClipContentData clip)
         {
-            long firstTick = bar * SongData.TicksPerBar4;
-            long lastTick = firstTick + SongData.TicksPerBar4;
-            var onsets = new List<long>();
-            var grouped = new Dictionary<long, List<NoteEvent>>();
-            foreach (var note in clip.notes)
+            if (clip == null) return;
+            long earliest = long.MaxValue;
+            if (clip.kind == ClipKind.Drums && clip.drums != null)
             {
-                if (note == null || note.startTick < firstTick || note.startTick >= lastTick) continue;
-                if (!grouped.TryGetValue(note.startTick, out var voices))
-                {
-                    voices = new List<NoteEvent>();
-                    grouped.Add(note.startTick, voices);
-                    onsets.Add(note.startTick);
-                }
-                voices.Add(note);
+                foreach (var hit in clip.drums)
+                    if (hit != null && hit.startTick < earliest) earliest = hit.startTick;
+                if (earliest == long.MaxValue || earliest <= 0) return;
+                foreach (var hit in clip.drums)
+                    if (hit != null) hit.startTick -= earliest;
             }
-            if (onsets.Count == 0) return;
-            onsets.Sort();
-
-            int family = Mod(variation - 1, RhythmOffsets.Length);
-            bool isChordPart = kind == TrackKind.Pads || (kind == TrackKind.Synth && synthChords);
-            int lastStep = -1;
-            for (int onset = 0; onset < onsets.Count; onset++)
+            else if (clip.kind == ClipKind.Midi && clip.notes != null)
             {
-                long original = onsets[onset];
-                int step = (int)((original - firstTick) / SongData.TicksPerSixteenth);
-                int shift = RhythmOffsets[family][onset % 4];
-                if (bar % 2 == 1 && family != 0 && onset > 0) shift = -shift;
-                // Start the phrase (and each repeated bar) on the downbeat.
-                // Reserve room for remaining onsets so dense arpeggios never
-                // spill into the next bar after rhythmic displacement.
-                int latest = 16 - (onsets.Count - onset);
-                int destination = onset == 0 ? 0 :
-                    Math.Min(15, Math.Max(lastStep + 1, Math.Min(step + shift, latest)));
-                lastStep = destination;
-                long newTick = firstTick + destination * SongData.TicksPerSixteenth;
-                int voiceIndex = 0;
-                foreach (var note in grouped[original])
-                {
-                    int existingSteps = Math.Max(1, (int)(note.durationTicks / SongData.TicksPerSixteenth));
-                    int lengthChange = !isChordPart && family > 0 && onset > 0 && rng.Next(3) == 0
-                        ? (family % 2 == 0 ? 1 : -1) : 0;
-                    note.startTick = newTick;
-                    note.durationTicks = Math.Max(1, Math.Min(existingSteps + lengthChange, 16 - destination)) *
-                                         SongData.TicksPerSixteenth;
-
-                    if (family != 0 && onset > 0)
-                    {
-                        if (!isChordPart)
-                        {
-                            // Bass stays rooted on strong beats. Melody gets a
-                            // wider call-and-response contour than its bassline.
-                            int degrees = Contours[family][onset % 4];
-                            if (kind == TrackKind.Bass) degrees = degrees == 2 ? 1 :
-                                degrees == -2 ? -1 : degrees;
-                            note.pitch = ShiftInScale(note.pitch, key, minor, degrees);
-                        }
-                        else if (voiceIndex == (family % 2 == 0 ? 0 : 2))
-                        {
-                            // Octave displacement makes new inversions while
-                            // preserving all chord tones and scale membership.
-                            note.pitch = Clamp(note.pitch + (family % 2 == 0 ? 12 : -12), 0, 127);
-                        }
-                    }
-                    voiceIndex++;
-                }
-            }
-
-            // Long Pad notes otherwise sound identical across every generated
-            // variation. Alternate held textures with a shorter gated response,
-            // without creating a new track type or uneditable note events.
-            if (kind == TrackKind.Pads && family > 0 && onsets.Count == 1)
-            {
-                int split = family == 1 ? 8 : family == 2 ? 12 :
-                            family == 3 ? 6 : family == 4 ? 10 : 4;
-                var primary = grouped[onsets[0]];
-                var response = new List<NoteEvent>();
-                for (int v = 0; v < primary.Count; v++)
-                {
-                    var source = primary[v];
-                    if (source.durationTicks <= split * SongData.TicksPerSixteenth)
-                        continue;
-                    long responseLength = (16 - split) * SongData.TicksPerSixteenth;
-                    response.Add(new NoteEvent {
-                        pitch = Clamp(source.pitch + (family % 2 == 0 && v == 0 ? 12 : 0), 0, 127),
-                        startTick = firstTick + split * SongData.TicksPerSixteenth,
-                        durationTicks = responseLength,
-                        velocity = Clamp(source.velocity - 14, 25, 127)
-                    });
-                    source.durationTicks = split * SongData.TicksPerSixteenth;
-                }
-                clip.notes.AddRange(response);
+                foreach (var note in clip.notes)
+                    if (note != null && note.startTick < earliest) earliest = note.startTick;
+                if (earliest == long.MaxValue || earliest <= 0) return;
+                foreach (var note in clip.notes)
+                    if (note != null) note.startTick -= earliest;
             }
         }
 
-        private static void Drum(ClipContentData clip, int bar, int step, int lane, int velocity, Random rng, double chance = 1.0)
+        // Scale degrees allow major and natural-minor progressions to share a tonic.
+        private static int[] Progression(int g, bool minor)
         {
-            if (step < 0 || step >= 16 || rng.NextDouble() > chance) return;
-            long tick = bar * SongData.TicksPerBar4 + step * SongData.TicksPerSixteenth;
-            foreach (var existing in clip.drums)
-                if (existing != null && existing.startTick == tick && existing.lane == lane) return;
-            int vel = Clamp(velocity + rng.Next(-8, 9), 28, 127);
-            clip.drums.Add(new DrumEvent { startTick = tick, lane = lane, velocity = vel, legacyVelocityTier = 2 });
+            if (g == 0) return minor ? new[] { 0, 5, 3, 4 } : new[] { 0, 5, 3, 4 };
+            if (g == 1) return minor ? new[] { 0, 3, 5, 4 } : new[] { 0, 3, 5, 4 };
+            if (g == 2) return new[] { 0, 0, 0, 4 };
+            if (g == 3) return minor ? new[] { 0, 5, 3, 4 } : new[] { 0, 5, 1, 4 };
+            // Funk stays close to the tonic; the last bar turns toward the dominant.
+            return minor ? new[] { 0, 0, 3, 4 } : new[] { 0, 0, 3, 4 };
         }
-        private static void Line(ClipContentData c, int b, int lane, int[] steps, int v, Random rng, double chance = 1)
-        {
-            foreach (int step in steps) Drum(c, b, step, lane, v, rng, chance);
-        }
-        private static void GenerateDrums(ClipContentData c, int g, int s, int b, int bars, Random r)
-        {
-            bool ending = b == bars - 1 && bars > 1;
-            switch (g)
-            {
-                case 0: // boom bap, intentionally imperfect / asymmetrical accents
-                    Line(c,b,0,new[]{0, s == 2 ? 7 : 6, s == 1 ? 11 : 10},110,r, .78);
-                    Drum(c,b,0,0,116,r);
-                    Line(c,b,1,new[]{4,12},114,r);
-                    if (s == 1) { Drum(c,b,6,6,48,r,.55); Drum(c,b,15,1,41,r,.37); }
-                    if (s == 2) { Drum(c,b,14,0,80,r,.65); Drum(c,b,11,6,51,r,.66); }
-                    for(int i=0;i<16;i+= s==2?2:4) Drum(c,b,i,3,i%4==0?91:58,r,.96);
-                    if (s != 1) for(int i=2;i<16;i+=4) Drum(c,b,i,3,64,r,s==2?.9:.55);
-                    break;
-                case 1: // house, four-on-floor plus style-dependent syncopation
-                    Line(c,b,0,new[]{0,4,8,12},118,r);
-                    Line(c,b,1,new[]{4,12},108,r);
-                    if(s==0) Line(c,b,2,new[]{4,12},88,r,.65);
-                    if(s==1) Drum(c,b,14,0,66,r,.25);
-                    if(s==2) { Line(c,b,6,new[]{3,11,15},67,r,.9); Drum(c,b,10,0,77,r,.55); }
-                    Line(c,b,4,new[]{2,6,10,14},87,r,s==1?.72:.96);
-                    for(int i=0;i<16;i+= s==2?1:2) Drum(c,b,i,3, i%4==0?74:56,r,s==1?.56:.82);
-                    break;
-                case 2: // techno: dominant kick, harder hats, accents and gaps
-                    Line(c,b,0,new[]{0,4,8,12},121,r,s==1?.89:1);
-                    if(s==1) { Drum(c,b,0,0,123,r); Drum(c,b,12,0,121,r); }
-                    if(s!=1) Line(c,b,1,new[]{4,12},99,r,.86);
-                    Line(c,b,4,new[]{2,6,10,14},96,r,s==1?.55:.93);
-                    for(int i=0;i<16;i+= (s==2?1:2)) Drum(c,b,i,3,i%4==0?102:66,r,s==1?.43:.9);
-                    if(s==2) { Line(c,b,6,new[]{3,7,11,15},77,r,.76); Drum(c,b,15,7,79,r,ending?.8:.3); }
-                    break;
-                default: // Amen-inspired *step patterns*, not an audio sample/copyrighted recording.
-                    if(s==2) { // half-time
-                        Line(c,b,0,new[]{0,3,10,14},109,r,.88);
-                        Drum(c,b,0,0,120,r);
-                        Drum(c,b,8,1,122,r);
-                        Line(c,b,1,new[]{15},60,r,.7);
-                    }
-                    else if(s==1) { // jungle variant
-                        Line(c,b,0,new[]{0,3,7,10,14},108,r,.85);
-                        Line(c,b,1,new[]{4,10,12,15},100,r,.87);
-                        Line(c,b,6,new[]{2,9,13},53,r,.78);
-                    }
-                    else { // Amen-inspired kick/snare offset pattern
-                        Line(c,b,0,new[]{0,3,7,10,14},106,r,.83);
-                        Drum(c,b,0,0,120,r);
-                        Line(c,b,1,new[]{4,9,12},111,r);
-                        Line(c,b,6,new[]{6,11,15},51,r,.73);
-                    }
-                    for(int i=0;i<16;i+=2) Drum(c,b,i,3,i%4==0?91:66,r,.90);
-                    Line(c,b,4,new[]{6,14},79,r,s==2?.48:.72);
-                    if(ending) Line(c,b,1,new[]{13,14,15},63,r,.86);
-                    break;
-            }
-            if(ending && g != 3)
-            {
-                Drum(c,b,15,6,58,r,.60);
-                Drum(c,b,15,7,64,r,.33);
-            }
-        }
-        private static readonly int[] Major = { 0,2,4,5,7,9,11 };
-        private static readonly int[] Minor = { 0,2,3,5,7,8,10 };
         private static int Scale(int degree, bool minor)
         {
-            int[] scale = minor ? Minor : Major;
-            return 12 * (int)Math.Floor(degree / 7.0) + scale[Mod(degree,7)];
+            int[] notes = minor ? Minor : Major;
+            return 12 * (int)Math.Floor(degree / 7.0) + notes[Mod(degree, 7)];
         }
-        private static int[] Progression(int genre) => genre == 0 ? new[]{0,5,3,4} :
-            genre == 1 ? new[]{0,5,2,6} : genre == 2 ? new[]{0,0,0,4} : new[]{0,5,6,4};
-        private static void Note(ClipContentData c, int bar, int step, int lengthSteps, int pitch, int vel, Random rng)
+        private static int Pitch(int octaveBase, int key, int degree, bool minor)
         {
-            if(step < 0 || step >= 16 || lengthSteps <= 0) return;
-            c.notes.Add(new NoteEvent {
-                pitch = Clamp(pitch,0,127),
-                startTick = bar * SongData.TicksPerBar4 + step * SongData.TicksPerSixteenth,
-                durationTicks = Math.Min(lengthSteps, 16-step) * SongData.TicksPerSixteenth,
-                velocity = Clamp(vel + rng.Next(-9,10),25,127)
+            return octaveBase + key + Scale(degree, minor);
+        }
+        private static void Drum(ClipContentData clip, int bar, int step, int lane, int volume,
+                                 Random r, double chance = 1)
+        {
+            if (step < 0 || step >= 16 || r.NextDouble() >= chance) return;
+            long tick = bar * SongData.TicksPerBar4 + step * SongData.TicksPerSixteenth;
+            foreach (var existing in clip.drums)
+                if (existing.startTick == tick && existing.lane == lane) return;
+            clip.drums.Add(new DrumEvent {
+                startTick = tick, lane = lane,
+                velocity = Clamp(volume + r.Next(-5, 6), 20, 127), legacyVelocityTier = 2
             });
         }
-        private static void GenerateNotes(ClipContentData c, TrackKind kind, int g, int s, int bar, int key, bool minor, Random r)
+        private static void Hits(ClipContentData c, int bar, int lane, int[] positions, int vel, Random r, double chance = 1)
         {
-            int[] progression = Progression(g);
-            int rootDegree = progression[bar % 4];
-            // Root degree is relative to the selected key, and shared across BASS/SYNTH/PADS.
-            int rootSemitones = key + Scale(rootDegree,minor);
-            if(kind == TrackKind.Bass)
+            foreach (int step in positions) Drum(c, bar, step, lane, vel, r, chance);
+        }
+        private static void GenerateDrums(ClipContentData c, int g, int s, int bar, int bars, int variation, Random r)
+        {
+            int family = Mod(variation - 1, 4);
+            bool turn = (bar & 1) == 1;
+            bool fill = bars > 1 && bar == bars - 1;
+            if (g == 0)
             {
-                int basePitch = 24 + rootSemitones; // A1 for A-minor default
-                if (g == 0) // boom bap
-                {
-                    Note(c,bar,0,3,basePitch,110,r);
-                    Note(c,bar,s==2?5:6,2,basePitch + (s==1?7:0),95,r);
-                    Note(c,bar,10,3,basePitch,108,r);
-                    if(s!=1) Note(c,bar,14,2,basePitch + (s==2?3:0),84,r);
-                }
-                else if(g==1) // house
-                {
-                    for(int i=0;i<16;i+=4) Note(c,bar,i, s==1?3:2,basePitch,98,r);
-                    if(s==2) for(int i=2;i<16;i+=4) Note(c,bar,i,2,basePitch+7,86,r);
-                    if(s==1) Note(c,bar,14,2,basePitch+7,81,r);
-                }
-                else if(g==2) // techno
-                {
-                    int[] pos = s == 1 ? new[]{0,8,12} : s == 2 ? new[]{0,3,6,8,11,14} : new[]{0,2,4,6,8,10,12,14};
-                    foreach (int i in pos) Note(c,bar,i,s==1?3:1,basePitch+(s==2 && i%4==3?12:0),103,r);
-                }
-                else // breaks
-                {
-                    int[] pos=s==2?new[]{0,7,10}:s==1?new[]{0,3,7,11,14}:new[]{0,3,8,10,14};
-                    foreach (int i in pos) Note(c,bar,i,i==0?3:2,basePitch+(i==14?7:0),105,r);
-                }
-                return;
+                Hits(c, bar, 1, new[] { 4, 12 }, 111, r);
+                if (s == 0) Hits(c, bar, 0, turn ? new[] { 0, 7, 10 } : new[] { 0, 6, 10 }, 111, r);
+                else if (s == 1) Hits(c, bar, 0, turn ? new[] { 0, 9 } : new[] { 0, 10 }, 110, r);
+                else Hits(c, bar, 0, turn ? new[] { 0, 3, 10, 15 } : new[] { 0, 7, 10, 14 }, 109, r);
+                Drum(c, bar, 11, 6, 39, r, s == 1 ? .37 : .6);
+                Drum(c, bar, 15, 1, 40, r, s == 2 ? .55 : .23);
+                if (s == 0) Hits(c, bar, 3, new[] { 0, 4, 8, 12 }, 70, r);
+                else if (s == 1) Hits(c, bar, 3, new[] { 0, 4, 8, 12 }, 60, r, .85);
+                else Hits(c, bar, 3, new[] { 0, 2, 4, 6, 8, 10, 12, 14 }, 67, r, .93);
+                if (family == 1) Hits(c, bar, 3, new[] { 3, 11 }, 48, r);
+                if (family == 2) Hits(c, bar, 3, new[] { 7, 15 }, 51, r);
+                if (family == 3) Drum(c, bar, 14, 0, 69, r, .7);
+                if (family == 2) Drum(c, bar, 7, 6, 47, r, .74);
+                Drum(c, bar, 14, 4, 61, r, .3);
             }
-            if(kind == TrackKind.Pads)
+            else if (g == 1)
             {
-                int basePitch = 48 + rootSemitones; // A3 for A-minor default
-                if (g == 2 && s == 1)
+                Hits(c, bar, 0, new[] { 0, 4, 8, 12 }, 116, r);
+                Hits(c, bar, 1, new[] { 4, 12 }, 98, r, s == 1 ? .75 : 1);
+                Hits(c, bar, 2, new[] { 4, 12 }, 90, r, s == 2 ? .85 : .42);
+                Hits(c, bar, 4, new[] { 2, 6, 10, 14 }, 85, r, s == 1 ? .65 : .98);
+                int[] hats = s == 1 ? new[] { 0, 4, 8, 12 } :
+                             s == 2 ? new[] { 0, 2, 3, 4, 6, 8, 10, 11, 12, 14 } :
+                                      new[] { 0, 2, 4, 6, 8, 10, 12, 14 };
+                for (int i = 0; i < hats.Length; i++)
+                    Drum(c, bar, hats[i], 3, hats[i] % 4 == 0 ? 81 : 59, r, s == 1 ? .79 : .94);
+                if (s == 2) Hits(c, bar, 6, turn ? new[] { 3, 11, 15 } : new[] { 3, 11 }, 57, r, .8);
+                if (s == 1 && family == 1) Drum(c, bar, 14, 0, 67, r, .6);
+                if (s == 2 && family == 2) Drum(c, bar, 15, 6, 55, r, .6);
+                if (family == 1 && s != 1) Drum(c, bar, 15, 0, 65, r, .55);
+                if (family == 3) Drum(c, bar, 7, 6, 51, r, .6);
+            }
+            else if (g == 2)
+            {
+                Hits(c, bar, 0, new[] { 0, 4, 8, 12 }, 121, r, s == 1 ? .95 : 1);
+                if (s != 1) Hits(c, bar, 1, new[] { 4, 12 }, 98, r, .9);
+                Hits(c, bar, 4, new[] { 2, 6, 10, 14 }, 92, r, s == 1 ? .55 : .95);
+                int[] hats = s == 1 ? new[] { 0, 4, 8, 12 } :
+                             s == 2 ? new[] { 0, 1, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15 } :
+                                      new[] { 0, 2, 4, 6, 8, 10, 12, 14 };
+                foreach (int p in hats) Drum(c, bar, p, 3, p % 4 == 0 ? 86 : 57, r, s == 1 ? .87 : .95);
+                if (s == 2) Hits(c, bar, 6, turn ? new[] { 3, 7, 11, 15 } : new[] { 3, 11 }, 64, r, .82);
+                if (family == 2 && s != 1) Drum(c, bar, 15, 7, 68, r, .6);
+                if (family == 1 && s == 2) Drum(c, bar, 7, 0, 80, r, .6);
+                if (family == 3) Drum(c, bar, 15, 6, 62, r, .65);
+            }
+            else if (g == 3)
+            {
+                // Breaks: prominent backbeat and ghost responses; not a sampled break.
+                if (s == 2)
                 {
-                    Note(c,bar,0,16,basePitch,72,r);
-                    Note(c,bar,0,16,basePitch+7,65,r);
+                    Hits(c, bar, 0, turn ? new[] { 0, 7, 11 } : new[] { 0, 3, 10 }, 113, r);
+                    Drum(c, bar, 8, 1, 118, r);
+                    Drum(c, bar, 15, 1, 45, r, .7);
                 }
                 else
                 {
-                    int length=(g==0 || g==3 && s==2)?12:16;
-                    int start=(g==0?2:0);
-                    Note(c,bar,start,length-start,basePitch,75,r);
-                    Note(c,bar,start,length-start,basePitch + Scale(rootDegree+2,minor) - Scale(rootDegree,minor),72,r);
-                    Note(c,bar,start,length-start,basePitch + Scale(rootDegree+4,minor) - Scale(rootDegree,minor),67,r);
-                    if(g==1 && s==2) Note(c,bar,10,3,basePitch+12,69,r);
+                    Hits(c, bar, 0, turn ? new[] { 0, 7, 10, 14 } : new[] { 0, 3, 10, 14 }, 108, r);
+                    Hits(c, bar, 1, s == 1 ? new[] { 4, 10, 12 } : new[] { 4, 12 }, 109, r);
+                    Hits(c, bar, 6, s == 1 ? new[] { 2, 7, 15 } : new[] { 7, 11 }, 42, r, .82);
                 }
-                return;
+                int[] hats = s == 1 ? new[] { 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15 } :
+                                      new[] { 0, 2, 4, 6, 8, 10, 12, 14 };
+                foreach (int p in hats) Drum(c, bar, p, 3, p % 4 == 0 ? 85 : 61, r, .95);
+                Hits(c, bar, 4, new[] { 6, 14 }, 71, r, s == 2 ? .38 : .65);
+                if (family == 1) Drum(c, bar, 15, 0, 64, r, .6);
+                if (family == 3 && s != 2) Drum(c, bar, 9, 1, 58, r, .55);
+                if (family == 2) Drum(c, bar, 15, 6, 58, r, .7);
             }
-            // SYNTH: distinctive little hooks, stabs and machine ostinati.
-            int baseNote = 48 + rootSemitones;
-            if(g==0)
+            else // FUNK: tight live-feeling backbeat with fills that leave room for bass.
             {
-                Note(c,bar,0,3,baseNote+12,90,r);
-                Note(c,bar,6,2,baseNote+Scale(rootDegree+2,minor)-Scale(rootDegree,minor),85,r);
-                if(s!=1) Note(c,bar,10,3,baseNote+7,94,r);
-                if(s==2) Note(c,bar,14,2,baseNote+12,80,r);
+                Hits(c, bar, 1, new[] { 4, 12 }, 112, r);
+                Hits(c, bar, 2, new[] { 4, 12 }, 82, r, s == 1 ? .55 : .95);
+                int[] kicks = s == 0 ? (turn ? new[] { 0, 7, 10, 14 } : new[] { 0, 6, 10 }) :
+                              s == 1 ? (turn ? new[] { 0, 7, 11 } : new[] { 0, 10, 14 }) :
+                                       (turn ? new[] { 0, 3, 8, 11, 14 } : new[] { 0, 6, 8, 14 });
+                Hits(c, bar, 0, kicks, 108, r);
+                int[] hats = s == 1 ? new[] { 0, 2, 4, 6, 8, 10, 12, 14 } :
+                             s == 2 ? new[] { 0, 2, 3, 4, 6, 8, 10, 11, 12, 14, 15 } :
+                                      new[] { 0, 2, 4, 6, 8, 10, 12, 14 };
+                foreach (int step in hats)
+                    Drum(c, bar, step, 3, step % 4 == 0 ? 77 : 55, r, s == 1 ? .82 : .95);
+                Hits(c, bar, 4, s == 0 ? new[] { 2, 6, 10, 14 } : new[] { 6, 14 }, 75, r, s == 1 ? .5 : .83);
+                Drum(c, bar, 11, 6, 44, r, .58);
+                if (family == 1) Drum(c, bar, 15, 6, 55, r, .7);
+                if (family == 2) Drum(c, bar, 7, 1, 44, r, .52);
+                if (family == 3) Drum(c, bar, 15, 0, 72, r, .55);
             }
-            else if(g==1)
+            if (fill)
             {
-                int[] steps=s==1?new[]{2,10}:new[]{2,6,10,14};
-                foreach(int i in steps)
-                {
-                    Note(c,bar,i,s==1?4:2,baseNote+12,88,r);
-                    Note(c,bar,i,s==1?4:2,baseNote+12+Scale(rootDegree+2,minor)-Scale(rootDegree,minor),72,r);
-                    if(s==2) Note(c,bar,i,1,baseNote+19,65,r);
-                }
-            }
-            else if(g==2)
-            {
-                int[] steps=s==1?new[]{0,8}:s==2?new[]{0,3,6,11,14}:new[]{0,2,4,6,8,10,12,14};
-                foreach(int i in steps)
-                {
-                    int degree=s==1?0:(i/2+(s==2?i%3:0))%4;
-                    Note(c,bar,i,s==1?3:1,baseNote+12+Scale(degree,minor),94,r);
-                }
-            }
-            else
-            {
-                int[] steps=s==2?new[]{0,8,13}:s==1?new[]{0,3,6,9,12,15}:new[]{0,3,7,10,14};
-                foreach(int i in steps) Note(c,bar,i,s==2?3:1,baseNote+12+Scale((i/3)%5,minor),96,r);
+                Drum(c, bar, 14, 6, 58, r, .7);
+                Drum(c, bar, 15, 1, 59, r, g == 3 ? .6 : .28);
+                Drum(c, bar, 15, 7, 65, r, .3);
             }
         }
-        // SYNTH chords are generated as ordinary piano-roll notes. No additional
-        // instrument mode, serialized schema, or playback engine changes are needed.
-        // All chord tones come from the selected scale, and the harmonic roots follow
-        // the same genre progression used by the BASS and PADS generators.
-        private static void GenerateSynthChords(ClipContentData c, int genre, int style,
-                                                int bar, int key, bool minor, Random r)
+
+        private static void Note(ClipContentData c, int bar, int step, int duration,
+                                 int pitch, int velocity, Random r)
         {
-            int rootDegree = Progression(genre)[bar % 4];
-            int basePitch = 48 + key + Scale(rootDegree, minor);
-            int third = Scale(rootDegree + 2, minor) - Scale(rootDegree, minor);
-            int fifth = Scale(rootDegree + 4, minor) - Scale(rootDegree, minor);
-            int seventh = Scale(rootDegree + 6, minor) - Scale(rootDegree, minor);
-            int ninth = Scale(rootDegree + 8, minor) - Scale(rootDegree, minor);
-
-            // Each genre has its own chord vocabulary, rather than a generic
-            // triad laid over the existing single-note melody rhythm.
-            int[] tones;
-            switch (genre)
+            if (step < 0 || step > 15 || duration < 1) return;
+            c.notes.Add(new NoteEvent {
+                startTick = bar * SongData.TicksPerBar4 + step * SongData.TicksPerSixteenth,
+                durationTicks = Math.Min(16 - step, duration) * SongData.TicksPerSixteenth,
+                pitch = Clamp(pitch, 0, 127), velocity = Clamp(velocity + r.Next(-5, 6), 25, 127)
+            });
+        }
+        // Expressive, playable funk/disco-inspired bass. Style templates keep the
+        // original genres recognisable; variation changes accents, fills and octave
+        // choices rather than scattering unmusical random notes across the scale.
+        private static void GenerateBass(ClipContentData c, int g, int s, int bar, int bars,
+                                         int degree, int key, bool minor, int variation, Random r)
+        {
+            // Keep the bass in a practical C1-C3-ish register for ZPUNK's presets.
+            int root = Pitch(24, key, degree, minor);
+            while (root > 43) root -= 12;
+            while (root < 28) root += 12;
+            int fifth = Scale(degree + 4, minor) - Scale(degree, minor);
+            int seventh = Scale(degree + 6, minor) - Scale(degree, minor);
+            int family = Mod(variation - 1, 4);
+            bool answer = (bar & 1) != 0;
+            // Approach the chord which actually follows in THIS clip, including
+            // the return to its beginning when 1/2/4-bar clips loop.
+            int nextDegree = Progression(g, minor)[(bar + 1) % bars];
+            int nextRoot = Pitch(24, key, nextDegree, minor);
+            while (nextRoot > 43) nextRoot -= 12;
+            while (nextRoot < 28) nextRoot += 12;
+            if (g == 0) // BOOM BAP: warm, behind-the-beat syncopation and small pickups.
             {
-                case 0: // Boom bap: rootless jazz extensions and compact voicings.
-                    tones = style == 1 ? new[] { 0, third, seventh, ninth } :
-                            style == 2 ? new[] { third, fifth, seventh, ninth } :
-                                         new[] { 0, third, seventh, ninth };
-                    break;
-                case 1: // House: warm sevenths, brighter upper voices for jackin.
-                    tones = style == 1 ? new[] { 0, third, fifth, seventh, ninth } :
-                            style == 2 ? new[] { third, fifth, seventh, 12 } :
-                                         new[] { 0, third, fifth, seventh };
-                    break;
-                case 2: // Techno: restrained minor/major chords, dry machine stabs.
-                    tones = style == 1 ? new[] { 0, fifth, ninth } :
-                            style == 2 ? new[] { 0, third, seventh } :
-                                         new[] { 0, third, fifth };
-                    break;
-                default: // Breaks: minor/major sevenths and suspended upper tones.
-                    tones = style == 2 ? new[] { 0, third, fifth, seventh } :
-                            style == 1 ? new[] { third, fifth, seventh, ninth } :
-                                         new[] { 0, third, seventh, ninth };
-                    break;
+                int[] steps = s == 1 ? new[] { 0, 7, 10 } :
+                              s == 2 ? new[] { 0, 3, 6, 10, 14 } : new[] { 0, 6, 10, 14 };
+                for (int i = 0; i < steps.Length; i++)
+                {
+                    int step = steps[i];
+                    int pitch = step == 14 ? (family == 2 ? nextRoot - 1 : root + fifth) :
+                                step == 10 && family == 1 ? root + 12 :
+                                step == 6 && family == 3 ? root + fifth : root;
+                    Note(c, bar, step, step == 0 ? 4 : s == 1 ? 3 : 2,
+                         pitch, step == 0 ? 112 : i % 2 == 0 ? 94 : 82, r);
+                }
+                if (s == 2 && family == 3) Note(c, bar, 15, 1, nextRoot - 1, 66, r);
             }
+            else if (g == 1) // HOUSE: tight disco-funk bounce between the kicks.
+            {
+                int[] steps = s == 1 ? new[] { 0, 3, 7, 10, 14 } :
+                              s == 2 ? new[] { 0, 2, 5, 7, 10, 13, 15 } :
+                                       new[] { 0, 3, 6, 10, 14 };
+                for (int i = 0; i < steps.Length; i++)
+                {
+                    int step = steps[i];
+                    int pitch = step == 15 ? nextRoot - 1 :
+                                step == 7 && family != 0 ? root + 12 :
+                                step == 10 && (family == 1 || s == 2) ? root + fifth :
+                                step == 14 && family == 3 ? root + 12 : root;
+                    int length = step == 0 && s == 1 ? 3 : step == 10 && s == 1 ? 3 : 1 + (step % 4 == 2 ? 1 : 0);
+                    Note(c, bar, step, length, pitch,
+                         step == 0 ? 111 : step % 4 == 2 ? 102 : 84, r);
+                }
+                if (family == 2 && s != 2) Note(c, bar, 15, 1, nextRoot - 1, 69, r);
+            }
+            else if (g == 2) // TECHNO: repetitive machine pulse with small funky skips.
+            {
+                int[] steps = s == 1 ? new[] { 0, 7, 10 } :
+                              s == 2 ? new[] { 0, 3, 6, 8, 11, 14 } :
+                                       new[] { 0, 2, 4, 6, 8, 10, 12, 14 };
+                for (int i = 0; i < steps.Length; i++)
+                {
+                    int step = steps[i];
+                    int pitch = step == 8 && family == 1 ? root + 12 :
+                                step == 11 && s == 2 ? root + fifth :
+                                step == 14 && family == 3 ? root + 12 : root;
+                    Note(c, bar, step, s == 1 ? (step == 0 ? 5 : 3) : 1, pitch,
+                         step % 4 == 0 ? 109 : 82, r);
+                }
+                if (family == 2 && s == 2) Note(c, bar, 15, 1, nextRoot - 1, 72, r);
+            }
+            else if (g == 3) // BREAKS: broken, syncopated low end with octave calls.
+            {
+                int[] steps = s == 2 ? new[] { 0, 7, 10, 14 } :
+                              s == 1 ? new[] { 0, 3, 6, 9, 11, 14 } :
+                                       new[] { 0, 3, 7, 10, 14 };
+                for (int i = 0; i < steps.Length; i++)
+                {
+                    int step = steps[i];
+                    int pitch = step == 14 ? (family == 2 ? nextRoot - 1 : root + fifth) :
+                                step == 7 && (family == 1 || s == 1) ? root + 12 :
+                                step == 10 && family == 3 ? root + fifth : root;
+                    Note(c, bar, step, step == 0 ? 3 : s == 2 && step == 7 ? 3 : 2,
+                         pitch, step == 0 ? 112 : i % 2 == 0 ? 97 : 84, r);
+                }
+            }
+            else // FUNK: repetitive pocket, percussive rests, octave pops and pickups.
+            {
+                int[] steps = s == 0 ? new[] { 0, 3, 6, 10, 12, 14 } :
+                              s == 1 ? new[] { 0, 3, 7, 10, 14 } :
+                                       new[] { 0, 2, 5, 7, 10, 13, 15 };
+                for (int i = 0; i < steps.Length; i++)
+                {
+                    int step = steps[i];
+                    // Musical 5th, octave and approach colors instead of random leaps.
+                    int pitch = step == 15 ? nextRoot - 1 :
+                                step == 7 && s != 0 ? root + 12 :
+                                step == 6 && family == 1 ? root + fifth :
+                                step == 10 ? (family == 2 ? root + seventh - 12 : root + fifth) :
+                                step == 14 && family == 3 ? root + 12 : root;
+                    int length = step == 0 ? (s == 1 ? 3 : 2) :
+                                 step == 10 && s == 1 ? 3 : 1 + (step == 12 ? 1 : 0);
+                    Note(c, bar, step, length, pitch,
+                         step == 0 ? 115 : step == 10 || step == 7 ? 105 : 82, r);
+                }
+                // Only occasional turnaround notes. Let the space create groove.
+                if (answer && family == 1 && s != 2)
+                    Note(c, bar, 15, 1, nextRoot - 1, 68, r);
+            }
+        }
 
-            // Stab times are sixteenth-note indices; Note() guarantees every
-            // duration ends inside the bar, even in one-bar clips.
+        private static void GenerateMelody(ClipContentData c, int g, int s, int bar, int degree,
+                                           int key, bool minor, int variation, Random r)
+        {
+            // Motifs repeat on bar pairs; answer bars vary the end, not every note.
+            int family = Mod(variation - 1, 4);
+            bool answer = (bar & 1) != 0;
+            int[] starts = g == 0 ? (s == 1 ? new[] { 0, 8, 13 } : new[] { 0, 5, 10, 14 }) :
+                           g == 1 ? (s == 1 ? new[] { 2, 10 } : new[] { 2, 6, 10, 14 }) :
+                           g == 2 ? (s == 1 ? new[] { 0, 8 } : s == 2 ? new[] { 0, 3, 7, 11, 14 } : new[] { 0, 4, 6, 10, 12, 14 }) :
+                           g == 3 ? (s == 2 ? new[] { 0, 8, 13 } : s == 1 ? new[] { 0, 3, 6, 10, 13, 15 } : new[] { 0, 3, 7, 10, 14 }) :
+                                    (s == 0 ? new[] { 0, 3, 6, 10, 14 } : s == 1 ? new[] { 0, 7, 10, 14 } : new[] { 0, 2, 6, 9, 12, 15 });
+            int[] motif = { 0, 2, 4, 2, 1, 0 };
+            for (int i = 0; i < starts.Length; i++)
+            {
+                int position = starts[i];
+                int chordOffset = motif[(i + (family == 2 ? 2 : 0)) % motif.Length];
+                int melodicDegree = degree + chordOffset;
+                if (answer && i == starts.Length - 1) melodicDegree = degree + (family == 3 ? 1 : 0);
+                else if (family == 1 && i == 1) melodicDegree = degree + 4;
+                else if (family == 3 && i == 2) melodicDegree = degree - 1;
+                if (family == 2 && i == starts.Length - 2 && !answer) melodicDegree += 1;
+                int pitch = Pitch(g == 2 ? 60 : 60, key, melodicDegree, minor);
+                // Fold into the same playable 1-2 octave register.
+                while (pitch > 83) pitch -= 12;
+                while (pitch < 58) pitch += 12;
+                int length = g == 1 && s == 1 ? 4 : g == 0 && s == 1 ? 3 : g == 2 ? 1 : 2;
+                if (answer && i == starts.Length - 1) length = Math.Max(1, length - 1);
+                Note(c, bar, position, length, pitch, i == 0 ? 98 : 79 + (i % 2) * 9, r);
+            }
+        }
+
+        private static int[] VoiceChord(int degree, int key, bool minor, int g, int s,
+                                         bool pads, int[] previous)
+        {
+            int root = Pitch(pads ? 48 : 48, key, degree, minor);
+            int third = Scale(degree + 2, minor) - Scale(degree, minor);
+            int fifth = Scale(degree + 4, minor) - Scale(degree, minor);
+            int seventh = Scale(degree + 6, minor) - Scale(degree, minor);
+            int ninth = Scale(degree + 8, minor) - Scale(degree, minor);
+            int[] intervals = g == 2 ? (s == 1 ? new[] { 0, fifth, ninth } : new[] { 0, third, fifth }) :
+                              g == 0 ? (s == 2 ? new[] { third, seventh, ninth } : new[] { 0, third, seventh, ninth }) :
+                              g == 1 ? (s == 1 ? new[] { 0, third, seventh, ninth } : new[] { 0, third, fifth, seventh }) :
+                              g == 3 ? (s == 1 ? new[] { third, fifth, seventh, ninth } : new[] { 0, third, fifth, seventh }) :
+                                       (s == 1 ? new[] { third, seventh, ninth } : new[] { 0, third, seventh, ninth });
+            int[] voices = new int[intervals.Length];
+            for (int i = 0; i < voices.Length; i++)
+            {
+                int initial = root + intervals[i];
+                // Keep lower-mid voicings for warmth, but don't let repeated inversions
+                // cause 12-semitone jumps between adjacent chords.
+                int target = previous != null ? previous[Math.Min(i, previous.Length - 1)] :
+                             (pads ? 57 + i * 5 : 55 + i * 5);
+                int best = Clamp(initial, 45, 84);
+                int score = int.MaxValue;
+                for (int octave = -3; octave <= 2; octave++)
+                {
+                    int candidate = initial + 12 * octave;
+                    if (candidate < (pads ? 48 : 50) || candidate > (pads ? 82 : 79)) continue;
+                    int distance = Math.Abs(candidate - target) + Math.Abs(candidate - (pads ? 59 + 5 * i : 56 + 5 * i)) / 4;
+                    if (distance < score) { score = distance; best = candidate; }
+                }
+                voices[i] = best;
+            }
+            // Keep pitches unique without pushing extreme inversions.
+            for (int i = 1; i < voices.Length; i++)
+                if (voices[i] == voices[i - 1] && voices[i] + 12 <= 82) voices[i] += 12;
+            return voices;
+        }
+        private static void GenerateHarmony(ClipContentData c, int g, int s, int bar,
+                                             bool pads, int[] voices, int variation, Random r)
+        {
             int[] starts;
             int[] lengths;
-            switch (genre)
+            if (pads)
             {
-                case 0:
-                    starts  = style == 0 ? new[] { 0, 9 } : style == 1 ? new[] { 2, 13 } : new[] { 3, 7, 11, 14 };
-                    lengths = style == 0 ? new[] { 6, 3 } : style == 1 ? new[] { 9, 2 } : new[] { 2, 2, 2, 2 };
-                    break;
-                case 1:
-                    starts  = style == 0 ? new[] { 2, 6, 10, 14 } : style == 1 ? new[] { 0, 12 } : new[] { 1, 3, 6, 9, 11, 14 };
-                    lengths = style == 0 ? new[] { 2, 2, 2, 2 } : style == 1 ? new[] { 12, 4 } : new[] { 1, 2, 2, 1, 2, 2 };
-                    break;
-                case 2:
-                    starts  = style == 0 ? new[] { 2, 6, 10, 14 } : style == 1 ? new[] { 0, 12 } : new[] { 0, 3, 7, 10, 14 };
-                    lengths = style == 0 ? new[] { 2, 2, 2, 2 } : style == 1 ? new[] { 5, 3 } : new[] { 1, 1, 1, 2, 1 };
-                    break;
-                default:
-                    starts  = style == 0 ? new[] { 0, 7, 11 } : style == 1 ? new[] { 0, 3, 6, 10, 14 } : new[] { 0, 8 };
-                    lengths = style == 0 ? new[] { 3, 2, 3 } : style == 1 ? new[] { 1, 2, 1, 2, 2 } : new[] { 6, 6 };
-                    break;
+                starts = g == 0 ? new[] { 2 } : g == 3 && s != 2 ? new[] { 0, 10 } :
+                         g == 4 && s == 2 ? new[] { 0, 10 } : new[] { 0 };
+                lengths = starts.Length == 2 ? new[] { 9, 6 } : new[] { g == 0 ? 12 : 16 };
+                if (g == 2 && s == 2) { starts = new[] { 0, 8 }; lengths = new[] { 7, 8 }; }
             }
-
-            // Seeded variation changes individual voicings and accents, without
-            // changing genre/style choice or moving any pitch off its diatonic scale.
-            for (int hit = 0; hit < starts.Length; hit++)
+            else if (g == 0)
             {
-                int shift = r.Next(3) == 0 ? 12 : 0;
-                int velocity = genre == 0 ? 79 : genre == 1 ? 91 : genre == 2 ? 83 : 87;
-                if (hit > 0) velocity -= 4;
-                if (style == 1 && genre == 0 && hit == 1) velocity -= 12;
-                for (int voice = 0; voice < tones.Length; voice++)
-                {
-                    // Gentle voice leading: alternate between close voicings.
-                    int pitch = basePitch + tones[voice];
-                    if (voice == 0 && shift != 0 && hit > 0) pitch += shift;
-                    // Longer deep-house chords intentionally start softer.
-                    int voiceVelocity = velocity - voice * 4 - (genre == 1 && style == 1 ? 9 : 0);
-                    Note(c, bar, starts[hit], lengths[hit], pitch, voiceVelocity, r);
-                }
+                starts = s == 1 ? new[] { 2, 12 } : s == 2 ? new[] { 3, 7, 11, 14 } : new[] { 0, 9 };
+                lengths = s == 1 ? new[] { 8, 3 } : s == 2 ? new[] { 2, 2, 2, 2 } : new[] { 6, 4 };
+            }
+            else if (g == 1)
+            {
+                starts = s == 1 ? new[] { 0, 12 } : s == 2 ? new[] { 2, 6, 9, 14 } : new[] { 2, 6, 10, 14 };
+                lengths = s == 1 ? new[] { 12, 4 } : s == 2 ? new[] { 2, 2, 2, 2 } : new[] { 2, 2, 2, 2 };
+            }
+            else if (g == 2)
+            {
+                starts = s == 1 ? new[] { 0, 12 } : s == 2 ? new[] { 0, 7, 11 } : new[] { 2, 6, 10, 14 };
+                lengths = s == 1 ? new[] { 9, 3 } : s == 2 ? new[] { 2, 1, 2 } : new[] { 2, 2, 2, 2 };
+            }
+            else if (g == 3)
+            {
+                starts = s == 2 ? new[] { 0, 8 } : s == 1 ? new[] { 0, 3, 7, 11, 14 } : new[] { 0, 7, 11 };
+                lengths = s == 2 ? new[] { 7, 8 } : s == 1 ? new[] { 2, 1, 2, 1, 2 } : new[] { 3, 2, 3 };
+            }
+            else // Funk chords: tight stabs that sit between the bass notes.
+            {
+                starts = s == 0 ? new[] { 0, 6, 10, 14 } :
+                         s == 1 ? new[] { 0, 7, 11 } : new[] { 0, 3, 7, 10, 14 };
+                lengths = s == 0 ? new[] { 2, 2, 2, 1 } :
+                          s == 1 ? new[] { 4, 2, 3 } : new[] { 1, 2, 1, 2, 1 };
+            }
+            int family = Mod(variation - 1, 4);
+            for (int i = 0; i < starts.Length; i++)
+            {
+                // Different variations keep the harmonic family but change timing,
+                // gates and upper-voice accents rather than becoming random clusters.
+                int step = starts[i];
+                if (!pads && family == 1 && i == starts.Length - 1 && step > 0) step--;
+                if (!pads && family == 3 && i == 1 && step < 15) step++;
+                int gate = lengths[i];
+                if (!pads && family == 2) gate = Math.Max(1, gate - 1);
+                if (pads && family == 3 && i == 0) gate = Math.Max(6, gate - 3);
+                int vel = pads ? 69 : g == 2 ? 79 : g == 1 ? 84 : 77;
+                for (int voice = 0; voice < voices.Length; voice++)
+                    Note(c, bar, step, gate,
+                         voices[voice] + (!pads && family == 2 && voice == voices.Length - 1 && i > 0 ? 12 : 0),
+                         vel - voice * 3 - (i % 2) * 5, r);
             }
         }
-
-        private static int Clamp(int n, int min, int max) => Math.Max(min,Math.Min(max,n));
-        private static int Mod(int n,int d) => ((n%d)+d)%d;
+        private static int Clamp(int value, int minimum, int maximum) => Math.Max(minimum, Math.Min(maximum, value));
+        private static int Mod(int value, int count) => ((value % count) + count) % count;
     }
 }
