@@ -41,8 +41,81 @@ namespace ZPunk.DAW
         private ZPunkSongTransport transport;
         private int displayedSlot = -1;
         private const float RailTop = 14f;
-        private const float RailHeight = 150f;
+        private const float RailHeight = 220f;
         private const float HandleHeight = 24f;
+        private readonly List<MeterBinding> liveMeters = new List<MeterBinding>();
+        private float nextMeterUpdate;
+        private readonly float[] sampleBuffer = new float[256];
+        private sealed class MeterBinding
+        {
+            public VisualElement[] leds;
+            public int trackIndex;
+            public int drumIndex;
+            public float held;
+        }
+        private void AddMeter(VisualElement hit, Color color, int trackIndex, int drumIndex)
+        {
+            var meter = new VisualElement();
+            meter.style.position = Position.Absolute;
+            meter.style.left = 0;
+            meter.style.top = RailTop;
+            meter.style.width = 7;
+            meter.style.height = RailHeight;
+            meter.style.flexDirection = FlexDirection.ColumnReverse;
+            meter.style.justifyContent = Justify.SpaceBetween;
+            meter.pickingMode = PickingMode.Ignore;
+            hit.Add(meter);
+            var leds = new VisualElement[18];
+            for (int i = 0; i < leds.Length; ++i)
+            {
+                var led = new VisualElement();
+                led.style.width = 7;
+                led.style.height = 9;
+                led.style.backgroundColor = new Color(.035f, .056f, .079f);
+                led.pickingMode = PickingMode.Ignore;
+                meter.Add(led);
+                leds[i] = led;
+            }
+            liveMeters.Add(new MeterBinding { leds = leds, trackIndex = trackIndex, drumIndex = drumIndex });
+        }
+        private float AudioPeak(AudioSource source)
+        {
+            if (source == null || !source.isPlaying) return 0f;
+            try
+            {
+                source.GetOutputData(sampleBuffer, 0);
+                float peak = 0f;
+                for (int i = 0; i < sampleBuffer.Length; ++i)
+                    peak = Mathf.Max(peak, Mathf.Abs(sampleBuffer[i]));
+                return peak * Mathf.Clamp01(source.volume);
+            }
+            catch (Exception) { return 0f; }
+        }
+        private void RefreshMeters()
+        {
+            // Audio-derived only: no animation or fabricated levels while silent.
+            foreach (var binding in liveMeters)
+            {
+                float peak = 0f;
+                if (drums != null && binding.drumIndex >= 0)
+                    peak = drums.GetDAWDrumPeak(binding.drumIndex);
+                else if (drums != null && binding.trackIndex == 0)
+                {
+                    for (int i = 0; i < 8; ++i)
+                        peak = Mathf.Max(peak, drums.GetDAWDrumPeak(i));
+                }
+                else if (drums != null && binding.trackIndex == 4)
+                    peak = drums.GetDAWChopPeak();
+                // Helm tracks may not expose an AudioSource (native synthesis).
+                // Do not display invented signal for those channels.
+                binding.held = Mathf.Max(peak, binding.held * .72f);
+                int active = binding.held < .0005f ? 0 : Mathf.Clamp(
+                    Mathf.CeilToInt((20f * Mathf.Log10(Mathf.Max(.0001f, binding.held)) + 60f) / 60f * 18f), 0, 18);
+                Color accent = binding.trackIndex >= 0 ? TrackColors[Mathf.Min(binding.trackIndex, 4)] : TrackColors[0];
+                for (int i = 0; i < binding.leds.Length; ++i)
+                    binding.leds[i].style.backgroundColor = i < active ? accent : new Color(.035f, .056f, .079f);
+            }
+        }
         private static readonly string[] DrumNames =
         {
             "KICK", "SNARE", "CLAP", "CLOSED", "OPEN", "RIDE", "RIM", "CRASH"
@@ -79,11 +152,11 @@ namespace ZPunk.DAW
             root.style.paddingRight = 10;
             root.style.paddingTop = 9;
             root.style.backgroundColor = Bg;
-            var heading = Text("MIXER  /  LEVELS", 16, Ink);
+            var heading = Text("MIXER  /  CONSOLE", 16, Ink);
             heading.style.unityFontStyleAndWeight = FontStyle.Bold;
             heading.style.marginBottom = 3;
             root.Add(heading);
-            var sub = Text("VERTICAL FADERS  /  LIVE AUDIO GAIN", 10, Dim);
+            var sub = Text("TRACK LEVELS  /  LIVE AUDIO GAIN", 10, Dim);
             sub.style.marginBottom = 10;
             root.Add(sub);
             mixerScroll = new ScrollView(ScrollViewMode.Vertical);
@@ -159,6 +232,7 @@ namespace ZPunk.DAW
             title.style.marginBottom = 12;
             panel.Add(title);
             var grid = new VisualElement();
+            grid.style.minWidth = 0;
             grid.style.flexDirection = FlexDirection.Row;
             grid.style.flexWrap = Wrap.Wrap;
             grid.style.width = new Length(100, LengthUnit.Percent);
@@ -168,10 +242,9 @@ namespace ZPunk.DAW
                 float width = evt.newRect.width;
                 if (width <= 1f) return;
                 int cols;
-                if (drumsBank)
-                    cols = width >= 680f ? 8 : width >= 335f ? 4 : width >= 255f ? 3 : 2;
-                else
-                    cols = width >= 620f ? 5 : width >= 405f ? 4 : width >= 285f ? 3 : 2;
+                // Main console keeps all five strips together, including phones.
+                // Drum submix uses four strips per bank on phones, eight on tablets.
+                cols = drumsBank ? (width >= 690f ? 8 : 4) : 5;
                 // Percent sizes are recalculated only on viewport resizing, not while dragging.
                 var percent = new Length(100f / cols, LengthUnit.Percent);
                 foreach (var child in grid.Children()) child.style.width = percent;
@@ -249,7 +322,11 @@ namespace ZPunk.DAW
             var cell = new VisualElement();
             cell.style.width = new Length(50, LengthUnit.Percent);
             cell.style.minWidth = 0;
-            cell.style.height = 289;
+            cell.style.height = 370;
+            cell.style.backgroundColor = new Color(.083f, .123f, .175f);
+            cell.style.borderLeftWidth = 1;
+            cell.style.borderLeftColor = new Color(.17f, .25f, .35f);
+            Round(cell, 5);
             cell.style.alignItems = Align.Center;
             cell.style.paddingLeft = 2;
             cell.style.paddingRight = 2;
@@ -263,14 +340,19 @@ namespace ZPunk.DAW
             cell.Add(nameLabel);
 
             var percent = Text("", 11, Ink);
-            percent.style.height = 23;
+            percent.style.height = 29;
+            percent.style.fontSize = 11;
+            percent.style.backgroundColor = new Color(.035f, .071f, .110f);
+            Round(percent, 4);
             percent.style.unityTextAlign = TextAnchor.MiddleCenter;
             cell.Add(percent);
 
-            // Entire 59 x 178 area is touchable, including the white handle.
+            // The meter is independent of the touch-captured fader.
             var hit = new VisualElement();
-            hit.style.width = 59;
-            hit.style.height = 178;
+            hit.style.width = new Length(100, LengthUnit.Percent);
+            hit.style.maxWidth = 80;
+            hit.style.minWidth = 35;
+            hit.style.height = 255;
             hit.style.position = Position.Relative;
             hit.style.flexShrink = 0;
             hit.pickingMode = PickingMode.Position;
@@ -278,7 +360,7 @@ namespace ZPunk.DAW
 
             var rail = new VisualElement();
             rail.style.position = Position.Absolute;
-            rail.style.left = 25;
+            rail.style.left = new Length(55, LengthUnit.Percent);
             rail.style.top = RailTop;
             rail.style.width = 9;
             rail.style.height = RailHeight;
@@ -299,8 +381,8 @@ namespace ZPunk.DAW
 
             var thumb = new VisualElement();
             thumb.style.position = Position.Absolute;
-            thumb.style.left = 9;
-            thumb.style.width = 41;
+            thumb.style.left = new Length(32, LengthUnit.Percent);
+            thumb.style.width = new Length(65, LengthUnit.Percent);
             thumb.style.height = HandleHeight;
             thumb.style.backgroundColor = Ink;
             Round(thumb, 6);
@@ -315,6 +397,8 @@ namespace ZPunk.DAW
             notch.style.backgroundColor = new Color(.26f, .34f, .40f);
             notch.pickingMode = PickingMode.Ignore;
             thumb.Add(notch);
+            int meterTrack = Array.FindIndex(TrackColors, c => c.Equals(color));
+            AddMeter(hit, color, meterTrack, -1);
 
             float value = Mathf.Clamp01(initialValue);
             float lastDelivered = value;
@@ -324,7 +408,8 @@ namespace ZPunk.DAW
                 value = Mathf.Clamp01(v);
                 fill.style.height = new Length(value * 100f, LengthUnit.Percent);
                 thumb.style.top = RailTop + RailHeight * (1f - value) - HandleHeight * .5f;
-                percent.text = Mathf.RoundToInt(value * 100f) + "%";
+                percent.text = value <= .0001f ? "-INF" :
+                    (20f * Mathf.Log10(Mathf.Max(.0001f, value))).ToString("0.0") + " dB";
             };
             Action<bool> publish = force =>
             {
@@ -389,6 +474,7 @@ namespace ZPunk.DAW
                 root.ReleasePointer(activePointer);
             activeFader = null; activePointer = -1;
             faderTargets.Clear();
+            liveMeters.Clear();
             lanes.Clear();
             displayedSlot = projects != null ? projects.CurrentSlot : -1;
             var song = projects != null ? projects.GetSongForArrangementEditor() : null;
@@ -442,6 +528,11 @@ namespace ZPunk.DAW
                     if (app != null && app.Bus != null) app.Bus.SetNormalized(id, v);
                 }, false);
                 var actions = fader.Q<VisualElement>("FaderActions");
+                if (liveMeters.Count > 0)
+                {
+                    liveMeters[liveMeters.Count - 1].trackIndex = -1;
+                    liveMeters[liveMeters.Count - 1].drumIndex = i;
+                }
                 bool muted = i < mutes.Length && mutes[i];
                 Button mute = null;
                 mute = Switch("M", () =>
@@ -467,6 +558,11 @@ namespace ZPunk.DAW
             if (root == null || root.resolvedStyle.display == DisplayStyle.None) return;
             if (activeFader != null || Time.unscaledTime < scrollLockUntil) RestoreScroll();
             if (projects != null && projects.CurrentSlot != displayedSlot) OnShown();
+            if (Time.unscaledTime >= nextMeterUpdate)
+            {
+                nextMeterUpdate = Time.unscaledTime + .055f;
+                RefreshMeters();
+            }
         }
     }
 }

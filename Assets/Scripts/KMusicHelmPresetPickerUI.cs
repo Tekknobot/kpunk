@@ -59,6 +59,7 @@ namespace KMusic
         public HelmController ActiveHelmController => helm;
         public string LastAppliedPresetRelPath { get; private set; }
         public int CurrentPresetIndex => _index;
+        public int SynthPresetCount => _all.Count;
 
         public string CurrentPresetRelPath
         {

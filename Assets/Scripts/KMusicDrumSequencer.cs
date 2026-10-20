@@ -51,6 +51,31 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     // When routeDrumsToMixer is true, we use per-drum AudioSource voice pools (for mixer routing + meters).
     private readonly Dictionary<int, List<AudioSource>> _drumVoicePools = new();
+    private readonly float[] _meterSamples = new float[256];
+    private float GetPeakFromSources(List<AudioSource> sources)
+    {
+        float peak = 0f;
+        if (sources == null) return peak;
+        foreach (var source in sources)
+        {
+            if (source == null || !source.isPlaying) continue;
+            try
+            {
+                source.GetOutputData(_meterSamples, 0);
+                for (int j = 0; j < _meterSamples.Length; j++)
+                    peak = Mathf.Max(peak, Mathf.Abs(_meterSamples[j]));
+            }
+            catch (Exception) { }
+        }
+        return peak;
+    }
+    public float GetDAWDrumPeak(int drumIndex)
+    {
+        return _drumVoicePools.TryGetValue(drumIndex + 1, out var voices)
+            ? GetPeakFromSources(voices) : 0f;
+    }
+    public float GetDAWChopPeak() => GetPeakFromSources(_sampleVoicePool);
+
     private readonly Dictionary<int, int> _drumVoiceCursor = new();
 
     private KMusicApp _app;

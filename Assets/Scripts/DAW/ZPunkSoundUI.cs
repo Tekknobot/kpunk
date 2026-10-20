@@ -486,9 +486,12 @@ namespace ZPunk.DAW
             if (instrumentStatus != null && instrumentStatus.text != status)
                 instrumentStatus.text = status;
             string preset = "NO PRESET";
-            if (selected == TrackKind.Bass && rack != null) preset = rack.BassPresetName;
+            if (selected == TrackKind.Bass && rack != null)
+                preset = rack.BassPresetName + "  (" + (rack.BassPresetCount > 0 ? rack.BassPresetIndex + 1 : 0) + "/" + rack.BassPresetCount + ")";
             else if (selected == TrackKind.Synth && mainPicker != null)
-                preset = DisplayPath(mainPicker.CurrentPresetRelPath);
+                preset = DisplayPath(mainPicker.CurrentPresetRelPath) + "  (" +
+                    (mainPicker.SynthPresetCount > 0 ? mainPicker.CurrentPresetIndex + 1 : 0) +
+                    "/" + mainPicker.SynthPresetCount + ")";
             else if (selected == TrackKind.Pads && padRuntime != null)
                 preset = padRuntime.PresetCount > 0
                     ? DisplayPath(padRuntime.CurrentPresetRelPath) + "  (" + (padRuntime.CurrentPresetIndex + 1) + "/" + padRuntime.PresetCount + ")"
