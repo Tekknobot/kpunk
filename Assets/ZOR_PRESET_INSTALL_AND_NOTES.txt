@@ -1,0 +1,41 @@
+ZPUNK - ZOR HELM PRESET LIBRARY (OCTOBER 2026)
+
+REPLACEMENT LIBRARY. The archive contains ALL Helm category folders, with each
+non-ZOR factory preset replaced by an original, new ZOR synthesizer patch.
+Existing 48 ZOR Bass presets are left byte-for-byte unchanged.
+
+INSTALLATION - IMPORTANT: DO NOT MERGE WITHOUT DELETING OLD PRESETS!
+1. Back up Assets/StreamingAssets/HelmPresets and any projects that reference old patches.
+2. In Unity close the editor if possible before replacing these files.
+3. Delete the CONTENTS of each preset category folder under
+   Assets/StreamingAssets/HelmPresets (Arp/Bass/Chip/Harsh/Keys/Lead/Pad/Percussion/SFX).
+   Keep the category folders and their .meta files.
+4. Copy the *.helm and *.helm.meta files from the matching category folders in
+   this archive to your corresponding category folders.
+5. Replace HelmPresets/presets_index.txt with the supplied index file.
+6. Keep any other non-preset files, including the existing Helm LICENSE.
+7. Reopen Unity, confirm category counts, then audition and rebalance gain on
+   Android/iOS before building for release.
+
+IMPORTANT:
+- Existing project references to removed non-ZOR presets may require a new patch selection.
+- Pad is the actual folder name used by Helm for ZPUNK's PADS instrument.
+- New presets contain only synthesis parameters, no sampled audio and no downloads.
+- The sounds are authored using Helm's compatible JSON settings schema.
+- Format and index are checked. THEY HAVE NOT BEEN AUDITIONED IN UNITY; the
+  musical balance, fidelity, clipping, and parameter response require on-device testing.
+- Some SFX and percussion patches intentionally have percussive tails and pitch dives;
+  others are slow-building or evolving textures.
+- Original ZOR Bass patches' content and original author fields remain intact.
+
+COUNTS:
+  Arp: 7
+  Bass: 48
+  Chip: 8
+  Harsh: 3
+  Keys: 52
+  Lead: 42
+  Pad: 47
+  Percussion: 58
+  SFX: 29
+  TOTAL: 294
