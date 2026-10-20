@@ -67,6 +67,48 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private AudioClip _clip;
     private AudioClip _warpedClip;
+    // The original PCM is analyzed independently of tempo warp and preview pitch.
+    private Coroutine _keyAnalysisJob;
+    private int _keyAnalysisRevision;
+    private bool _keyAnalysisRunning;
+    private ZPunkSampleKeyDetector.Result _sampleKey;
+
+    public bool DawSampleKeyAvailable => _clip != null && !_keyAnalysisRunning && _sampleKey.found;
+    public bool DawSampleKeyAnalyzing => _clip != null && _keyAnalysisRunning;
+    public int DawSampleKeyTonic => _sampleKey.tonic;
+    public bool DawSampleKeyMinor => _sampleKey.minor;
+    public int DawPitchedKeyTonic => ((_sampleKey.tonic + DawPitchSemitones) % 12 + 12) % 12;
+    public string DawSourceKeyText => _clip == null ? "NO SAMPLE" :
+        _keyAnalysisRunning ? "ANALYZING" : _sampleKey.found ?
+        ZPunkSampleKeyDetector.NameFor(_sampleKey.tonic, _sampleKey.minor) : _sampleKey.status;
+    public string DawPitchedKeyText => !DawSampleKeyAvailable ? "UNKNOWN" :
+        ZPunkSampleKeyDetector.NameFor(DawPitchedKeyTonic, _sampleKey.minor);
+    public string DawSampleKeyConfidence => _sampleKey.status;
+
+    private void ResetSampleKey()
+    {
+        _keyAnalysisRevision++;
+        if (_keyAnalysisJob != null) StopCoroutine(_keyAnalysisJob);
+        _keyAnalysisJob = null;
+        _keyAnalysisRunning = false;
+        _sampleKey = new ZPunkSampleKeyDetector.Result { status = "NO TONAL KEY" };
+    }
+
+    private void BeginSampleKeyAnalysis()
+    {
+        ResetSampleKey();
+        if (_clip == null) return;
+        _keyAnalysisRunning = true;
+        int revision = _keyAnalysisRevision;
+        AudioClip source = _clip;
+        _keyAnalysisJob = StartCoroutine(ZPunkSampleKeyDetector.Analyze(source, result =>
+        {
+            if (revision != _keyAnalysisRevision || _clip != source) return;
+            _sampleKey = result;
+            _keyAnalysisRunning = false;
+            _keyAnalysisJob = null;
+        }, () => revision != _keyAnalysisRevision || _clip != source || this == null));
+    }
     private string _clipResourcesPath = null;
     private bool _autoWarpEnabled = true;
     private float _sourceBpm;
@@ -189,6 +231,7 @@ public class KMusicPlayerUI : MonoBehaviour
 #if UNITY_ANDROID && !UNITY_EDITOR
         if (_loadDeviceCoroutine != null) { StopCoroutine(_loadDeviceCoroutine); _loadDeviceCoroutine = null; }
 #endif
+        ResetSampleKey();
         _clip = null;
         _warpedClip = null;
         _clipResourcesPath = null;
@@ -532,6 +575,10 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         EnsureDedicatedPlayerAudioSource();
         BindSamplePitchPreview();
+        // Re-enable may follow a temporary panel/app disable while a sample
+        // remains selected. Restart the cancelled key analysis in that case.
+        if (_clip != null && !_keyAnalysisRunning && !_sampleKey.found)
+            BeginSampleKeyAnalysis();
         // UI initialization and automatic project restore must be silent.
         if (audioSource != null) audioSource.Stop();
 
@@ -788,6 +835,7 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private void OnDisable()
     {
+        ResetSampleKey();
         if (_pitchBus != null && _onPitchBusChanged != null)
             _pitchBus.OnChanged -= _onPitchBusChanged;
         _pitchBus = null;
@@ -1036,6 +1084,7 @@ public class KMusicPlayerUI : MonoBehaviour
     }
     private void OnSourceSampleReady()
     {
+        BeginSampleKeyAnalysis();
         // A sample selection is a load, not a play command. This also prevents
         // a pending auto-warp completion from resuming an old preview.
         if (audioSource != null) audioSource.Stop();

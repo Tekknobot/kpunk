@@ -34,6 +34,8 @@ namespace ZPunk.DAW
         private ScrollView samplerScroll;
         private Label samplerSelectedMarker;
         private Label samplerTitle, samplerWarpLabel, samplerLibraryLabel, samplerPitchLabel;
+        private Label samplerSourceKeyLabel, samplerPitchedKeyLabel, generatorSampleKeyHint, clipSampleKeyReference;
+        private Button generatorSampleKeyButton;
         private Button samplerWarpButton;
         private bool showingSampler;
         private KMusicPlayerUI samplePlayer;
@@ -244,6 +246,11 @@ namespace ZPunk.DAW
             info.style.height = 28;
             info.style.flexShrink = 0;
             root.Add(info);
+            clipSampleKeyReference = Txt("", 11, Accent);
+            clipSampleKeyReference.style.height = 19;
+            clipSampleKeyReference.style.flexShrink = 0;
+            clipSampleKeyReference.style.display = DisplayStyle.None;
+            root.Add(clipSampleKeyReference);
 
             // The names stay on screen while the note grid scrolls horizontally.
             // Both areas share the same vertical scroll position.
@@ -438,12 +445,48 @@ namespace ZPunk.DAW
             pitchRow.Add(Btn("RESET", () => { FindSampler(); samplePlayer?.DawSetPitchSemitones(0); RefreshSampler(); }, 68));
             warpCard.Add(pitchRow);
 
+            var keyArea = new VisualElement();
+            keyArea.style.flexDirection = FlexDirection.Column;
+            keyArea.style.marginTop = 6;
+            keyArea.style.paddingTop = 8;
+            keyArea.style.paddingBottom = 6;
+            keyArea.style.paddingLeft = 7;
+            keyArea.style.paddingRight = 7;
+            keyArea.style.backgroundColor = Surface;
+            keyArea.style.borderTopLeftRadius = 5;
+            keyArea.style.borderTopRightRadius = 5;
+            keyArea.style.borderBottomLeftRadius = 5;
+            keyArea.style.borderBottomRightRadius = 5;
+            samplerSourceKeyLabel = Txt("SOURCE KEY  /  WAITING", 12, Ink);
+            samplerSourceKeyLabel.style.whiteSpace = WhiteSpace.Normal;
+            samplerSourceKeyLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            keyArea.Add(samplerSourceKeyLabel);
+            samplerPitchedKeyLabel = Txt("PITCHED KEY  /  UNKNOWN", 12, Accent);
+            samplerPitchedKeyLabel.style.whiteSpace = WhiteSpace.Normal;
+            samplerPitchedKeyLabel.style.marginTop = 5;
+            keyArea.Add(samplerPitchedKeyLabel);
+            warpCard.Add(keyArea);
+
             samplerLibraryLabel = Txt("SAMPLE LIBRARY",10,Muted);
             samplerLibraryLabel.style.whiteSpace = WhiteSpace.Normal;
             samplerLibraryLabel.style.marginTop = 4;
             warpCard.Add(samplerLibraryLabel);
             samplerPage.Add(warpCard);
-            samplerPage.schedule.Execute(() => { if (showingSampler) RefreshSampler(); }).Every(500);
+            samplerPage.schedule.Execute(() =>
+            {
+                if (showingSampler) RefreshSampler();
+                RefreshClipSampleKeyReference();
+                if (generatorPanel != null && generatorPanel.style.display.value == DisplayStyle.Flex && generatorSampleKeyHint != null)
+                {
+                    FindSampler();
+                    bool available = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
+                    generatorSampleKeyButton?.SetEnabled(available);
+                    generatorSampleKeyHint.text = samplePlayer == null ? "NO SAMPLE" :
+                        samplePlayer.DawSampleKeyAnalyzing ? "ANALYZING SAMPLE" :
+                        available ? samplePlayer.DawPitchedKeyText + " / " + samplePlayer.DawSampleKeyConfidence + " EST." :
+                        "KEY NOT DETECTED";
+                }
+            }).Every(500);
             samplerWave = Box(new Color(.049f,.073f,.105f),4);
             samplerWave.style.height = 145;
             samplerWave.style.flexShrink = 0;
@@ -625,6 +668,32 @@ namespace ZPunk.DAW
             keyRow.Add(Btn("MIN/MAJ",() => { generatorMinor = !generatorMinor; RefreshGeneratorPanel(); },85));
             body.Add(keyRow);
 
+            // Explicit opt-in: importing a sample never silently changes the key
+            // of other tracks or previously saved generations.
+            var sampleKeyRow = new VisualElement();
+            sampleKeyRow.style.flexDirection = FlexDirection.Row;
+            sampleKeyRow.style.alignItems = Align.Center;
+            sampleKeyRow.style.minHeight = 46;
+            sampleKeyRow.style.marginTop = 4;
+            generatorSampleKeyButton = Btn("USE SAMPLE KEY", () =>
+            {
+                FindSampler();
+                if (samplePlayer == null || !samplePlayer.DawSampleKeyAvailable) return;
+                generatorKey = samplePlayer.DawPitchedKeyTonic;
+                generatorMinor = samplePlayer.DawSampleKeyMinor;
+                RefreshGeneratorPanel();
+            }, 132);
+            generatorSampleKeyButton.style.height = 42;
+            generatorSampleKeyButton.style.flexShrink = 0;
+            sampleKeyRow.Add(generatorSampleKeyButton);
+            generatorSampleKeyHint = Txt("NO SAMPLE KEY", 11, Muted);
+            generatorSampleKeyHint.style.flexGrow = 1;
+            generatorSampleKeyHint.style.minWidth = 0;
+            generatorSampleKeyHint.style.whiteSpace = WhiteSpace.Normal;
+            generatorSampleKeyHint.style.marginLeft = 9;
+            sampleKeyRow.Add(generatorSampleKeyHint);
+            body.Add(sampleKeyRow);
+
             body.Add(Txt("LENGTH",10,Muted));
             generatorBarsRow = new VisualElement();
             generatorBarsRow.style.flexDirection = FlexDirection.Row;
@@ -692,6 +761,7 @@ namespace ZPunk.DAW
                 (clip.lengthTicks >= 4 * SongData.TicksPerBar4 ? 4 :
                  clip.lengthTicks >= 2 * SongData.TicksPerBar4 ? 2 : 1);
             generatorVariation++;
+            FindSampler();
             RefreshGeneratorPanel();
             generatorPanel.style.display = DisplayStyle.Flex;
         }
@@ -743,6 +813,14 @@ namespace ZPunk.DAW
                 "READY: " + ZPunkGenreGenerator.Label(generatorGenre, generatorStyle, generatorKey, generatorMinor, chords) +
                 (isSynth && !chords ? " / MELODY" : "");
             generatorKeyLabel.text = ZPunkGenreGenerator.Keys[generatorKey] + (generatorMinor ? " MIN" : " MAJ");
+            FindSampler();
+            bool hasSampleKey = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
+            if (generatorSampleKeyButton != null) generatorSampleKeyButton.SetEnabled(hasSampleKey);
+            if (generatorSampleKeyHint != null)
+                generatorSampleKeyHint.text = samplePlayer == null ? "NO SAMPLE" :
+                    samplePlayer.DawSampleKeyAnalyzing ? "ANALYZING SAMPLE" :
+                    hasSampleKey ? samplePlayer.DawPitchedKeyText + " / " + samplePlayer.DawSampleKeyConfidence + " EST." :
+                    "KEY NOT DETECTED";
             generatorBarsRow.Clear();
             foreach (int count in new[]{1,2,4})
             {
@@ -950,11 +1028,35 @@ namespace ZPunk.DAW
                 int semitones = samplePlayer != null ? samplePlayer.DawPitchSemitones : 0;
                 samplerPitchLabel.text = (semitones > 0 ? "+" : "") + semitones + " ST";
             }
+            if (samplerSourceKeyLabel != null)
+                samplerSourceKeyLabel.text = samplePlayer == null ? "SOURCE KEY  /  NO SAMPLE" :
+                    "SOURCE KEY  /  " + samplePlayer.DawSourceKeyText +
+                    (samplePlayer.DawSampleKeyAvailable ? "  (" + samplePlayer.DawSampleKeyConfidence + " EST.)" : "");
+            if (samplerPitchedKeyLabel != null)
+                samplerPitchedKeyLabel.text = samplePlayer == null ? "PITCHED KEY  /  UNKNOWN" :
+                    "PITCHED KEY  /  " + samplePlayer.DawPitchedKeyText +
+                    "  (" + (samplePlayer.DawPitchSemitones >= 0 ? "+" : "") + samplePlayer.DawPitchSemitones + " ST)";
             if (samplerLibraryLabel != null)
                 samplerLibraryLabel.text = samplePlayer != null ? samplePlayer.DawSampleFolder : "SAMPLE LIBRARY";
             if (samplerSelectedMarker != null)
                 samplerSelectedMarker.text = samplePlayer != null ? samplePlayer.DawSelectedMarkerLabel : "NO MARKER SELECTED";
         }
+        private void RefreshClipSampleKeyReference()
+        {
+            if (clipSampleKeyReference == null) return;
+            FindSampler();
+            bool midiTrack = song != null && song.tracks != null &&
+                trackIndex >= 0 && trackIndex < song.tracks.Count &&
+                (song.tracks[trackIndex].kind == TrackKind.Bass ||
+                 song.tracks[trackIndex].kind == TrackKind.Synth ||
+                 song.tracks[trackIndex].kind == TrackKind.Pads);
+            bool show = midiTrack && samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
+            clipSampleKeyReference.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+            if (show)
+                clipSampleKeyReference.text = "SAMPLE KEY  /  " + samplePlayer.DawPitchedKeyText +
+                    "  (" + samplePlayer.DawSampleKeyConfidence + " EST.)";
+        }
+
         private void ShowSampler(bool value)
         {
             showingSampler = value;
@@ -1577,6 +1679,7 @@ namespace ZPunk.DAW
             if (trackScroller != null)
                 trackScroller.schedule.Execute(() => { if (trackScroller != null) trackScroller.scrollOffset = new Vector2(chipX, 0); }).ExecuteLater(0);
             RefreshKitSelector();
+            RefreshClipSampleKeyReference();
             if (generatorQuickButton != null)
                 generatorQuickButton.SetEnabled(song.tracks[trackIndex].kind != TrackKind.Chops);
             if (title != null) title.text = song.tracks[trackIndex].name.ToUpperInvariant()+"  /  " + (clip != null ? clip.name : "NO CLIP");
