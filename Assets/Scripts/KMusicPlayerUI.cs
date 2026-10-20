@@ -32,7 +32,6 @@ public class KMusicPlayerUI : MonoBehaviour
     private VisualElement _root;
 
     private Button _btnPlay, _btnStop, _btnPrev, _btnNext, _btnLoad, _btnChop, _btnApply;
-    private Button _btnImport;
     private Label _timeLabel, _durLabel, _trackNameLabel;
     private WaveformView _wave;
     private Button _btnSend;
@@ -1235,7 +1234,8 @@ public class KMusicPlayerUI : MonoBehaviour
         ApplyBrowserSafeArea();
         RefreshTrackBrowserList();
         _trackBrowserOverlay.style.display = DisplayStyle.Flex;
-        _trackBrowserSearch?.Focus();
+        // Do not raise the software keyboard until the user taps Search.
+
     }
 
     private void CloseTrackBrowser()
@@ -1267,69 +1267,57 @@ public class KMusicPlayerUI : MonoBehaviour
         _trackBrowserOverlay.style.paddingBottom = 12;
         _trackBrowserOverlay.style.paddingLeft = 12;
         _trackBrowserOverlay.style.paddingRight = 12;
-        _trackBrowserOverlay.style.backgroundColor = new Color(.018f,.033f,.057f,.95f);
+        _trackBrowserOverlay.style.backgroundColor = new Color(.012f,.023f,.040f,.95f);
 
-        var card = new VisualElement();
-        card.name = "TrackBrowserCard";
-        card.AddToClassList("km-card");
-        card.AddToClassList("km-project-card");
+        var card = new VisualElement { name = "TrackBrowserCard" };
         card.AddToClassList("km-track-card");
-        card.style.position = Position.Relative;
-        card.style.left = StyleKeyword.Auto;
-        card.style.top = StyleKeyword.Auto;
-        card.style.right = StyleKeyword.Auto;
-        card.style.bottom = StyleKeyword.Auto;
-        card.style.flexGrow = 0;
-        card.style.flexShrink = 1;
-        card.style.width = Length.Percent(100);
-        card.style.maxWidth = 520;
-        card.style.height = Length.Percent(88);
-        card.style.maxHeight = 750;
-        card.style.minHeight = 220;
-        card.style.paddingLeft = 12;
-        card.style.paddingRight = 12;
-        card.style.paddingTop = 12;
-        card.style.paddingBottom = 12;
-        card.style.backgroundColor = new Color(.075f,.112f,.160f);
-        card.style.borderTopLeftRadius = 6;
-        card.style.borderTopRightRadius = 6;
-        card.style.borderBottomLeftRadius = 6;
-        card.style.borderBottomRightRadius = 6;
+        ZPunkOverlaySkin.Card(card, 600, 840);
 
-        var header = new VisualElement();
-        header.AddToClassList("km-track-header");
+        var section = new Label("SAMPLER  /  LIBRARY");
+        section.style.fontSize = 11;
+        section.style.color = ZPunkOverlaySkin.Accent;
+        section.style.marginBottom = 5;
+        section.style.flexShrink = 0;
+        card.Add(section);
 
-        var title = new Label("LOAD SAMPLE");
-        title.AddToClassList("km-project-title");
+        var title = new Label("BROWSE SAMPLES");
         title.AddToClassList("km-track-title");
-        title.style.flexGrow = 1f;
+        ZPunkOverlaySkin.Heading(title);
+        title.style.marginBottom = 5;
+        card.Add(title);
 
-        var closeBtn = new Button(CloseTrackBrowser) { text = "CLOSE" };
-        closeBtn.AddToClassList("km-pillbtn");
-        closeBtn.AddToClassList("km-project-toolbar-btn");
-        closeBtn.AddToClassList("km-track-close");
+        var subtitle = new Label("Choose a sample for CHOPS");
+        subtitle.style.fontSize = 12;
+        subtitle.style.color = ZPunkOverlaySkin.Muted;
+        subtitle.style.marginBottom = 12;
+        subtitle.style.flexShrink = 0;
+        card.Add(subtitle);
 
-        _btnImport = new Button(BeginImportSample) { text = "IMPORT" };
-        _btnImport.AddToClassList("km-pillbtn");
-        _btnImport.AddToClassList("km-project-toolbar-btn");
-        _btnImport.AddToClassList("km-track-import");
-
+        var header = new VisualElement { name = "ZPunkSampleBrowserActions" };
+        header.AddToClassList("km-track-header");
         header.style.flexDirection = FlexDirection.Row;
         header.style.alignItems = Align.Center;
-        header.style.height = 48;
         header.style.flexShrink = 0;
-        title.style.fontSize = 16;
-        title.style.color = new Color(.91f,.95f,.99f);
-        _btnImport.style.height = 36;
-        _btnImport.style.minWidth = 66;
-        _btnImport.style.flexShrink = 0;
-        _btnImport.style.marginRight = 5;
-        closeBtn.style.height = 36;
-        closeBtn.style.minWidth = 65;
-        closeBtn.style.flexShrink = 0;
-        header.Add(title);
-        header.Add(_btnImport);
+        header.style.marginBottom = 11;
+
+        // Import stays accessible from the sampler workspace. This dialog is
+        // only for choosing existing samples, so it needs one dismissal action.
+        var closeBtn = new Button(CloseTrackBrowser) { text = "CLOSE" };
+        closeBtn.AddToClassList("km-track-close");
+        ZPunkOverlaySkin.Button(closeBtn);
+        closeBtn.style.flexGrow = 0;
+        closeBtn.style.minWidth = 100;
+        closeBtn.style.width = 110;
+        header.style.justifyContent = Justify.FlexEnd;
         header.Add(closeBtn);
+        card.Add(header);
+
+        var searchTitle = new Label("SEARCH LIBRARY");
+        searchTitle.style.fontSize = 11;
+        searchTitle.style.color = ZPunkOverlaySkin.Muted;
+        searchTitle.style.marginBottom = 5;
+        searchTitle.style.flexShrink = 0;
+        card.Add(searchTitle);
 
         _trackBrowserSearch = new TextField();
         _trackBrowserSearch.name = "TrackSearchField";
@@ -1337,46 +1325,26 @@ public class KMusicPlayerUI : MonoBehaviour
         _trackBrowserSearch.value = "";
         _trackBrowserSearch.AddToClassList("km-project-rename-field");
         _trackBrowserSearch.AddToClassList("km-track-search");
-        // Use dark text on a light input surface, independent of Unity's theme.
-        var searchInk = new Color(.87f,.94f,.98f);
-        var searchSurface = new Color(.105f,.165f,.235f);
-        _trackBrowserSearch.style.color = searchInk;
-        _trackBrowserSearch.style.backgroundColor = searchSurface;
-        _trackBrowserSearch.RegisterCallback<AttachToPanelEvent>(_ =>
-        {
-            var inner = _trackBrowserSearch.Q<VisualElement>(className: "unity-text-input");
-            if (inner != null)
-            {
-                inner.style.color = searchInk;
-                inner.style.backgroundColor = searchSurface;
-            }
-        });
-        _trackBrowserSearch.style.height = 40;
-        _trackBrowserSearch.style.minHeight = 40;
-        _trackBrowserSearch.style.maxHeight = 40;
-        _trackBrowserSearch.style.marginTop = 5;
-        _trackBrowserSearch.style.marginBottom = 8;
+        ZPunkOverlaySkin.TextInput(_trackBrowserSearch);
+        _trackBrowserSearch.style.marginTop = 0;
+        _trackBrowserSearch.style.marginBottom = 10;
         _trackBrowserSearch.RegisterValueChangedCallback(_ => RefreshTrackBrowserList());
 
         _trackBrowserCountLabel = new Label("0 items");
         _trackBrowserCountLabel.AddToClassList("km-track-count");
-        _trackBrowserCountLabel.style.fontSize = 10;
-        _trackBrowserCountLabel.style.color = new Color(.57f,.76f,.84f);
-        _trackBrowserCountLabel.style.marginBottom = 7;
+        _trackBrowserCountLabel.style.fontSize = 12;
+        _trackBrowserCountLabel.style.color = ZPunkOverlaySkin.Muted;
+        _trackBrowserCountLabel.style.marginBottom = 8;
 
         _trackBrowserList = new ScrollView();
         _trackBrowserList.name = "TrackScroll";
         _trackBrowserList.AddToClassList("km-project-scroll");
         _trackBrowserList.AddToClassList("km-track-scroll");
-        _trackBrowserList.style.flexGrow = 1f;
-        _trackBrowserList.style.minHeight = 0;
-        _trackBrowserList.verticalScrollerVisibility = ScrollerVisibility.Auto;
-        _trackBrowserList.style.flexShrink = 1;
+        _trackBrowserList.style.overflow = Overflow.Hidden;
 
-        card.Add(header);
         card.Add(_trackBrowserSearch);
         card.Add(_trackBrowserCountLabel);
-        card.Add(_trackBrowserList);
+        card.Add(ZPunkOverlaySkin.ScrollWithRail(_trackBrowserList));
         _trackBrowserOverlay.Add(card);
         page.Add(_trackBrowserOverlay);
     }
@@ -1406,35 +1374,65 @@ public class KMusicPlayerUI : MonoBehaviour
                 CloseTrackBrowser();
             });
             row.AddToClassList("km-track-row");
-            row.style.minHeight = 64;
+            row.style.minHeight = 66;
             row.style.height = StyleKeyword.Auto;
-            row.style.marginBottom = 6;
-            row.style.paddingLeft = 10;
-            row.style.paddingRight = 10;
-            row.style.paddingTop = 7;
-            row.style.paddingBottom = 7;
-            row.style.borderTopLeftRadius = 4;
-            row.style.borderTopRightRadius = 4;
-            row.style.borderBottomLeftRadius = 4;
-            row.style.borderBottomRightRadius = 4;
-            row.style.backgroundColor = new Color(.125f,.175f,.237f);
+            row.style.flexDirection = FlexDirection.Column;
+            row.style.alignItems = Align.Stretch;
+            row.style.justifyContent = Justify.Center;
+            row.style.marginBottom = 7;
+            row.style.paddingLeft = 11;
+            row.style.paddingRight = 11;
+            row.style.paddingTop = 10;
+            row.style.paddingBottom = 10;
+            row.style.borderLeftWidth = item.IsCurrent ? 3 : 1;
+            row.style.borderLeftColor = item.IsCurrent ? ZPunkOverlaySkin.Accent : ZPunkOverlaySkin.Line;
+            row.style.borderTopLeftRadius = 7;
+            row.style.borderTopRightRadius = 7;
+            row.style.borderBottomLeftRadius = 7;
+            row.style.borderBottomRightRadius = 7;
+            row.style.backgroundColor = item.IsCurrent ?
+                new Color(.105f,.212f,.225f) : ZPunkOverlaySkin.Panel;
             if (item.IsCurrent)
                 row.AddToClassList("km-track-row--current");
 
-            var title = new Label(item.IsCurrent ? "● " + item.Title : item.Title);
-            title.AddToClassList("km-track-row-title");
-            title.style.fontSize = 13;
-            title.style.color = new Color(.91f,.95f,.99f);
-            title.style.whiteSpace = WhiteSpace.Normal;
+            var titleRow = new VisualElement();
+            titleRow.style.flexDirection = FlexDirection.Row;
+            titleRow.style.alignItems = Align.Center;
+            titleRow.style.minWidth = 0;
+            var itemTitle = new Label(item.Title);
+            itemTitle.AddToClassList("km-track-row-title");
+            itemTitle.style.flexGrow = 1;
+            itemTitle.style.flexShrink = 1;
+            itemTitle.style.minWidth = 0;
+            itemTitle.style.fontSize = 14;
+            itemTitle.style.color = ZPunkOverlaySkin.Ink;
+            itemTitle.style.whiteSpace = WhiteSpace.NoWrap;
+            itemTitle.style.overflow = Overflow.Hidden;
+            itemTitle.style.textOverflow = TextOverflow.Ellipsis;
+            titleRow.Add(itemTitle);
+            if (item.IsCurrent)
+            {
+                var inUse = new Label("IN USE");
+                inUse.style.fontSize = 10;
+                inUse.style.color = ZPunkOverlaySkin.Accent;
+                inUse.style.marginLeft = 7;
+                inUse.style.flexShrink = 0;
+                titleRow.Add(inUse);
+            }
+            row.Add(titleRow);
 
-            var subtitle = new Label(item.Subtitle ?? string.Empty);
-            subtitle.AddToClassList("km-track-row-subtitle");
-            subtitle.style.fontSize = 10;
-            subtitle.style.color = new Color(.61f,.73f,.81f);
-
-            row.Add(title);
             if (!string.IsNullOrEmpty(item.Subtitle))
-                row.Add(subtitle);
+            {
+                var detail = new Label(item.Subtitle);
+                detail.AddToClassList("km-track-row-subtitle");
+                detail.style.fontSize = 12;
+                detail.style.color = ZPunkOverlaySkin.Muted;
+                detail.style.whiteSpace = WhiteSpace.NoWrap;
+                detail.style.overflow = Overflow.Hidden;
+                detail.style.textOverflow = TextOverflow.Ellipsis;
+                detail.style.marginTop = 4;
+                row.Add(detail);
+            }
             _trackBrowserList.Add(row);
         }
 
@@ -1443,8 +1441,13 @@ public class KMusicPlayerUI : MonoBehaviour
 
         if (shown == 0)
         {
-            var empty = new Label("No samples found.");
+            var empty = new Label("NO SAMPLES FOUND. CLEAR THE SEARCH OR ADD SAMPLES FROM THE SAMPLER.");
             empty.AddToClassList("km-track-empty");
+            empty.style.fontSize = 12;
+            empty.style.color = ZPunkOverlaySkin.Muted;
+            empty.style.paddingTop = 18;
+            empty.style.paddingBottom = 18;
+            empty.style.whiteSpace = WhiteSpace.Normal;
             _trackBrowserList.Add(empty);
         }
     }

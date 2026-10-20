@@ -181,44 +181,38 @@ public sealed class KMusicProjectManager : MonoBehaviour
         _modal.style.top = 0;
         _modal.style.bottom = 0;
         _modal.style.display = DisplayStyle.None;
-        _modal.style.backgroundColor = new Color(.018f, .027f, .047f, .89f);
+        _modal.style.backgroundColor = new Color(.012f, .023f, .040f, .95f);
+        _modal.style.alignItems = Align.Center;
+        _modal.style.justifyContent = Justify.Center;
+        _modal.style.paddingLeft = 12;
+        _modal.style.paddingRight = 12;
+        _modal.style.paddingTop = 12;
+        _modal.style.paddingBottom = 12;
         _modal.pickingMode = PickingMode.Position;
 
-        var card = new VisualElement();
+        var card = new VisualElement { name = "ZPunkProjectCard" };
         card.AddToClassList("km-project-card");
-        card.style.position = Position.Absolute;
-        card.style.left = 12;
-        card.style.right = 12;
-        card.style.minWidth = 0;
-        card.style.overflow = Overflow.Hidden;
-        card.style.top = new Length(7,LengthUnit.Percent);
-        card.style.bottom = new Length(7,LengthUnit.Percent);
-        card.style.backgroundColor = new Color(.072f, .106f, .15f, 1f);
-        card.style.borderTopWidth = 1;
-        card.style.borderBottomWidth = 1;
-        card.style.borderLeftWidth = 1;
-        card.style.borderRightWidth = 1;
-        card.style.borderTopColor = new Color(.23f,.32f,.41f);
-        card.style.borderBottomColor = new Color(.23f,.32f,.41f);
-        card.style.borderLeftColor = new Color(.23f,.32f,.41f);
-        card.style.borderRightColor = new Color(.23f,.32f,.41f);
-        card.style.borderTopLeftRadius = 7;
-        card.style.borderTopRightRadius = 7;
-        card.style.borderBottomLeftRadius = 7;
-        card.style.borderBottomRightRadius = 7;
-        card.style.paddingLeft = 13;
-        card.style.paddingRight = 13;
-        card.style.paddingTop = 15;
-        card.style.paddingBottom = 12;
-        card.style.flexDirection = FlexDirection.Column;
+        ZPunkOverlaySkin.Card(card, 600, 840);
 
-        _modalTitle = new Label("PROJECTS");
+        var section = new Label("FILES  /  PROJECTS");
+        section.style.fontSize = 11;
+        section.style.color = ZPunkOverlaySkin.Accent;
+        section.style.marginBottom = 5;
+        section.style.flexShrink = 0;
+        card.Add(section);
+
+        _modalTitle = new Label("PROJECT LIBRARY");
         _modalTitle.AddToClassList("km-project-title");
-        _modalTitle.style.unityFontStyleAndWeight = FontStyle.Bold;
-        _modalTitle.style.fontSize = 20;
-        _modalTitle.style.color = new Color(.89f,.94f,.99f);
-        _modalTitle.style.marginBottom = 10;
+        ZPunkOverlaySkin.Heading(_modalTitle);
+        _modalTitle.style.marginBottom = 5;
         card.Add(_modalTitle);
+
+        var subtitle = new Label("Manage saved songs and project slots");
+        subtitle.style.fontSize = 12;
+        subtitle.style.color = ZPunkOverlaySkin.Muted;
+        subtitle.style.marginBottom = 12;
+        subtitle.style.flexShrink = 0;
+        card.Add(subtitle);
 
         var row = new VisualElement();
         row.AddToClassList("km-project-toolbar");
@@ -228,28 +222,19 @@ public sealed class KMusicProjectManager : MonoBehaviour
         row.style.marginBottom = 8;
         row.style.minHeight = 40;
 
-        var saveBtn = new Button(() => { SaveProject(CurrentSlot); HideModal(); }) { text = "SAVE" };
-        saveBtn.AddToClassList("km-pillbtn");
+        var saveBtn = new Button(() => { SaveProject(CurrentSlot); HideModal(); }) { text = "SAVE CURRENT" };
         saveBtn.AddToClassList("km-project-toolbar-btn");
-        saveBtn.style.height=40;
-        saveBtn.style.flexGrow=1;
-        saveBtn.style.marginRight=6;
-        saveBtn.style.borderTopLeftRadius=3;
-        saveBtn.style.borderTopRightRadius=3;
-        saveBtn.style.borderBottomLeftRadius=3;
-        saveBtn.style.borderBottomRightRadius=3;
+        ZPunkOverlaySkin.Button(saveBtn, true);
+        saveBtn.style.flexGrow = 1;
+        saveBtn.style.minWidth = 0;
+        saveBtn.style.marginRight = 6;
         row.Add(saveBtn);
 
         var closeBtn = new Button(HideModal) { text = "CLOSE" };
-        closeBtn.AddToClassList("km-pillbtn");
         closeBtn.AddToClassList("km-project-toolbar-btn");
-        closeBtn.AddToClassList("km-project-toolbar-btn--secondary");
-        closeBtn.style.height=40;
-        closeBtn.style.flexGrow=1;
-        closeBtn.style.borderTopLeftRadius=3;
-        closeBtn.style.borderTopRightRadius=3;
-        closeBtn.style.borderBottomLeftRadius=3;
-        closeBtn.style.borderBottomRightRadius=3;
+        ZPunkOverlaySkin.Button(closeBtn);
+        closeBtn.style.flexGrow = 1;
+        closeBtn.style.minWidth = 0;
         row.Add(closeBtn);
         card.Add(row);
 
@@ -262,8 +247,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         _modalList.contentContainer.style.width = Length.Percent(100);
         _modalList.contentContainer.style.minWidth = 0;
         _modalList.style.overflow = Overflow.Hidden;
-        _modalList.verticalScrollerVisibility=ScrollerVisibility.Hidden;
-        card.Add(_modalList);
+        card.Add(ZPunkOverlaySkin.ScrollWithRail(_modalList));
 
         _modal.Add(card);
         root.Add(_modal);
@@ -491,8 +475,27 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private void ShowModal()
     {
         if (_modal == null || _modalList == null) return;
+        ApplyProjectSafeArea();
         BuildProjectList();
         _modal.style.display = DisplayStyle.Flex;
+    }
+
+    private void ApplyProjectSafeArea()
+    {
+        if (_modal == null || doc == null || doc.rootVisualElement == null ||
+            Screen.width <= 0 || Screen.height <= 0) return;
+        var root = doc.rootVisualElement;
+        float width = root.resolvedStyle.width;
+        float height = root.resolvedStyle.height;
+        if (float.IsNaN(width) || width <= 1) width = Screen.width;
+        if (float.IsNaN(height) || height <= 1) height = Screen.height;
+        Rect safe = Screen.safeArea;
+        float sx = width / Screen.width;
+        float sy = height / Screen.height;
+        _modal.style.left = 6f + safe.xMin * sx;
+        _modal.style.right = 6f + (Screen.width - safe.xMax) * sx;
+        _modal.style.top = 6f + (Screen.height - safe.yMax) * sy;
+        _modal.style.bottom = 6f + safe.yMin * sy;
     }
 
     private void HideModal()
@@ -542,17 +545,19 @@ public sealed class KMusicProjectManager : MonoBehaviour
             row.style.width = Length.Percent(100);
             row.style.minWidth = 0;
             row.style.flexShrink = 0;
-            row.style.marginBottom = 7;
-            row.style.paddingLeft = 9;
-            row.style.paddingRight = 9;
-            row.style.paddingTop = 9;
-            row.style.paddingBottom = 9;
-            row.style.borderTopLeftRadius = 4;
-            row.style.borderTopRightRadius = 4;
-            row.style.borderBottomLeftRadius = 4;
-            row.style.borderBottomRightRadius = 4;
+            row.style.marginBottom = 8;
+            row.style.paddingLeft = 11;
+            row.style.paddingRight = 11;
+            row.style.paddingTop = 12;
+            row.style.paddingBottom = 11;
+            row.style.borderLeftWidth = slot == CurrentSlot ? 3 : 1;
+            row.style.borderLeftColor = slot == CurrentSlot ? ZPunkOverlaySkin.Accent : ZPunkOverlaySkin.Line;
+            row.style.borderTopLeftRadius = 7;
+            row.style.borderTopRightRadius = 7;
+            row.style.borderBottomLeftRadius = 7;
+            row.style.borderBottomRightRadius = 7;
             row.style.backgroundColor = slot == CurrentSlot ?
-                new Color(.12f,.24f,.26f,1f) : new Color(.10f,.145f,.205f,1f);
+                new Color(.105f,.212f,.225f,1f) : ZPunkOverlaySkin.Panel;
 
             var headerRow = new VisualElement();
             headerRow.AddToClassList("km-project-row-header");
@@ -564,17 +569,23 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
             var slotLabel = new Label(GetProjectDisplayName(slot));
             slotLabel.AddToClassList("km-project-slot");
-            slotLabel.style.fontSize=13;
+            slotLabel.style.fontSize=15;
             slotLabel.style.flexGrow = 1;
             slotLabel.style.minWidth = 0;
             slotLabel.style.whiteSpace = WhiteSpace.Normal;
             slotLabel.style.color=new Color(.92f,.97f,.99f);
             slotLabel.style.unityFontStyleAndWeight=FontStyle.Bold;
             headerRow.Add(slotLabel);
+            var state = new Label(slot == CurrentSlot ? "CURRENT" : !has ? "EMPTY" : !compatible ? "LEGACY" : "SAVED");
+            state.style.fontSize = 10;
+            state.style.color = slot == CurrentSlot ? ZPunkOverlaySkin.Accent : ZPunkOverlaySkin.Muted;
+            state.style.marginLeft = 8;
+            state.style.flexShrink = 0;
+            headerRow.Add(state);
 
             string desc;
             if (!has)
-                desc = $"Project {slot:000} • Empty slot ready for a new project.";
+                desc = $"Project {slot:000} - Empty slot ready for a new project.";
             else if (!compatible)
                 desc = $"Project {slot:000} - Older/incompatible file, preserved. Load starts a fresh workspace.";
             else if (slot == CurrentSlot)
@@ -584,8 +595,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
             var label = new Label(desc);
             label.AddToClassList("km-project-name");
-            label.style.fontSize=10;
-            label.style.color=new Color(.60f,.71f,.80f);
+            label.style.fontSize=12;
+            label.style.marginTop=4;
+            label.style.color=ZPunkOverlaySkin.Muted;
             label.style.whiteSpace=WhiteSpace.Normal;
             row.Add(label);
 
@@ -617,27 +629,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
                     renameField.style.flexGrow = 1;
                     renameField.style.minWidth = 0;
                     renameField.style.marginRight = 6;
-                    renameField.style.height=36;
-                    renameField.style.minHeight=36;
-                    renameField.style.paddingLeft=5;
-                    renameField.style.paddingRight=3;
-                    renameField.style.fontSize=12;
-                    // TextField contains a nested text-input element. Style both
-                    // levels with dark ink on a light field so typed names never
-                    // disappear as white text on Unity's default white input.
-                    Color inputInk = new Color(.055f,.09f,.14f);
-                    Color inputSurface = new Color(.88f,.93f,.97f);
-                    renameField.style.color = inputInk;
-                    renameField.style.backgroundColor = inputSurface;
-                    renameField.RegisterCallback<AttachToPanelEvent>(_ =>
-                    {
-                        var inner = renameField.Q<VisualElement>(className: "unity-text-input");
-                        if (inner != null)
-                        {
-                            inner.style.color = inputInk;
-                            inner.style.backgroundColor = inputSurface;
-                        }
-                    });
+                    // Dark, legible input styling also applies to the inner Unity text field.
+                    ZPunkOverlaySkin.TextInput(renameField);
                     renameRow.Add(renameField);
 
                     var btnRename = new Button(() =>
@@ -649,14 +642,10 @@ public sealed class KMusicProjectManager : MonoBehaviour
                     btnRename.AddToClassList("km-pillbtn");
                     btnRename.AddToClassList("km-project-action-btn");
                     btnRename.AddToClassList("km-project-rename-btn");
+                    ZPunkOverlaySkin.Button(btnRename);
                     btnRename.style.flexShrink = 0;
-                    btnRename.style.width = 76;
-                    btnRename.style.minWidth = 76;
-                    btnRename.style.borderTopLeftRadius=3;
-                    btnRename.style.borderTopRightRadius=3;
-                    btnRename.style.borderBottomLeftRadius=3;
-                    btnRename.style.borderBottomRightRadius=3;
-                    btnRename.style.height=36;
+                    btnRename.style.minWidth = 82;
+                    btnRename.style.width = 82;
                     renameRow.Add(btnRename);
 
                     row.Add(renameRow);
@@ -672,14 +661,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 { text = "LOAD" };
                 btnLoad.AddToClassList("km-pillbtn");
                 btnLoad.AddToClassList("km-project-action-btn");
+                ZPunkOverlaySkin.Button(btnLoad, true, false);
                 btnLoad.style.flexGrow = 1;
-                btnLoad.style.height = 37;
-                btnLoad.style.minWidth=64;
-                btnLoad.style.fontSize=10;
-                btnLoad.style.borderTopLeftRadius=3;
-                btnLoad.style.borderTopRightRadius=3;
-                btnLoad.style.borderBottomLeftRadius=3;
-                btnLoad.style.borderBottomRightRadius=3;
+                btnLoad.style.minWidth = 0;
+                btnLoad.style.flexShrink = 1;
+                btnLoad.style.marginRight = 6;
                 btnRow.Add(btnLoad);
 
                 var btnNoSave = new Button(() =>
@@ -692,14 +678,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 btnNoSave.AddToClassList("km-pillbtn");
                 btnNoSave.AddToClassList("km-project-action-btn");
                 btnNoSave.AddToClassList("km-project-action-btn--secondary");
+                ZPunkOverlaySkin.Button(btnNoSave, false, false);
                 btnNoSave.style.flexGrow = 1;
-                btnNoSave.style.height = 37;
-                btnNoSave.style.minWidth=86;
-                btnNoSave.style.fontSize=10;
-                btnNoSave.style.borderTopLeftRadius=3;
-                btnNoSave.style.borderTopRightRadius=3;
-                btnNoSave.style.borderBottomLeftRadius=3;
-                btnNoSave.style.borderBottomRightRadius=3;
+                btnNoSave.style.minWidth = 0;
+                btnNoSave.style.flexShrink = 1;
+                btnNoSave.style.marginRight = 6;
                 btnRow.Add(btnNoSave);
 
                 var btnDelete = new Button(() =>
@@ -710,14 +693,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 btnDelete.AddToClassList("km-pillbtn");
                 btnDelete.AddToClassList("km-pillbtn--danger");
                 btnDelete.AddToClassList("km-project-action-btn");
+                ZPunkOverlaySkin.Button(btnDelete, false, true);
                 btnDelete.style.flexGrow = 1;
-                btnDelete.style.height = 37;
-                btnDelete.style.minWidth=58;
-                btnDelete.style.fontSize=10;
-                btnDelete.style.borderTopLeftRadius=3;
-                btnDelete.style.borderTopRightRadius=3;
-                btnDelete.style.borderBottomLeftRadius=3;
-                btnDelete.style.borderBottomRightRadius=3;
+                btnDelete.style.minWidth = 0;
+                btnDelete.style.flexShrink = 1;
+                btnDelete.style.marginRight = 0;
                 btnRow.Add(btnDelete);
             }
             else
@@ -733,12 +713,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 { text = "CREATE" };
                 btnCreate.AddToClassList("km-pillbtn");
                 btnCreate.AddToClassList("km-project-action-btn");
+                ZPunkOverlaySkin.Button(btnCreate, true, false);
                 btnCreate.style.flexGrow = 1;
-                btnCreate.style.height = 37;
-                btnCreate.style.borderTopLeftRadius=3;
-                btnCreate.style.borderTopRightRadius=3;
-                btnCreate.style.borderBottomLeftRadius=3;
-                btnCreate.style.borderBottomRightRadius=3;
+                btnCreate.style.minWidth = 0;
+                btnCreate.style.flexShrink = 1;
+                btnCreate.style.marginRight = 0;
                 btnRow.Add(btnCreate);
             }
 

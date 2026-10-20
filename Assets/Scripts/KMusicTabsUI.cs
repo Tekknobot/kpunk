@@ -14,7 +14,7 @@ using ZPunk.DAW;
 public sealed class KMusicTabsUI : MonoBehaviour
 {
     [SerializeField] private UIDocument doc;
-    private VisualElement uiRoot, pages, shell, header, headerRow, menu, dock;
+    private VisualElement uiRoot, pages, shell, header, headerRow, menu, menuBody, dock;
     private VisualElement pageArrangement, pageEditor, pageSound, pageMixer;
     private VisualElement context, content;
     private Label heading, subheading, projectInfo, headerTitle, headerSignature;
@@ -286,17 +286,32 @@ public sealed class KMusicTabsUI : MonoBehaviour
         menu.style.position=Position.Relative;
         menu.style.width=new Length(100,LengthUnit.Percent);
         menu.style.height=0;
+        menu.style.minHeight=0;
+        menu.style.flexShrink=0;
         menu.style.overflow=Overflow.Hidden;
         menu.style.marginTop=0;
         menu.style.paddingLeft=12;
         menu.style.paddingRight=12;
         menu.style.paddingTop=12;
         menu.style.paddingBottom=10;
-        menu.style.backgroundColor=new Color(.115f,.153f,.211f);
-        menu.style.borderTopLeftRadius=4;
-        menu.style.borderTopRightRadius=4;
-        menu.style.borderBottomLeftRadius=4;
-        menu.style.borderBottomRightRadius=4;
+        menu.style.backgroundColor=new Color(.075f,.112f,.158f);
+        menu.style.borderTopLeftRadius=7;
+        menu.style.borderTopRightRadius=7;
+        menu.style.borderBottomLeftRadius=7;
+        menu.style.borderBottomRightRadius=7;
+        // Project menu is an expandable inline panel, NOT a scrolling modal.
+        // Never clip the Close Menu action behind a nested viewport.
+        menuBody = new VisualElement { name = "ZPunkProjectMenuBody" };
+        menuBody.style.flexDirection = FlexDirection.Column;
+        menuBody.style.flexShrink = 0;
+        menuBody.style.minWidth = 0;
+        menuBody.style.width = Length.Percent(100);
+        menuBody.style.paddingBottom = 4;
+        menu.Add(menuBody);
+        var projectSection = Label("PROJECT / ACTIONS",12,Accent);
+        projectSection.style.unityFontStyleAndWeight=FontStyle.Bold;
+        projectSection.style.marginBottom=8;
+        menuBody.Add(projectSection);
         if(projectInfo!=null)
         {
             projectInfo.RemoveFromHierarchy();
@@ -305,13 +320,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
             projectInfo.style.fontSize=11;
             projectInfo.style.height=35;
             projectInfo.style.marginBottom=8;
-            menu.Add(projectInfo);
+            menuBody.Add(projectInfo);
         }
         if(preset!=null){preset.RemoveFromHierarchy();preset.style.display=DisplayStyle.None;}
         var projectActions=new VisualElement { name="ZPunkProjectActions" };
         projectActions.style.flexDirection=FlexDirection.Row;
-        projectActions.style.height=43;
-        projectActions.style.marginBottom=7;
+        projectActions.style.height=54;
+        projectActions.style.minHeight=54;
+        projectActions.style.marginBottom=8;
         projectActions.style.alignItems=Align.Center;
         if(newer!=null)
         {
@@ -332,14 +348,15 @@ public sealed class KMusicTabsUI : MonoBehaviour
             open.style.minWidth=0;
             projectActions.Add(open);
         }
-        menu.Add(projectActions);
+        menuBody.Add(projectActions);
         var saveItem=Button("SAVE PROJECT",()=>{Save();SetMenuOpen(false);});
-        StyleMenuItem(saveItem);menu.Add(saveItem);
+        StyleMenuItem(saveItem);menuBody.Add(saveItem);
         // The header grows to reveal this panel. It does not overlay music controls.
         var exportRow=new VisualElement{name="ZPunkExportActions"};
         exportRow.style.flexDirection=FlexDirection.Row;
-        exportRow.style.height=46;
-        exportRow.style.marginBottom=6;
+        exportRow.style.height=54;
+        exportRow.style.minHeight=54;
+        exportRow.style.marginBottom=7;
         exportWavButton=Button("EXPORT WAV",ExportWav);
         exportMidiButton=Button("EXPORT MIDI",ExportMidi);
         StyleMenuItem(exportWavButton); StyleMenuItem(exportMidiButton);
@@ -355,15 +372,15 @@ public sealed class KMusicTabsUI : MonoBehaviour
         exportWavButton.style.fontSize=12;
         exportMidiButton.style.fontSize=12;
         exportRow.Add(exportWavButton); exportRow.Add(exportMidiButton);
-        menu.Add(exportRow);
+        menuBody.Add(exportRow);
         exportStatus=Label("WAV: real-time playback  /  MIDI: arrangement notes",11,Dim);
         exportStatus.style.height=27;
         exportStatus.style.whiteSpace=WhiteSpace.Normal;
         exportStatus.style.flexShrink=0;
-        menu.Add(exportStatus);
+        menuBody.Add(exportStatus);
         var closeProject=Button("CLOSE MENU",()=>SetMenuOpen(false));
         StyleMenuItem(closeProject);
-        menu.Add(closeProject);
+        menuBody.Add(closeProject);
         // Menu expands below the one-row header, never inside it.
         uiRoot.Insert(1,menu);
 
@@ -426,15 +443,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void StyleMenuItem(Button b)
     {
-        b.style.height=46;
-        b.style.marginBottom=6;
-        b.style.backgroundColor=NavBg;
-        b.style.fontSize=13;
-        b.style.color=Ink;
-        b.style.borderTopLeftRadius=3;
-        b.style.borderTopRightRadius=3;
-        b.style.borderBottomLeftRadius=3;
-        b.style.borderBottomRightRadius=3;
+        ZPunkOverlaySkin.Button(b);
+        b.style.marginBottom=7;
     }
     private void ToggleMenu(){SetMenuOpen(!menuIsOpen);}
     private void SetMenuOpen(bool isOpen)
@@ -446,23 +456,36 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private IEnumerator AnimateMenu(bool open)
     {
-        if(menu==null)yield break;
-        float start=menu.resolvedStyle.height;
-        if(open)menu.style.display=DisplayStyle.Flex;
-        float target=open?318f:0f;
-        const float seconds=.20f;
-        float elapsed=0f;
-        while(elapsed<seconds)
+        if (menu == null) yield break;
+        float start = menu.resolvedStyle.height;
+        if (open)
         {
-            elapsed+=Time.unscaledDeltaTime;
-            float t=Mathf.Clamp01(elapsed/seconds);
-            t=t*t*(3f-2f*t);
-            menu.style.height=Mathf.Lerp(start,target,t);
+            menu.style.display = DisplayStyle.Flex;
+            // Measure all of the actions at their natural height before opening.
+            // Unlike the previous 335-point cap, this includes CLOSE MENU and
+            // allows the status label to wrap without overlapping buttons.
             yield return null;
         }
-        menu.style.height=target;
-        if(!open)menu.style.display=DisplayStyle.None;
-        menuAnimation=null;
+        float natural = menuBody != null ? menuBody.resolvedStyle.height : 0f;
+        float target = open ? Mathf.Max(360f, natural + 22f) : 0f;
+        const float seconds = .20f;
+        float elapsed = 0f;
+        while (elapsed < seconds)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float t = Mathf.Clamp01(elapsed / seconds);
+            t = t * t * (3f - 2f * t);
+            menu.style.height = Mathf.Lerp(start, target, t);
+            yield return null;
+        }
+        if (open)
+            menu.style.height = StyleKeyword.Auto; // Follow content on any screen.
+        else
+        {
+            menu.style.height = 0;
+            menu.style.display = DisplayStyle.None;
+        }
+        menuAnimation = null;
     }
     // Keep the original named Button elements and their transport callbacks.
     // Only their visual content is replaced; the icons ignore pointer input.
