@@ -46,7 +46,6 @@ namespace ZPunk.DAW
         private readonly Dictionary<int, Tuple<Button, Button>> drumButtons = new Dictionary<int, Tuple<Button, Button>>();
         private readonly List<MeterBinding> liveMeters = new List<MeterBinding>();
         private float nextMeterUpdate;
-        private readonly float[] sampleBuffer = new float[256];
         private sealed class MeterBinding
         {
             public VisualElement[] leds;
@@ -79,19 +78,6 @@ namespace ZPunk.DAW
             }
             liveMeters.Add(new MeterBinding { leds = leds, trackIndex = trackIndex, drumIndex = drumIndex });
         }
-        private float AudioPeak(AudioSource source)
-        {
-            if (source == null || !source.isPlaying) return 0f;
-            try
-            {
-                source.GetOutputData(sampleBuffer, 0);
-                float peak = 0f;
-                for (int i = 0; i < sampleBuffer.Length; ++i)
-                    peak = Mathf.Max(peak, Mathf.Abs(sampleBuffer[i]));
-                return peak * Mathf.Clamp01(source.volume);
-            }
-            catch (Exception) { return 0f; }
-        }
         private void RefreshMeters()
         {
             // Audio-derived only: no animation or fabricated levels while silent.
@@ -102,6 +88,10 @@ namespace ZPunk.DAW
                     peak = drums.GetDAWDrumPeak(binding.drumIndex);
                 else if (drums != null && binding.trackIndex == 0)
                 {
+                    // Each drum PCM reading already includes its channel
+                    // fader and the DRUMS track fader. Without a dedicated
+                    // master-bus tap, use the highest lane peak rather than
+                    // falsely adding asynchronous peaks and pinning the meter.
                     for (int i = 0; i < 8; ++i)
                         peak = Mathf.Max(peak, drums.GetDAWDrumPeak(i));
                 }

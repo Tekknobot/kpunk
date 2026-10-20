@@ -38,8 +38,8 @@ AudioMixerGroupController:
   m_Pitch: 5c2bfe21fd91dee45b41f3e496a08293
   m_Send: 00000000000000000000000000000000
   m_Effects:
-  - {fileID: 24400004}
   - {fileID: 7614454687101330950}
+  - {fileID: 24400004}
   m_UserColorIndex: 0
   m_Mute: 0
   m_Solo: 0

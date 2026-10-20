@@ -51,30 +51,50 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     // When routeDrumsToMixer is true, we use per-drum AudioSource voice pools (for mixer routing + meters).
     private readonly Dictionary<int, List<AudioSource>> _drumVoicePools = new();
-    private readonly float[] _meterSamples = new float[256];
-    private float GetPeakFromSources(List<AudioSource> sources)
+    // Every sample voice has its fader applied inside the PCM callback, before
+    // Unity routes it to the output mixer. This is the same post-fader point
+    // for every drum lane and for CHOPS. Source.volume is the velocity/master
+    // multiplier applied later by Unity, so include it once in the readout.
+    private static float GetPostFaderPeak(List<AudioSource> sources)
     {
+        if (sources == null) return 0f;
         float peak = 0f;
-        if (sources == null) return peak;
         foreach (var source in sources)
         {
             if (source == null || !source.isPlaying) continue;
-            try
-            {
-                source.GetOutputData(_meterSamples, 0);
-                for (int j = 0; j < _meterSamples.Length; j++)
-                    peak = Mathf.Max(peak, Mathf.Abs(_meterSamples[j]));
-            }
-            catch (Exception) { }
+            var tap = source.GetComponent<ZPunkSampleChannelMeter>();
+            if (tap == null) continue;
+            peak = Mathf.Max(peak, tap.Peak * Mathf.Clamp01(source.volume));
         }
         return peak;
     }
+
     public float GetDAWDrumPeak(int drumIndex)
     {
         return _drumVoicePools.TryGetValue(drumIndex + 1, out var voices)
-            ? GetPeakFromSources(voices) : 0f;
+            ? GetPostFaderPeak(voices) : 0f;
     }
-    public float GetDAWChopPeak() => GetPeakFromSources(_sampleVoicePool);
+    public float GetDAWChopPeak() => GetPostFaderPeak(_sampleVoicePool);
+
+    private float _dawDrumTrackGain = 1f;
+    private float _dawChopTrackGain = 1f;
+
+    /// <summary>
+    /// Live main-track gain/mute/solo for both sample banks. Affects voices already
+    /// playing as well as the next hit. Call whenever the DAW mix changes.
+    /// </summary>
+    public void ApplyDAWTrackMix(float drumsGain, float chopsGain)
+    {
+        _dawDrumTrackGain = Mathf.Clamp(drumsGain, 0f, 2f);
+        _dawChopTrackGain = Mathf.Clamp(chopsGain, 0f, 2f);
+        ApplyDrumMixerFromBus();
+        foreach (var source in _sampleVoicePool)
+        {
+            if (source == null) continue;
+            var meter = source.GetComponent<ZPunkSampleChannelMeter>();
+            if (meter != null) meter.Gain = _dawChopTrackGain;
+        }
+    }
 
     private readonly Dictionary<int, int> _drumVoiceCursor = new();
 
@@ -89,10 +109,10 @@ public class KMusicDrumSequencer : MonoBehaviour
     private int _dawChopVoiceCursor;
 
     [Header("Unity AudioMixer (optional)")]
-    [Tooltip("If assigned, each drum AudioSource will be routed into these mixer groups so you can push above 0 dB and see meters in the mixer.")]
+    [Tooltip("Optional drum output mixer. Per-drum fader gain and meters are applied at the sample PCM stage; the mixer groups remain available for routing and effects.")]
     [SerializeField] private AudioMixer drumMixer = null;
 
-    [Tooltip("If true, drum.volXX from ParameterBus drives the AudioMixer exposed params. If false, you can mix directly in the AudioMixer.")]
+    [Tooltip("When enabled, reset the old mixer volume parameters to unity to prevent double gain. The drum fader now adjusts the PCM stage directly.")]
     [SerializeField] private bool driveMixerFromBus = true;
 
     [Tooltip("Optional: a master group for drums (used if a per-drum group is not set).")]
@@ -176,6 +196,8 @@ public class KMusicDrumSequencer : MonoBehaviour
             src.loop = false;
             src.spatialBlend = 0f;
             src.volume = 1f;
+            var meter = go.AddComponent<ZPunkSampleChannelMeter>();
+            meter.Gain = GetDrumChannelGain(drumId);
 
             // Route into mixer if provided
             var g = GetMixerGroupForDrum(drumId);
@@ -196,6 +218,10 @@ public class KMusicDrumSequencer : MonoBehaviour
             // keep output group in sync in case inspector changed
             var g = GetMixerGroupForDrum(drumId);
             if (g != null) voice.outputAudioMixerGroup = g;
+            // Recover pre-existing voice pools if created before the mixer UI appeared.
+            var meter = voice.GetComponent<ZPunkSampleChannelMeter>();
+            if (meter == null) meter = voice.gameObject.AddComponent<ZPunkSampleChannelMeter>();
+            meter.Gain = GetDrumChannelGain(drumId);
         }
 
         return voice;
@@ -1833,6 +1859,8 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
             src.loop = false;
             src.spatialBlend = 0f;
             src.volume = 1f;
+            var meter = go.AddComponent<ZPunkSampleChannelMeter>();
+            meter.Gain = _dawChopTrackGain;
 
             _sampleVoicePool.Add(src);
         }
@@ -2473,6 +2501,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         if (m != null)
             Array.Copy(m, _drumMute, Mathf.Min(m.Length, _drumMute.Length));
         RefreshMuteUI();
+        ApplyDrumMixerFromBus();
     }
 
     // Live DAW mixer. Applies mixer attenuation at once rather than on the next pattern step.
@@ -3225,22 +3254,36 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         }
     }
 
+    // Existing DrumMixer groups are kept for routing, but their old per-lane
+    // exposed attenuation is reset to unity: applying it as well as the PCM
+    // gain below would attenuate the signal twice. The PCM gain is where the
+    // *actual* fader, solo and mute now take effect, including on held tails.
     private void ApplyDrumMixerFromBus()
     {
-        if (drumMixer == null) return;
-        if (!driveMixerFromBus) return; // ✅ allow manual mixer control
-
-        for (int drumId = 1; drumId <= 8; drumId++)
+        if (drumMixer != null && driveMixerFromBus)
         {
-            float t01 = 1f;
-            if (_bus != null) t01 = Mathf.Clamp01(_bus.GetValue($"drum.vol{drumId:00}"));
-
-            float db = Vol01ToDbWithPlus6(t01);
-            if (IsDrumMuted(drumId)) db = -80f;
-
-            string param = $"{drumVolParamPrefix}{drumId:00}{drumVolParamSuffix}";
-            drumMixer.SetFloat(param, db);
+            for (int drumId = 1; drumId <= 8; ++drumId)
+                drumMixer.SetFloat($"{drumVolParamPrefix}{drumId:00}{drumVolParamSuffix}", 0f);
         }
+        for (int drumId = 1; drumId <= 8; ++drumId)
+        {
+            if (!_drumVoicePools.TryGetValue(drumId, out var voices)) continue;
+            float gain = GetDrumChannelGain(drumId);
+            foreach (var source in voices)
+            {
+                if (source == null) continue;
+                var meter = source.GetComponent<ZPunkSampleChannelMeter>();
+                if (meter != null) meter.Gain = gain;
+            }
+        }
+    }
+
+    private float GetDrumChannelGain(int drumId)
+    {
+        if (IsDrumMuted(drumId)) return 0f;
+        float position = Mathf.Clamp01(_bus != null ? _bus.GetValue($"drum.vol{drumId:00}") : 0.8f);
+        float dB = Vol01ToDbWithPlus6(position);
+        return _dawDrumTrackGain * Mathf.Pow(10f, dB / 20f);
     }
 
     /// <summary>
@@ -3263,14 +3306,13 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         return Mathf.Lerp(0f, 6f, (t01 - 0.8f) / 0.2f);
     }
 
-    // Mixer mode applies the fader at the mixer only; never attenuate twice.
+    // AudioSource voices use one PCM gain stage, regardless of their mixer routing.
+    // Return only the mute gate here. The sample callback applies both faders;
+    // AudioSource.volume supplies velocity once. The AudioHelm sampler fallback
+    // below continues to use GetDrumGain independently.
     private float GetDrumInputGain(int drumId)
     {
-        if (IsDrumMuted(drumId)) return 0f;
-        if (routeDrumsToMixer && drumMixer != null && driveMixerFromBus &&
-            GetMixerGroupForDrum(drumId) != null)
-            return 1f;
-        return GetDrumGain(drumId);
+        return IsDrumMuted(drumId) ? 0f : 1f;
     }
 
     private float GetDrumGain(int drumId)

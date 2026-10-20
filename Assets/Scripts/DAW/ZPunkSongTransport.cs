@@ -37,6 +37,7 @@ namespace ZPunk.DAW
         private readonly Dictionary<int, float> meterEnvelope = new Dictionary<int, float>();
         private readonly Dictionary<int, float> meterLastTime = new Dictionary<int, float>();
         private readonly Dictionary<int, AudioMixer> outputMixers = new Dictionary<int, AudioMixer>();
+        private readonly Dictionary<int, ZPunkHelmPcmMeter> pcmMeters = new Dictionary<int, ZPunkHelmPcmMeter>();
         private static readonly string[] HelmTrackGainParameters = { "", "ZPunkBassTrackGain", "ZPunkSynthTrackGain", "ZPunkPadsTrackGain", "" };
         private SongData song;
         private SongEventPlanner.Plan plan;
@@ -344,6 +345,7 @@ namespace ZPunk.DAW
                 if (track.kind == TrackKind.Bass && rack != null && rack.BassController != null)
                     trackControllers[i] = rack.BassController;
             }
+            InstallPcmMeters();
             foreach (var item in trackControllers)
             {
                 var source = item.Value != null ? item.Value.GetComponent<AudioSource>() : null;
@@ -361,10 +363,45 @@ namespace ZPunk.DAW
             if (pads == null) Debug.LogWarning("[ZPunk DAW] Pad synth unavailable. Pads track will be silent.");
         }
 
+        private void InstallPcmMeters()
+        {
+            foreach (var item in trackControllers)
+            {
+                if (item.Value == null) continue;
+                int index = item.Key;
+                if (pcmMeters.TryGetValue(index, out var existing) && existing != null)
+                {
+                    existing.channel = item.Value.channel;
+                    continue;
+                }
+                var monitor = new GameObject("ZPunk_Helm_PCM_Meter_" + index);
+                monitor.transform.SetParent(transform, false);
+                var source = monitor.AddComponent<AudioSource>();
+                source.playOnAwake = false;
+                source.spatialBlend = 0f;
+                source.volume = 1f;
+                // AudioClip drives OnAudioFilterRead. The meter zeros every buffer,
+                // so this source adds no signal to the listener.
+                var clip = AudioClip.Create("ZPunk meter clock", 256, 1,
+                    Mathf.Max(8000, AudioSettings.outputSampleRate), false);
+                source.clip = clip;
+                source.loop = true;
+                var meter = monitor.AddComponent<ZPunkHelmPcmMeter>();
+                meter.channel = item.Value.channel;
+                pcmMeters[index] = meter;
+                source.Play();
+            }
+        }
+
         /// <summary>True mixer attenuation, independent of the current Helm preset and NoteOn velocity.</summary>
         private void ApplyAllTrackGains()
         {
             if (song == null || song.tracks == null) return;
+            // Apply main DRUMS and CHOPS track gains at their actual sample PCM
+            // stages too. The individual drum faders remain independent.
+            if (drums != null && song.tracks.Count > 4)
+                drums.ApplyDAWTrackMix(TrackAudible(0) ? Mathf.Clamp(song.tracks[0].volume, 0f, 2f) : 0f,
+                                       TrackAudible(4) ? Mathf.Clamp(song.tracks[4].volume, 0f, 2f) : 0f);
             foreach (var entry in outputMixers)
             {
                 int index = entry.Key;
@@ -402,30 +439,12 @@ namespace ZPunk.DAW
         public float GetTrackPeak(int index)
         {
             if (!playing || !TrackAudible(index)) return 0f;
-            float now = Time.unscaledTime;
-            float previous = meterLastTime.TryGetValue(index, out float last) ? last : now;
-            float dt = Mathf.Clamp(now - previous, 0f, 0.5f);
-            meterLastTime[index] = now;
-            float envelope = meterEnvelope.TryGetValue(index, out float value) ? value : 0f;
-            bool hasNotes = meterNoteVelocities.TryGetValue(index, out var notes) && notes.Count > 0;
-            float sustained = 0f;
-            if (hasNotes)
-            {
-                foreach (float velocity in notes.Values)
-                    sustained = Mathf.Max(sustained, 0.08f + 0.23f * velocity);
-            }
-            // A 180ms note transient and a longer tail give a responsive visual
-            // envelope. This is MIDI-driven activity, not calibrated audio RMS.
-            envelope = Mathf.Max(sustained, envelope * Mathf.Exp(-dt * (hasNotes ? 6f : 10f)));
-            if (envelope < 0.0005f) envelope = 0f;
-            meterEnvelope[index] = envelope;
-            // The Helm DSP lives in the native AudioMixer effect, not in this
-            // controller's AudioSource. This is an activity-envelope estimate,
-            // explicitly scaled by the same post-voice gain used by the mixer.
-            // It is NOT a sampled or calibrated bus level.
-            float faderGain = song != null && song.tracks != null && index < song.tracks.Count
+            if (!pcmMeters.TryGetValue(index, out var meter) || meter == null || !meter.Available)
+                return 0f; // No simulated readings: PCM measurement unavailable.
+            float gain = song != null && song.tracks != null && index < song.tracks.Count
                 && song.tracks[index] != null ? Mathf.Clamp(song.tracks[index].volume, 0f, 2f) : 0f;
-            return Mathf.Clamp(envelope * faderGain, 0f, 2f);
+            // Measured Helm PCM multiplied by the exposed AudioMixer attenuation.
+            return Mathf.Max(0f, meter.Peak * gain);
         }
 
         private bool TrackAudible(int index)
@@ -608,6 +627,9 @@ namespace ZPunk.DAW
         }
         private void OnDestroy()
         {
+            foreach (var meter in pcmMeters.Values)
+                if (meter != null) Destroy(meter.gameObject);
+            pcmMeters.Clear();
             StopSong();
             IsSongModeActive = false;
             foreach (HelmSequencer seq in suspendedSequencers)
