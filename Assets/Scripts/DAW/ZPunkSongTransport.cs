@@ -29,6 +29,13 @@ namespace ZPunk.DAW
         private HelmController pads;
         private readonly List<HelmSequencer> suspendedSequencers = new List<HelmSequencer>();
         private readonly Dictionary<int, HelmController> trackControllers = new Dictionary<int, HelmController>();
+        // Helm's native mixer is not exposed as a reliable Unity AudioSource meter.
+        // Drive the channel indicators from the MIDI events we actually dispatch,
+        // rather than treating the synth plugin's constant callback data as signal.
+        private readonly Dictionary<int, Dictionary<int, float>> meterNoteVelocities =
+            new Dictionary<int, Dictionary<int, float>>();
+        private readonly Dictionary<int, float> meterEnvelope = new Dictionary<int, float>();
+        private readonly Dictionary<int, float> meterLastTime = new Dictionary<int, float>();
         private readonly Dictionary<int, AudioMixer> outputMixers = new Dictionary<int, AudioMixer>();
         private static readonly string[] HelmTrackGainParameters = { "", "ZPunkBassTrackGain", "ZPunkSynthTrackGain", "ZPunkPadsTrackGain", "" };
         private SongData song;
@@ -295,8 +302,10 @@ namespace ZPunk.DAW
             {
                 if (TrackAudible(entry.trackIndex) &&
                     trackControllers.TryGetValue(entry.trackIndex, out HelmController active) && active != null)
-                    active.NoteOn(entry.value, Mathf.Clamp01(
-                        entry.velocity / 127f));
+                {
+                    active.NoteOn(entry.value, Mathf.Clamp01(entry.velocity / 127f));
+                    MeterNoteOn(entry.trackIndex, entry.value, entry.velocity / 127f);
+                }
             }
             liveRevision++;
             // If the loop is shortened past the playhead, jump to its beginning.
@@ -340,6 +349,13 @@ namespace ZPunk.DAW
                 var source = item.Value != null ? item.Value.GetComponent<AudioSource>() : null;
                 if (source != null && source.outputAudioMixerGroup != null)
                     outputMixers[item.Key] = source.outputAudioMixerGroup.audioMixer;
+                // Remove obsolete callbacks installed by earlier meter patches.
+                // They do not reflect the native Helm synth output reliably.
+                if (source != null)
+                {
+                    var oldTap = source.GetComponent<ZPunkHelmMeterTap>();
+                    if (oldTap != null) Destroy(oldTap);
+                }
             }
             if (synth == null) Debug.LogWarning("[ZPunk DAW] Main synth unavailable. Synth track will be silent.");
             if (pads == null) Debug.LogWarning("[ZPunk DAW] Pad synth unavailable. Pads track will be silent.");
@@ -357,12 +373,59 @@ namespace ZPunk.DAW
                 string exposed = HelmTrackGainParameters[index];
                 if (string.IsNullOrEmpty(exposed)) continue;
                 var track = song.tracks[index];
-                float gain = track != null && TrackAudible(index) ? Mathf.Clamp01(track.volume) : 0f;
+                float gain = track != null && TrackAudible(index) ? Mathf.Clamp(track.volume, 0f, 2f) : 0f;
                 // 100%=0dB, 50%=-6dB, 0%=-80dB. Changes affect held voices.
-                float decibels = gain <= 0.0001f ? -80f : Mathf.Clamp(20f * Mathf.Log10(gain), -80f, 0f);
+                float decibels = gain <= 0.0001f ? -80f : Mathf.Clamp(20f * Mathf.Log10(gain), -80f, 6f);
                 if (!entry.Value.SetFloat(exposed, decibels) && verbose)
                     Debug.LogWarning("[ZPunk MIX] Missing AudioMixer exposed parameter: " + exposed);
             }
+        }
+
+        private void MeterNoteOn(int index, int note, float velocity)
+        {
+            if (!meterNoteVelocities.TryGetValue(index, out var notes))
+                meterNoteVelocities[index] = notes = new Dictionary<int, float>();
+            notes[note] = Mathf.Clamp01(velocity);
+            // Each real NoteOn creates a fresh level transient. Held notes retain
+            // their own velocity, so repeated notes produce visible meter movement.
+            float level = Mathf.Clamp01(0.12f + 0.72f * Mathf.Clamp01(velocity));
+            float current = meterEnvelope.TryGetValue(index, out float existing) ? existing : 0f;
+            meterEnvelope[index] = Mathf.Max(current, level);
+            meterLastTime[index] = Time.unscaledTime;
+        }
+
+        private void MeterNoteOff(int index, int note)
+        {
+            if (meterNoteVelocities.TryGetValue(index, out var notes)) notes.Remove(note);
+        }
+
+        public float GetTrackPeak(int index)
+        {
+            if (!playing || !TrackAudible(index)) return 0f;
+            float now = Time.unscaledTime;
+            float previous = meterLastTime.TryGetValue(index, out float last) ? last : now;
+            float dt = Mathf.Clamp(now - previous, 0f, 0.5f);
+            meterLastTime[index] = now;
+            float envelope = meterEnvelope.TryGetValue(index, out float value) ? value : 0f;
+            bool hasNotes = meterNoteVelocities.TryGetValue(index, out var notes) && notes.Count > 0;
+            float sustained = 0f;
+            if (hasNotes)
+            {
+                foreach (float velocity in notes.Values)
+                    sustained = Mathf.Max(sustained, 0.08f + 0.23f * velocity);
+            }
+            // A 180ms note transient and a longer tail give a responsive visual
+            // envelope. This is MIDI-driven activity, not calibrated audio RMS.
+            envelope = Mathf.Max(sustained, envelope * Mathf.Exp(-dt * (hasNotes ? 6f : 10f)));
+            if (envelope < 0.0005f) envelope = 0f;
+            meterEnvelope[index] = envelope;
+            // The Helm DSP lives in the native AudioMixer effect, not in this
+            // controller's AudioSource. This is an activity-envelope estimate,
+            // explicitly scaled by the same post-voice gain used by the mixer.
+            // It is NOT a sampled or calibrated bus level.
+            float faderGain = song != null && song.tracks != null && index < song.tracks.Count
+                && song.tracks[index] != null ? Mathf.Clamp(song.tracks[index].volume, 0f, 2f) : 0f;
+            return Mathf.Clamp(envelope * faderGain, 0f, 2f);
         }
 
         private bool TrackAudible(int index)
@@ -431,9 +494,16 @@ namespace ZPunk.DAW
                 if (e.tick >= end || DspAt(e.tick) > now) break;
                 midiCursor++;
                 if (!trackControllers.TryGetValue(e.trackIndex, out HelmController controller) || controller == null) continue;
-                if (e.type == SongEventPlanner.EventType.NoteOff) controller.NoteOff(e.value);
+                if (e.type == SongEventPlanner.EventType.NoteOff)
+                {
+                    controller.NoteOff(e.value);
+                    MeterNoteOff(e.trackIndex, e.value);
+                }
                 else if (TrackAudible(e.trackIndex))
+                {
                     controller.NoteOn(e.value, Mathf.Clamp01(e.velocity / 127f));
+                    MeterNoteOn(e.trackIndex, e.value, e.velocity / 127f);
+                }
             }
 
             if (now >= endDsp)
@@ -495,6 +565,9 @@ namespace ZPunk.DAW
             // voices, even when a second stop arrives after playing is cleared.
             Resolve();
             playing = false;
+            meterNoteVelocities.Clear();
+            meterEnvelope.Clear();
+            meterLastTime.Clear();
             exportingOneShot = false;
             paused = false;
             StopAllSynthNotes();
@@ -516,6 +589,9 @@ namespace ZPunk.DAW
 
         private void StopAllSynthNotes()
         {
+            meterNoteVelocities.Clear();
+            meterEnvelope.Clear();
+            meterLastTime.Clear();
             var seen = new HashSet<int>();
             foreach (HelmController controller in trackControllers.Values)
                 if (controller != null && seen.Add(controller.channel)) controller.AllNotesOff();

@@ -2476,10 +2476,34 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
     }
 
     // Live DAW mixer. Applies mixer attenuation at once rather than on the next pattern step.
+    private int _dawSoloLane = -1;
+    private bool[] _dawPreSoloMutes;
+    public bool IsDAWDrumSolo(int lane) => _dawSoloLane == lane;
+    public void ToggleDAWDrumSolo(int lane)
+    {
+        if (lane < 0 || lane >= _drumMute.Length) return;
+        if (_dawSoloLane < 0) _dawPreSoloMutes = CaptureDrumMutes();
+        if (_dawSoloLane == lane)
+        {
+            _dawSoloLane = -1;
+            if (_dawPreSoloMutes != null) ApplyDrumMutes(_dawPreSoloMutes);
+            _dawPreSoloMutes = null;
+        }
+        else
+        {
+            _dawSoloLane = lane;
+            for (int i = 0; i < _drumMute.Length; ++i) _drumMute[i] = i != lane;
+            RefreshMuteUI();
+        }
+        ApplyDrumMixerFromBus();
+        if (_dawSoloLane < 0) SaveDrumState();
+    }
+
     public void SetDAWDrumMute(int lane, bool muted)
     {
         if (lane < 0 || lane >= _drumMute.Length) return;
         _drumMute[lane] = muted;
+        if (_dawSoloLane >= 0 && _dawPreSoloMutes != null) _dawPreSoloMutes[lane] = muted;
         RefreshMuteUI();
         ApplyDrumMixerFromBus();
         SaveDrumState();

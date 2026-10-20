@@ -43,6 +43,7 @@ namespace ZPunk.DAW
         private const float RailTop = 14f;
         private const float RailHeight = 220f;
         private const float HandleHeight = 24f;
+        private readonly Dictionary<int, Tuple<Button, Button>> drumButtons = new Dictionary<int, Tuple<Button, Button>>();
         private readonly List<MeterBinding> liveMeters = new List<MeterBinding>();
         private float nextMeterUpdate;
         private readonly float[] sampleBuffer = new float[256];
@@ -106,8 +107,8 @@ namespace ZPunk.DAW
                 }
                 else if (drums != null && binding.trackIndex == 4)
                     peak = drums.GetDAWChopPeak();
-                // Helm tracks may not expose an AudioSource (native synthesis).
-                // Do not display invented signal for those channels.
+                else if (transport != null && binding.trackIndex >= 1 && binding.trackIndex <= 3)
+                    peak = transport.GetTrackPeak(binding.trackIndex);
                 binding.held = Mathf.Max(peak, binding.held * .72f);
                 int active = binding.held < .0005f ? 0 : Mathf.Clamp(
                     Mathf.CeilToInt((20f * Mathf.Log10(Mathf.Max(.0001f, binding.held)) + 60f) / 60f * 18f), 0, 18);
@@ -322,7 +323,7 @@ namespace ZPunk.DAW
             var cell = new VisualElement();
             cell.style.width = new Length(50, LengthUnit.Percent);
             cell.style.minWidth = 0;
-            cell.style.height = 370;
+            cell.style.height = 415;
             cell.style.backgroundColor = new Color(.083f, .123f, .175f);
             cell.style.borderLeftWidth = 1;
             cell.style.borderLeftColor = new Color(.17f, .25f, .35f);
@@ -400,7 +401,7 @@ namespace ZPunk.DAW
             int meterTrack = Array.FindIndex(TrackColors, c => c.Equals(color));
             AddMeter(hit, color, meterTrack, -1);
 
-            float value = Mathf.Clamp01(initialValue);
+            float value = throttleTrackWrites ? (initialValue <= 1f ? Mathf.Clamp01(initialValue) * .8f : .8f + Mathf.Clamp01((20f * Mathf.Log10(initialValue)) / 6f) * .2f) : Mathf.Clamp01(initialValue);
             float lastDelivered = value;
             float nextWrite = 0f;
             Action<float> show = v =>
@@ -408,8 +409,8 @@ namespace ZPunk.DAW
                 value = Mathf.Clamp01(v);
                 fill.style.height = new Length(value * 100f, LengthUnit.Percent);
                 thumb.style.top = RailTop + RailHeight * (1f - value) - HandleHeight * .5f;
-                percent.text = value <= .0001f ? "-INF" :
-                    (20f * Mathf.Log10(Mathf.Max(.0001f, value))).ToString("0.0") + " dB";
+                float dB = value <= .0001f ? -80f : (value <= .8f ? 20f * Mathf.Log10(value / .8f) : (value - .8f) * 30f);
+                percent.text = value <= .0001f ? "-INF" : dB.ToString("+0.0;-0.0;0.0") + " dB";
             };
             Action<bool> publish = force =>
             {
@@ -417,7 +418,7 @@ namespace ZPunk.DAW
                 if (!force && throttleTrackWrites && Time.unscaledTime < nextWrite) return;
                 lastDelivered = value;
                 nextWrite = Time.unscaledTime + .045f;
-                onChange(value);
+                onChange(throttleTrackWrites ? (value <= .8f ? value / .8f : Mathf.Pow(10f, ((value - .8f) * 30f) / 20f)) : value);
             };
             show(value);
             float grabOffset = 0f;
@@ -445,7 +446,8 @@ namespace ZPunk.DAW
             // Buttons attach here; the fader itself owns no ScrollView gesture.
             var actions = new VisualElement();
             actions.name = "FaderActions";
-            actions.style.flexDirection = FlexDirection.Row;
+            actions.style.flexDirection = FlexDirection.Column;
+            actions.style.alignItems = Align.Center;
             actions.style.justifyContent = Justify.Center;
             actions.style.width = new Length(100, LengthUnit.Percent);
             actions.style.paddingLeft = 2;
@@ -475,6 +477,7 @@ namespace ZPunk.DAW
             activeFader = null; activePointer = -1;
             faderTargets.Clear();
             liveMeters.Clear();
+            drumButtons.Clear();
             lanes.Clear();
             displayedSlot = projects != null ? projects.CurrentSlot : -1;
             var song = projects != null ? projects.GetSongForArrangementEditor() : null;
@@ -505,9 +508,11 @@ namespace ZPunk.DAW
                     }, track.solo, true);
                     SetSwitch(mute, track.mute, "M", "M!");
                     SetSwitch(solo, track.solo, "S", "S!", true);
-                    mute.style.marginRight = 3;
-                    actions.Add(mute);
+                    mute.style.marginTop = 3;
+                    mute.style.width = new Length(95, LengthUnit.Percent);
+                    solo.style.width = new Length(95, LengthUnit.Percent);
                     actions.Add(solo);
+                    actions.Add(mute);
                     tracksGrid.Add(fader);
                 }
             }
@@ -534,7 +539,7 @@ namespace ZPunk.DAW
                     liveMeters[liveMeters.Count - 1].drumIndex = i;
                 }
                 bool muted = i < mutes.Length && mutes[i];
-                Button mute = null;
+                Button mute = null, solo = null;
                 mute = Switch("M", () =>
                 {
                     bool[] state = drums.CaptureDrumMutes();
@@ -542,10 +547,24 @@ namespace ZPunk.DAW
                     drums.SetDAWDrumMute(lane, target);
                     SetSwitch(mute, target, "M", "M!");
                 }, muted);
-                SetSwitch(mute, muted, "M", "M!");
-                mute.style.flexGrow = 0;
-                mute.style.width = 46;
+                solo = Switch("S", () =>
+                {
+                    drums.ToggleDAWDrumSolo(lane);
+                    // Rebuild switch indicators after a solo changes the effective mute states.
+                    var state = drums.CaptureDrumMutes();
+                    foreach (var pair in drumButtons)
+                    {
+                        int drumLane = pair.Key;
+                        SetSwitch(pair.Value.Item1, drums.IsDAWDrumSolo(drumLane), "S", "S!", true);
+                        SetSwitch(pair.Value.Item2, drumLane < state.Length && state[drumLane], "M", "M!");
+                    }
+                }, drums.IsDAWDrumSolo(lane), true);
+                solo.style.width = new Length(95, LengthUnit.Percent);
+                mute.style.width = new Length(95, LengthUnit.Percent);
+                mute.style.marginTop = 3;
+                actions.Add(solo);
                 actions.Add(mute);
+                drumButtons[lane] = Tuple.Create(solo, mute);
                 drumGrid.Add(fader);
             }
             var note = Text("Drag faders up or down. Tap M to mute, S to solo.", 10, Dim);
