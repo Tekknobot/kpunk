@@ -5,53 +5,53 @@ Arp/MT On the Run.helm
 Arp/OZ Prarie Arp.helm
 Arp/SF Arp 1.helm
 Arp/SF Arp 2.helm
-Bass/CM Diddly.helm
-Bass/CM Electro Bass.helm
-Bass/CM Grit Bass.helm
-Bass/CM Subsine.helm
-Bass/MT Cracklette.helm
-Bass/MT Filtered Bass 1.helm
-Bass/MT Filtered Bass 2.helm
-Bass/MT Spectrum.helm
-Bass/MT Stinky Bass 1.helm
-Bass/MT Stinky Bass 2.helm
-Bass/MT Stinky Bass 3.helm
-Bass/SF Bass Formant.helm
-Bass/SF Bass Picked.helm
-Bass/SF Bass.helm
-Bass/SF Contrabass.helm
-Bass/SF Double Bass.helm
-Bass/UG Can't Afford the Real, You Know.helm
-Bass/UG FM ON and On.helm
-Bass/UG Lately I've Been Using This Bass.helm
-Bass/UG Liebe Ist Moog.helm
-Bass/UG Major Orbits.helm
-Bass/UG Old Minis Drift.helm
-Bass/UG One Note Acid (Draw MIDI).helm
-Bass/UG Please Hold for Techno.helm
-Bass/UG Ravers Unite!.helm
-Bass/UG Show Me the M1.helm
-Bass/UG Taiko Attacks Bass (Try Vel=74).helm
-Bass/UG Who Plays the Doctor.helm
+Bass/ZOR Afterhours Ink.helm
 Bass/ZOR Arcade Spring.helm
+Bass/ZOR Backbeat Ghost.helm
+Bass/ZOR Basement Film.helm
 Bass/ZOR Blue Current.helm
+Bass/ZOR Blue Velvet Valve.helm
+Bass/ZOR Breakline Hopper.helm
 Bass/ZOR Chrome Pluck.helm
+Bass/ZOR Chrome Shuffle.helm
+Bass/ZOR City Roller.helm
 Bass/ZOR Clear Pulse.helm
+Bass/ZOR Concrete Undertow.helm
 Bass/ZOR Copper Coil.helm
 Bass/ZOR Deep Lantern.helm
 Bass/ZOR Emberline.helm
 Bass/ZOR FM Bloom.helm
 Bass/ZOR Glassline.helm
 Bass/ZOR Hollow Motion.helm
+Bass/ZOR Jungle Pressure.helm
+Bass/ZOR Magnetic Spine.helm
 Bass/ZOR Metro Pluck.helm
+Bass/ZOR Mirrorball Wire.helm
 Bass/ZOR Monsoon Wobble.helm
+Bass/ZOR Negative Space.helm
+Bass/ZOR Neon Torque.helm
 Bass/ZOR Night Runner.helm
+Bass/ZOR Nightclub Plastic.helm
 Bass/ZOR Paper Lantern.helm
+Bass/ZOR Plush Transit.helm
+Bass/ZOR Pocket Cartwheel.helm
+Bass/ZOR Pump Fiction.helm
 Bass/ZOR Quartz Bounce.helm
+Bass/ZOR Quiet Engine.helm
+Bass/ZOR Ragged Circuit.helm
+Bass/ZOR Rotor Pulse.helm
 Bass/ZOR Roundabout.helm
 Bass/ZOR Rubber Circuit.helm
+Bass/ZOR Rust Relay.helm
 Bass/ZOR Satellite Glide.helm
 Bass/ZOR Satin Square.helm
+Bass/ZOR Scattergrid.helm
+Bass/ZOR Sidewalk Velvet.helm
+Bass/ZOR Slipstream Heel.helm
+Bass/ZOR Steel Furnace.helm
+Bass/ZOR Synapse Rubber.helm
+Bass/ZOR Tape Current.helm
+Bass/ZOR Velvet Mirror.helm
 Bass/ZOR Velvet Sub.helm
 Chip/COA Insane Gamer.helm
 Chip/COA Random Chip Bass.helm
@@ -275,6 +275,7 @@ SFX/COA Digital Waterdrops.helm
 SFX/COA Lasersword.helm
 SFX/COA Satan in Your Headphones 1.helm
 SFX/COA Satan in Your Headphones 2.helm
+SFX/COA Scifi Gunshot.helm
 SFX/COA Sinister Ambient 1.helm
 SFX/COA Sinister Ambient 2.helm
 SFX/MT Elven Door Stop.helm
