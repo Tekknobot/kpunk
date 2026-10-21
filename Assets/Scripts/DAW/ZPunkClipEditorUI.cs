@@ -21,6 +21,15 @@ namespace ZPunk.DAW
             new Color(.35f,.60f,.98f), new Color(.66f,.45f,.94f), new Color(.24f,.82f,.69f)
         };
         private VisualElement root, canvas, gridScrollContainer, chips, labelViewport, labelColumn;
+        // This ruler is outside the note ScrollView, so vertical swipes never hide the bar positions.
+        private VisualElement rulerGutter, rulerContent, rulerPlayhead;
+        private readonly List<VisualElement> pitchRowBackgrounds = new List<VisualElement>();
+        private readonly List<Label> pitchRowLabels = new List<Label>();
+        private bool sampleKeyGuideEnabled;
+        private int sampleKeyGuideTonic;
+        private bool sampleKeyGuideMinor;
+        private string sampleKeyGuideSampleId;
+        private int sampleKeyGuideProjectSlot = -1;
         private VisualElement generatorPanel, generatorGenres, generatorStyles, generatorBarsRow, generatorSynthModeRow;
         private VisualElement generatorHistoryRows;
         private Label generatorHistoryLabel;
@@ -283,7 +292,41 @@ namespace ZPunk.DAW
             gridScrollContainer.style.flexDirection = FlexDirection.Row;
             scroller.Add(gridScrollContainer);
             scroller.verticalScroller.valueChanged += _ => SyncPianoRollLabels();
+            scroller.horizontalScroller.valueChanged += _ => SyncFixedRuler();
             editorViewport.Add(scroller);
+
+            // Fixed top ruler: identical on DRUMS, CHOPS and the 128-note piano roll.
+            // Only the ruler's inner content translates when the grid moves horizontally.
+            var fixedRuler = new VisualElement { name = "ZPunkPinnedBarRuler" };
+            fixedRuler.style.position = Position.Absolute;
+            fixedRuler.style.top = 0;
+            fixedRuler.style.left = 0;
+            fixedRuler.style.right = 0;
+            fixedRuler.style.height = 25;
+            fixedRuler.style.flexDirection = FlexDirection.Row;
+            fixedRuler.style.backgroundColor = new Color(.065f, .092f, .13f);
+            fixedRuler.pickingMode = PickingMode.Ignore;
+
+            rulerGutter = new VisualElement { name = "ZPunkRulerGutter" };
+            rulerGutter.style.width = 57;
+            rulerGutter.style.flexShrink = 0;
+            rulerGutter.style.backgroundColor = new Color(.095f, .13f, .18f);
+            rulerGutter.pickingMode = PickingMode.Ignore;
+            fixedRuler.Add(rulerGutter);
+
+            var rulerViewport = new VisualElement { name = "ZPunkRulerViewport" };
+            rulerViewport.style.flexGrow = 1;
+            rulerViewport.style.minWidth = 0;
+            rulerViewport.style.overflow = Overflow.Hidden;
+            rulerViewport.pickingMode = PickingMode.Ignore;
+            rulerContent = new VisualElement { name = "ZPunkRulerTicks" };
+            rulerContent.style.position = Position.Relative;
+            rulerContent.style.flexShrink = 0;
+            rulerContent.style.height = 25;
+            rulerContent.pickingMode = PickingMode.Ignore;
+            rulerViewport.Add(rulerContent);
+            fixedRuler.Add(rulerViewport);
+            editorViewport.Add(fixedRuler);
             root.Add(editorViewport);
 
             var velocityRow = new VisualElement();
@@ -681,6 +724,15 @@ namespace ZPunk.DAW
                 if (samplePlayer == null || !samplePlayer.DawSampleKeyAvailable) return;
                 generatorKey = samplePlayer.DawPitchedKeyTonic;
                 generatorMinor = samplePlayer.DawSampleKeyMinor;
+                // Opt-in harmonic guide. Do not highlight unrelated piano rolls merely
+                // because a sample was loaded or its key was detected.
+                sampleKeyGuideEnabled = true;
+                sampleKeyGuideTonic = generatorKey;
+                sampleKeyGuideMinor = generatorMinor;
+                sampleKeyGuideProjectSlot = projects != null ? projects.CurrentSlot : -1;
+                sampleKeyGuideSampleId = samplePlayer.DawSampleFolder + "/" + samplePlayer.DawSampleName;
+                ApplySampleKeyGuide();
+                RefreshClipSampleKeyReference();
                 RefreshGeneratorPanel();
             }, 132);
             generatorSampleKeyButton.style.height = 42;
@@ -944,7 +996,7 @@ namespace ZPunk.DAW
             selectedEventRow = -1;
             selectedEventTick = -1;
             CloseGenerator();
-            Changed();
+            Changed(true, false);
             if (content.kind == ClipKind.Midi) FocusPatternNotes();
         }
         private void ApplyGenerator()
@@ -1053,7 +1105,8 @@ namespace ZPunk.DAW
             bool show = midiTrack && samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
             clipSampleKeyReference.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
             if (show)
-                clipSampleKeyReference.text = "SAMPLE KEY  /  " + samplePlayer.DawPitchedKeyText +
+                clipSampleKeyReference.text = (sampleKeyGuideEnabled ? "KEY GUIDE  /  " : "SAMPLE KEY  /  ") +
+                    samplePlayer.DawPitchedKeyText +
                     "  (" + samplePlayer.DawSampleKeyConfidence + " EST.)";
         }
 
@@ -1240,13 +1293,15 @@ namespace ZPunk.DAW
             if (projects == null) projects = FindObjectOfType<KMusicProjectManager>();
             if (projects == null) return;
             song = projects.GetSongForArrangementEditor();
+            if (sampleKeyGuideEnabled && sampleKeyGuideProjectSlot != projects.CurrentSlot)
+                sampleKeyGuideEnabled = false;
             if (song == null || song.tracks == null || song.tracks.Count == 0) return;
             if (requestedTrack >= 0 && requestedTrack < song.tracks.Count) trackIndex = requestedTrack;
             trackIndex = Mathf.Clamp(trackIndex,0,song.tracks.Count-1);
             if (!string.IsNullOrEmpty(requestedClip)) clipId = requestedClip;
             LoadClip();
             EnsureChopsEditable();
-            Redraw();
+            Redraw(false);
             FocusPatternNotes();
         }
         private void LoadClip()
@@ -1292,9 +1347,9 @@ namespace ZPunk.DAW
             }
             return true;
         }
-        private void Changed(bool rebuild=true)
+        private void Changed(bool rebuild=true, bool preserveViewport=true)
         {
-            if (rebuild) Redraw();
+            if (rebuild) Redraw(preserveViewport);
             OnClipChanged?.Invoke();
             // The workspace callback updates the currently sounding transport plan live.
         }
@@ -1309,7 +1364,8 @@ namespace ZPunk.DAW
             selectedNote = -1;
             selectedEventRow = -1;
             selectedEventTick = -1;
-            Changed();
+            Changed(true, false);
+            FocusPatternNotes();
         }
         private void Save()
         {
@@ -1324,7 +1380,7 @@ namespace ZPunk.DAW
             clipId = null;
             LoadClip();
             EnsureChopsEditable();
-            Redraw();
+            Redraw(false);
             FocusPatternNotes();
         }
         private void ChangeLength(int direction)
@@ -1458,6 +1514,70 @@ namespace ZPunk.DAW
         private int PitchForRow(int row) => Mathf.Clamp(127 - row, 0, 127);
         private int RowForPitch(int pitch) => 127 - pitch;
 
+        private static bool IsGuidePitch(int pitch, int tonic, bool minor)
+        {
+            int interval = ((pitch - tonic) % 12 + 12) % 12;
+            // Major 0,2,4,5,7,9,11; natural minor 0,2,3,5,7,8,10.
+            int intervals = minor ? 0x5AD : 0xAB5;
+            return ((intervals >> interval) & 1) != 0;
+        }
+
+        // Colors are intentionally restrained and do not obscure note velocities.
+        // Recolor existing rows without rebuilding the clip or resetting its viewport.
+        private void ApplySampleKeyGuide()
+        {
+            bool enabled = sampleKeyGuideEnabled && IsMidi && song != null &&
+                song.tracks != null && trackIndex >= 0 && trackIndex < song.tracks.Count &&
+                (song.tracks[trackIndex].kind == TrackKind.Bass ||
+                 song.tracks[trackIndex].kind == TrackKind.Synth ||
+                 song.tracks[trackIndex].kind == TrackKind.Pads);
+            for (int row = 0; row < pitchRowBackgrounds.Count; row++)
+            {
+                int pitch = PitchForRow(row);
+                bool inKey = enabled && IsGuidePitch(pitch, sampleKeyGuideTonic, sampleKeyGuideMinor);
+                bool tonic = inKey && pitch % 12 == sampleKeyGuideTonic;
+                pitchRowBackgrounds[row].style.backgroundColor = tonic
+                    ? new Color(.125f, .215f, .213f)
+                    : inKey ? new Color(.108f, .174f, .182f)
+                    : row % 2 == 0 ? new Color(.11f, .145f, .19f) : new Color(.09f, .12f, .16f);
+                if (row < pitchRowLabels.Count)
+                    pitchRowLabels[row].style.color = tonic ? Accent :
+                        inKey ? new Color(.68f, .82f, .79f) : pitch % 12 == 0 ? Accent : Muted;
+            }
+        }
+
+        // Follow live semitone changes only after the user chose USE SAMPLE KEY.
+        // This is deliberately independent of generatorKey's manual selector.
+        private void FollowPitchedSampleKey()
+        {
+            if (!sampleKeyGuideEnabled || samplePlayer == null) return;
+            // Selecting a different sample must not silently transfer the old guide.
+            string sampleId = samplePlayer.DawSampleFolder + "/" + samplePlayer.DawSampleName;
+            if (sampleId != sampleKeyGuideSampleId)
+            {
+                sampleKeyGuideEnabled = false;
+                ApplySampleKeyGuide();
+                RefreshClipSampleKeyReference();
+                return;
+            }
+            if (!samplePlayer.DawSampleKeyAvailable) return;
+            int tonic = samplePlayer.DawPitchedKeyTonic;
+            bool minor = samplePlayer.DawSampleKeyMinor;
+            if (tonic == sampleKeyGuideTonic && minor == sampleKeyGuideMinor) return;
+            sampleKeyGuideTonic = tonic;
+            sampleKeyGuideMinor = minor;
+            ApplySampleKeyGuide();
+            RefreshClipSampleKeyReference();
+        }
+
+        private void SyncFixedRuler()
+        {
+            if (rulerContent == null || scroller == null) return;
+            rulerContent.style.translate = new Translate(
+                new Length(-scroller.scrollOffset.x, LengthUnit.Pixel),
+                new Length(0f, LengthUnit.Pixel), 0f);
+        }
+
         // Keep the fixed label column aligned with the vertically scrolling notes.
         // Translation avoids relaying out the 128-row MIDI keyboard on each scroll.
         private void SyncPianoRollLabels()
@@ -1519,11 +1639,23 @@ namespace ZPunk.DAW
                 float middle = 0.5f * (top + bottom);
                 float y = Mathf.Max(0f, 25f + (middle + .5f) * RowH - height * .5f);
                 float maxY = Mathf.Max(0f, 25f + MidiRows * RowH - height);
-                intendedScroller.scrollOffset = new Vector2(intendedScroller.scrollOffset.x, Mathf.Min(y, maxY));
+                // Also bring a pattern's first note into horizontal view if the
+                // previous clip was scrolled to a different part of the timeline.
+                long earliestTick = long.MaxValue;
+                foreach (var note in content.notes)
+                    if (note != null && note.startTick < earliestTick) earliestTick = note.startTick;
+                float earliestX = earliestTick == long.MaxValue ? 0f : (float)earliestTick / quantum * StepW;
+                float visibleWidth = intendedScroller.contentViewport.resolvedStyle.width;
+                if (visibleWidth < StepW * 2f) visibleWidth = StepW * 8f;
+                float gridWidth = steps * StepW;
+                float maxX = Mathf.Max(0f, gridWidth - visibleWidth);
+                float x = Mathf.Clamp(earliestX - StepW, 0f, maxX);
+                intendedScroller.scrollOffset = new Vector2(x, Mathf.Min(y, maxY));
                 SyncPianoRollLabels();
+                SyncFixedRuler();
                 int pitch = Mathf.Clamp(127 - Mathf.RoundToInt(middle), 0, 127);
                 octave = Mathf.Clamp(pitch / 12 - 1, -1, 9);
-            }).ExecuteLater(0);
+            }).ExecuteLater(20);
         }
 
         // Full 128-note keyboard: OCT buttons scroll vertically, not horizontally.
@@ -1613,7 +1745,7 @@ namespace ZPunk.DAW
             Changed();
         }
 
-        private void Redraw()
+        private void Redraw(bool preserveViewport=true)
         {
             if (!ready || root == null || chips == null || gridScrollContainer == null) return;
             // A refresh detaches the old note plane. Cancel any hold that was
@@ -1626,6 +1758,7 @@ namespace ZPunk.DAW
             // Refreshing note rectangles must not throw the user back to MIDI 127.
             // OCT +/- and initial track selection can still reposition afterwards.
             Vector2 previousOffset = scroller != null ? scroller.scrollOffset : Vector2.zero;
+            if (!preserveViewport) ++noteFocusRevision;
             float chipX = trackScroller != null ? trackScroller.scrollOffset.x : 0f;
             chips.Clear();
             if (song == null || song.tracks == null) return;
@@ -1688,6 +1821,10 @@ namespace ZPunk.DAW
                 (IsMidi ? "PIANO ROLL" : content != null && content.kind==ClipKind.Drums ? "DRUM STEP EDITOR" : "SAMPLE STEP EDITOR") +
                 "  /  Bar " + (clip.startTick / SongData.TicksPerBar4 + 1)) + "  /  HOLD TRACK TO GEN";
             gridScrollContainer.Clear();
+            rulerContent?.Clear();
+            rulerPlayhead = null;
+            pitchRowBackgrounds.Clear();
+            pitchRowLabels.Clear();
             labelViewport?.Clear();
             labelColumn = null;
             if (labelViewport != null)
@@ -1708,16 +1845,18 @@ namespace ZPunk.DAW
             names.style.flexGrow=0;
             if (labelViewport != null)
                 labelViewport.style.width = IsMidi ? 57f : 83f;
+            if (rulerGutter != null)
+                rulerGutter.style.width = IsMidi ? 57f : 83f;
             names.style.borderTopLeftRadius=0;
             names.style.borderTopRightRadius=0;
             names.style.borderBottomLeftRadius=0;
             names.style.borderBottomRightRadius=0;
-            var rulerGutter=Txt("",10);
-            rulerGutter.style.height=25;
-            rulerGutter.style.minHeight=25;
-            rulerGutter.style.maxHeight=25;
-            rulerGutter.style.flexShrink=0;
-            names.Add(rulerGutter);
+            var labelRulerSpacer = Txt("", 10);
+            labelRulerSpacer.style.height = 25;
+            labelRulerSpacer.style.minHeight = 25;
+            labelRulerSpacer.style.maxHeight = 25;
+            labelRulerSpacer.style.flexShrink = 0;
+            names.Add(labelRulerSpacer);
             // Exact DrumKit.GetClipByDrumId() order: 1..8. No Tom/FX lanes.
             string[] drums={"KICK","SNARE","CLAP","CLOSED","OPEN","RIDE","RIM","CRASH"};
             for(int row=0;row<RowCount;row++)
@@ -1736,6 +1875,7 @@ namespace ZPunk.DAW
                 label.style.marginBottom=0;
                 label.style.unityTextAlign=TextAnchor.MiddleLeft;
                 names.Add(label);
+                if (IsMidi) pitchRowLabels.Add(label);
             }
             labelColumn = names;
             labelViewport.Add(names);
@@ -1749,13 +1889,23 @@ namespace ZPunk.DAW
             grid.style.minHeight=25+EditorHeight;
             grid.style.backgroundColor=new Color(.055f,.075f,.112f);
             gridScrollContainer.Add(grid);
-            for (int beat=0;beat<steps;beat+=4)
+            // Every beat label lives in the pinned ruler, outside vertical scrolling.
+            // The 1.1 / 1.2 / 1.3 / 1.4 notation is common to MIDI and step clips.
+            if (rulerContent != null)
             {
-                var num=Txt(((beat/16)+1)+"."+((beat%16)/4+1),9,Muted);
-                num.style.position=Position.Absolute;
-                num.style.left=beat*StepW+3;
-                num.style.top=3;
-                grid.Add(num);
+                rulerContent.style.width = steps * StepW;
+                for (int beat = 0; beat < steps; beat += 4)
+                {
+                    var num = Txt(((beat / 16) + 1) + "." + ((beat % 16) / 4 + 1), 11,
+                        beat % 16 == 0 ? Ink : Muted);
+                    num.style.position = Position.Absolute;
+                    num.style.left = beat * StepW + 4;
+                    num.style.top = 3;
+                    num.style.height = 19;
+                    num.pickingMode = PickingMode.Ignore;
+                    rulerContent.Add(num);
+                }
+                SyncFixedRuler();
             }
             var plane=new VisualElement { name="ZPunkNotePlane" };
             plane.style.position=Position.Absolute;
@@ -1776,7 +1926,9 @@ namespace ZPunk.DAW
                 background.style.backgroundColor=row%2==0?new Color(.11f,.145f,.19f):new Color(.09f,.12f,.16f);
                 background.pickingMode=PickingMode.Ignore;
                 plane.Add(background);
+                if (IsMidi) pitchRowBackgrounds.Add(background);
             }
+            ApplySampleKeyGuide();
             for(int step=0;step<=steps;step++)
             {
                 var line=new VisualElement();
@@ -1839,6 +1991,18 @@ namespace ZPunk.DAW
             // Add to the outer grid so it spans the ruler and notes.
             // Adding it last also keeps it visible above the notes.
             grid.Add(editorPlayhead);
+            if (rulerContent != null)
+            {
+                rulerPlayhead = new VisualElement { name = "ZPunkRulerPlayhead" };
+                rulerPlayhead.style.position = Position.Absolute;
+                rulerPlayhead.style.top = 0;
+                rulerPlayhead.style.left = 0;
+                rulerPlayhead.style.width = 2;
+                rulerPlayhead.style.height = 25;
+                rulerPlayhead.style.backgroundColor = Accent;
+                rulerPlayhead.pickingMode = PickingMode.Ignore;
+                rulerContent.Add(rulerPlayhead);
+            }
             plane.RegisterCallback<PointerDownEvent>(evt=>
             {
                 if (evt.button != 0) return;
@@ -1950,13 +2114,19 @@ namespace ZPunk.DAW
                 {
                     if (scroller != null)
                     {
-                        scroller.scrollOffset = previousOffset;
+                        // New drum/chop clips start at the first lane; MIDI clips
+                        // are positioned by FocusPatternNotes / ScrollToOctave.
+                        if (preserveViewport) scroller.scrollOffset = previousOffset;
+                        else if (!IsMidi) scroller.scrollOffset = Vector2.zero;
                         SyncPianoRollLabels();
+                        SyncFixedRuler();
                     }
                 }).ExecuteLater(0);
         }
         private void Update()
         {
+            // Keeping pitch guidance in sync doesn't depend on the transport playing.
+            FollowPitchedSampleKey();
             if (!ready ||
                 root == null ||
                 editorPlayhead == null ||
@@ -2018,6 +2188,7 @@ namespace ZPunk.DAW
             {
                 lastPlayheadX = x;
                 editorPlayhead.style.left = x;
+                if (rulerPlayhead != null) rulerPlayhead.style.left = x;
             }
 
             // Keep the position indicator visible even when stopped.
