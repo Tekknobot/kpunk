@@ -62,6 +62,103 @@ public class KMusicPlayerUI : MonoBehaviour
     // Markers: normalized [0..1); zero is a valid explicit S01 start.
     private readonly List<float> _chops01 = new();
 
+    // Hints are ephemeral: never write noisy, machine-detected candidates into
+    // saved chop marker lists until the user explicitly adds/snaps a marker.
+    private readonly List<ZPunkSampleWarp.TransientHint> _transientHints = new();
+    private Coroutine _transientJob;
+    private int _transientRevision;
+    private bool _transientSnapEnabled = true;
+
+    private void ResetTransientAnalysis()
+    {
+        _transientRevision++;
+        if (_transientJob != null) StopCoroutine(_transientJob);
+        _transientJob = null;
+        _transientHints.Clear();
+        _wave?.SetTransientGuides(null);
+    }
+
+    private void BeginTransientAnalysis()
+    {
+        ResetTransientAnalysis();
+        if (_clip == null) return;
+        int revision = _transientRevision;
+        AudioClip source = _clip;
+        _transientJob = StartCoroutine(ZPunkSampleWarp.AnalyzeTransientHints(source, hits =>
+        {
+            if (_transientRevision != revision || source != _clip) return;
+            _transientHints.AddRange(hits);
+            _wave?.SetTransientGuides(_transientHints);
+            _transientJob = null;
+        }, () => _transientRevision != revision || _clip != source || this == null));
+    }
+
+    // Beat-grid fallback remains available for material with no clear attacks.
+    private float SnapMarker01(float proposed01)
+    {
+        if (_transientSnapEnabled && _clip != null && _clip.length > 0f)
+        {
+            float maxDistance = .085f / Mathf.Max(.001f, DawSampleDuration);
+            float distance = maxDistance;
+            float nearest = -1f;
+            foreach (var hint in _transientHints)
+            {
+                float d = Mathf.Abs(hint.position01 - proposed01);
+                if (d < distance) { nearest = hint.position01; distance = d; }
+            }
+            if (nearest >= 0f) return nearest;
+        }
+        return SnapMusical01(proposed01);
+    }
+
+    private void HighlightSelectedSlice()
+    {
+        if (_wave == null) return;
+        if (DawTryGetChopRange(_selectedMarkerIndex + 1, out float start, out float end))
+            _wave.SetActiveSlice01(start, end);
+        else
+            _wave.SetActiveSlice01(-1f, -1f);
+    }
+
+    public bool DawTransientSnapEnabled => _transientSnapEnabled;
+    public int DawSelectedChopPad => _selectedMarkerIndex >= 0 &&
+        _selectedMarkerIndex < 16 && _selectedMarkerIndex < _chops01.Count
+            ? _selectedMarkerIndex + 1 : 0;
+    public float DawSampleDuration => (_warpedClip != null ? _warpedClip : _clip) != null
+        ? (_warpedClip != null ? _warpedClip : _clip).length : 0f;
+    public bool DawTryGetChopRange(int pad, out float start01, out float end01)
+    {
+        start01 = end01 = 0f;
+        if (_clip == null || pad < 1 || pad > 16 || pad > _chops01.Count) return false;
+        start01 = _chops01[pad - 1];
+        end01 = pad < _chops01.Count ? _chops01[pad] : 1f;
+        return end01 > start01 + .00001f;
+    }
+    public void DawSelectChopPad(int pad)
+    {
+        if (!DawTryGetChopRange(pad, out float start, out float end)) return;
+        SelectMarkerFromChopPicker(pad - 1);
+        _wave?.FocusSlice01(start, end);
+    }
+    // Legacy step-sequencer pads have their own audition voice. Focus only
+    // so the same tap does not fire both the player and drum-engine previews.
+    public void DawFocusChopPad(int pad)
+    {
+        if (!DawTryGetChopRange(pad, out float start, out float end)) return;
+        SelectMarkerFromChopPicker(pad - 1, false);
+        _wave?.FocusSlice01(start, end);
+    }
+    public void DawShowFullSample()
+    {
+        _wave?.ResetZoom();
+    }
+    public void DawToggleTransientSnap()
+    {
+        _transientSnapEnabled = !_transientSnapEnabled;
+        ProjectPrefs.SetInt("zpunk.sampler.snap.transient", _transientSnapEnabled ? 1 : 0);
+        ProjectPrefs.Save();
+    }
+
     private AudioClip[] _clips = Array.Empty<AudioClip>();
     private int _clipIndex = -1;
 
@@ -238,6 +335,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_loadDeviceCoroutine != null) { StopCoroutine(_loadDeviceCoroutine); _loadDeviceCoroutine = null; }
 #endif
         ResetSampleKey();
+        ResetTransientAnalysis();
         _clip = null;
         _warpedClip = null;
         _clipResourcesPath = null;
@@ -550,6 +648,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (audioSource != null) audioSource.Stop();
         EnsureImportFolders();
         _autoWarpEnabled = ProjectPrefs.GetInt(WarpEnabledKey, 1) != 0;
+        _transientSnapEnabled = ProjectPrefs.GetInt("zpunk.sampler.snap.transient", 1) != 0;
     }
 
     private void EnsureDedicatedPlayerAudioSource()
@@ -585,6 +684,8 @@ public class KMusicPlayerUI : MonoBehaviour
         // remains selected. Restart the cancelled key analysis in that case.
         if (_clip != null && !_keyAnalysisRunning && !_sampleKey.found)
             BeginSampleKeyAnalysis();
+        if (_clip != null && _transientHints.Count == 0 && _transientJob == null)
+            BeginTransientAnalysis();
         // UI initialization and automatic project restore must be silent.
         if (audioSource != null) audioSource.Stop();
 
@@ -842,6 +943,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private void OnDisable()
     {
         ResetSampleKey();
+        ResetTransientAnalysis();
         if (_pitchBus != null && _onPitchBusChanged != null)
             _pitchBus.OnChanged -= _onPitchBusChanged;
         _pitchBus = null;
@@ -1091,6 +1193,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private void OnSourceSampleReady()
     {
         BeginSampleKeyAnalysis();
+        BeginTransientAnalysis();
         // A sample selection is a load, not a play command. This also prevents
         // a pending auto-warp completion from resuming an old preview.
         if (audioSource != null) audioSource.Stop();
@@ -1210,6 +1313,8 @@ public class KMusicPlayerUI : MonoBehaviour
             _wave.RestoreWindow(start01, len01);
             _wave.SetMusicalRuler(CurrentSongTempo(), active != null ? active.length : 0f);
             SyncMarkersToWave();
+            _wave.SetTransientGuides(_transientHints);
+            HighlightSelectedSlice();
         }
         if (oldWarp != null && oldWarp != _clip && oldWarp != active)
             Destroy(oldWarp, 5f);
@@ -1258,7 +1363,7 @@ public class KMusicPlayerUI : MonoBehaviour
             if (_selectedMarkerIndex < 0 || _selectedMarkerIndex >= _chops01.Count || _clip == null)
                 return "TAP A MARKER TO SELECT / DRAG TO ADJUST";
             return "SELECTED M" + (_selectedMarkerIndex + 1).ToString("00") +
-                "  /  " + (_chops01[_selectedMarkerIndex] * _clip.length).ToString("0.000") +
+                "  /  " + (_chops01[_selectedMarkerIndex] * DawSampleDuration).ToString("0.000") +
                 "s  /  DRAG OR NUDGE 10 MS";
         }
     }
@@ -1693,11 +1798,13 @@ public class KMusicPlayerUI : MonoBehaviour
         t01 = Mathf.Clamp01(t01);
         _scrub01 = t01;
 
-        float t = t01 * _clip.length;
-        audioSource.time = Mathf.Clamp(t, 0f, Mathf.Max(0f, _clip.length - 0.001f));
+        AudioClip active = _warpedClip != null ? _warpedClip : _clip;
+        if (audioSource.clip != active) audioSource.clip = active;
+        float t = t01 * active.length;
+        audioSource.time = Mathf.Clamp(t, 0f, Mathf.Max(0f, active.length - 0.001f));
 
         _wave?.SetPlayhead01(t01);
-        UpdateTimeLabels(audioSource.time, _clip.length);
+        UpdateTimeLabels(audioSource.time, active.length);
     }
 
     private void OnWaveMarkerSelected(int index)
@@ -1707,6 +1814,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _scrub01 = _chops01[index];
         _wave?.SetSelectedMarker(index);
         _wave?.SetPlayhead01(_scrub01);
+        HighlightSelectedSlice();
         UpdateMarkerNavigatorUI();
     }
 
@@ -1717,7 +1825,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (markerIndex < 0 || markerIndex >= _chops01.Count) return;
 
         float newT01 = GetClampedMarkerPosition01(markerIndex, t01);
-        if (_snapEnabled) newT01 = GetClampedMarkerPosition01(markerIndex, SnapMusical01(newT01));
+        if (_snapEnabled) newT01 = GetClampedMarkerPosition01(markerIndex, SnapMarker01(newT01));
 
         if (Mathf.Abs(_chops01[markerIndex] - newT01) <= 0.0001f && isDrag)
             return;
@@ -1743,7 +1851,7 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (_clip == null || _clip.length <= 0f) return Mathf.Clamp01(t01);
 
-        float minGap01 = MinMarkerGapSeconds / _clip.length;
+        float minGap01 = MinMarkerGapSeconds / Mathf.Max(.001f, DawSampleDuration);
         // The first start marker may land precisely on the first sample frame.
         float min = (markerIndex > 0) ? (_chops01[markerIndex - 1] + minGap01) : 0f;
         float max = (markerIndex < _chops01.Count - 1) ? (_chops01[markerIndex + 1] - minGap01) : (1f - minGap01);
@@ -1868,7 +1976,7 @@ public class KMusicPlayerUI : MonoBehaviour
 
         if (audioSource.isPlaying)
         {
-            t01 = Mathf.Clamp01(audioSource.time / _clip.length);
+            t01 = Mathf.Clamp01(audioSource.time / Mathf.Max(.001f, DawSampleDuration));
             _scrub01 = t01;
         }
         else
@@ -1888,7 +1996,7 @@ public class KMusicPlayerUI : MonoBehaviour
         float t01;
         if (audioSource.isPlaying)
         {
-            t01 = Mathf.Clamp01(audioSource.time / _clip.length);
+            t01 = Mathf.Clamp01(audioSource.time / Mathf.Max(.001f, DawSampleDuration));
             _scrub01 = t01;
         }
         else
@@ -1903,9 +2011,10 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (_clip == null || _clip.length <= 0f) return Mathf.Clamp01(position);
         float secondsPerSixteenth = 15f / Mathf.Max(1f, CurrentSongTempo());
-        float time = Mathf.Clamp01(position) * _clip.length;
+        float seconds = Mathf.Max(.001f, DawSampleDuration);
+        float time = Mathf.Clamp01(position) * seconds;
         float snapped = Mathf.Round(time / secondsPerSixteenth) * secondsPerSixteenth;
-        return Mathf.Clamp01(snapped / _clip.length);
+        return Mathf.Clamp01(snapped / seconds);
     }
 
     private void DropChopMarkerAt01(float t01)
@@ -1914,9 +2023,9 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_chops01.Count >= 17) return;
 
         t01 = Mathf.Clamp01(t01);
-        if (_snapEnabled) t01 = SnapMusical01(t01);
+        if (_snapEnabled) t01 = SnapMarker01(t01);
 
-        float minSlice01 = MinMarkerGapSeconds / _clip.length;
+        float minSlice01 = MinMarkerGapSeconds / Mathf.Max(.001f, DawSampleDuration);
         // All markers stay separated, even with snap disabled; never push 0.0
         // toward the next grid division or a percentage of the sample length.
         if (t01 > 1f - minSlice01) t01 = Mathf.Max(0f, 1f - minSlice01);
@@ -2052,7 +2161,7 @@ public class KMusicPlayerUI : MonoBehaviour
         btn.RegisterCallback<PointerDownEvent>(_ => action(), TrickleDown.TrickleDown);
     }
 
-    private void SelectMarkerFromChopPicker(int markerIndex)
+    private void SelectMarkerFromChopPicker(int markerIndex, bool audition = true)
     {
         if (_clip == null || _clip.length <= 0f) return;
         if (markerIndex < 0 || markerIndex >= _chops01.Count) return;
@@ -2067,7 +2176,8 @@ public class KMusicPlayerUI : MonoBehaviour
 
         UpdateMarkerNavigatorUI();
         RefreshChopPickerUI();
-        AuditionMarkerBoundary(_selectedMarkerIndex);
+        HighlightSelectedSlice();
+        if (audition) AuditionMarkerBoundary(_selectedMarkerIndex);
     }
 
     private void RefreshChopPickerUI()
@@ -2088,6 +2198,7 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         ClampSelectedMarkerIndex();
         _wave?.SetSelectedMarker(_selectedMarkerIndex);
+        HighlightSelectedSlice();
 
         if (_markerNavLabel != null)
         {
@@ -2097,7 +2208,7 @@ public class KMusicPlayerUI : MonoBehaviour
             }
             else
             {
-                float t = _chops01[_selectedMarkerIndex] * ((_clip != null) ? _clip.length : 0f);
+                float t = _chops01[_selectedMarkerIndex] * DawSampleDuration;
                 string role = (_selectedMarkerIndex == 16) ? "END 16" : $"START {_selectedMarkerIndex + 1:00}";
                 _markerNavLabel.text = $"M{_selectedMarkerIndex + 1:00}  {role}  {t:0.00}s";
             }
@@ -2138,7 +2249,7 @@ public class KMusicPlayerUI : MonoBehaviour
         ClampSelectedMarkerIndex();
         if (_selectedMarkerIndex < 0) return;
 
-        float delta01 = deltaSeconds / _clip.length;
+        float delta01 = deltaSeconds / Mathf.Max(.001f, DawSampleDuration);
         float target01 = _chops01[_selectedMarkerIndex] + delta01;
         target01 = GetClampedMarkerPosition01(_selectedMarkerIndex, target01);
 
@@ -2160,6 +2271,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_wave == null) return;
         _wave.SetMarkers01(_chops01);
         _wave.SetSelectedMarker(_selectedMarkerIndex);
+        HighlightSelectedSlice();
     }
 
     private int _lastTimeLabelSecond = -1, _lastDurationLabelSecond = -1;

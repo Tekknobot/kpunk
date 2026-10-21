@@ -21,6 +21,32 @@ namespace KMusic.UI
         private readonly VisualElement _playheadOverlay;
 
         private readonly List<float> _markers01 = new();
+        private readonly List<ZPunk.DAW.ZPunkSampleWarp.TransientHint> _guides = new();
+        private float _sliceStart01 = -1f, _sliceEnd01 = -1f;
+
+        public void SetTransientGuides(IEnumerable<ZPunk.DAW.ZPunkSampleWarp.TransientHint> guides)
+        {
+            _guides.Clear();
+            if (guides != null) _guides.AddRange(guides);
+            MarkDirtyRepaint();
+        }
+
+        public void SetActiveSlice01(float start01, float end01)
+        {
+            _sliceStart01 = end01 > start01 ? Mathf.Clamp01(start01) : -1f;
+            _sliceEnd01 = _sliceStart01 >= 0f ? Mathf.Clamp01(end01) : -1f;
+            MarkDirtyRepaint();
+        }
+
+        public void FocusSlice01(float start01, float end01)
+        {
+            if (end01 <= start01) return;
+            // Frame the complete segment with enough surrounding audio to grab
+            // both boundaries. Zoom never exceeds the waveform's own 32x limit.
+            float padding = Mathf.Max(.002f, (end01 - start01) * .12f);
+            RestoreWindow(start01 - padding, end01 - start01 + padding * 2f);
+        }
+
         // -1 means "hidden". (So we don't draw a confusing default line at t=0.)
         private float _playhead01 = -1f;
 
@@ -224,6 +250,8 @@ namespace KMusic.UI
             _peakGeneration++;
             if (_peakJob != null) { _peakJob.Pause(); _peakJob = null; }
             _peakClip = clip;
+            _guides.Clear();
+            _sliceStart01 = _sliceEnd01 = -1f;
             _peaks = null;
             _peakCount = 0;
             ResetZoom();
@@ -302,6 +330,23 @@ namespace KMusic.UI
             float v1 = Mathf.Clamp01(ViewStart01 + ViewLen01);
             float vLen = Mathf.Max(1e-6f, v1 - v0);
 
+            // The selected pad owns this shaded source interval. The entire
+            // waveform remains available via FULL and ordinary pinch/pan.
+            if (_sliceStart01 >= 0f && _sliceEnd01 > _sliceStart01 &&
+                _sliceEnd01 >= v0 && _sliceStart01 <= v1)
+            {
+                float left = r.x + Mathf.Clamp01((_sliceStart01 - v0) / vLen) * r.width;
+                float right = r.x + Mathf.Clamp01((_sliceEnd01 - v0) / vLen) * r.width;
+                painter.fillColor = new Color(.20f, .78f, .64f, .17f);
+                painter.BeginPath();
+                painter.MoveTo(new Vector2(left, r.y + 21f));
+                painter.LineTo(new Vector2(right, r.y + 21f));
+                painter.LineTo(new Vector2(right, r.y + r.height));
+                painter.LineTo(new Vector2(left, r.y + r.height));
+                painter.ClosePath();
+                painter.Fill();
+            }
+
             // Waveform: draw only the visible window range
             if (_peaks != null && _peakCount > 0)
             {
@@ -353,6 +398,25 @@ namespace KMusic.UI
                     painter.BeginPath();
                     painter.MoveTo(new Vector2(x, r.y + 22));
                     painter.LineTo(new Vector2(x, r.y + r.height));
+                    painter.Stroke();
+                }
+            }
+
+            // Thin, dashed ghost guides. Kicks are amber, broadband/snare
+            // estimates muted violet. They do not create editable chop markers.
+            foreach (var guide in _guides)
+            {
+                if (guide.position01 < v0 || guide.position01 > v1) continue;
+                float x = r.x + (guide.position01 - v0) / vLen * r.width;
+                painter.strokeColor = guide.kick
+                    ? new Color(1f, .69f, .34f, .55f)
+                    : new Color(.73f, .58f, 1f, .52f);
+                painter.lineWidth = 1.3f;
+                for (float y = r.y + 25f; y < r.y + r.height; y += 10f)
+                {
+                    painter.BeginPath();
+                    painter.MoveTo(new Vector2(x, y));
+                    painter.LineTo(new Vector2(x, Mathf.Min(y + 4f, r.y + r.height)));
                     painter.Stroke();
                 }
             }

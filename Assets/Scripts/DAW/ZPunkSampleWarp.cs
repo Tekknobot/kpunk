@@ -34,6 +34,106 @@ namespace ZPunk.DAW
             return window;
         }
 
+        // These are *suggested* attack locations, not stem separation. Classification
+        // is based on low-frequency versus broadband onset energy and is intentionally
+        // displayed as an estimate, not a guaranteed kick/snare identification.
+        public struct TransientHint
+        {
+            public float position01;
+            public bool kick;
+            public TransientHint(float position, bool isKick)
+            { position01 = position; kick = isKick; }
+        }
+        private struct AttackCandidate
+        {
+            public int frame;
+            public float strength;
+            public bool kick;
+            public AttackCandidate(int at, float value, bool isKick)
+            { frame = at; strength = value; kick = isKick; }
+        }
+
+        public static IEnumerator AnalyzeTransientHints(AudioClip clip,
+            Action<List<TransientHint>> complete, Func<bool> cancelled = null)
+        {
+            var hints = new List<TransientHint>();
+            if (clip == null || clip.samples < 1024 || clip.frequency <= 0 ||
+                clip.channels < 1 || clip.channels > 2)
+            { complete?.Invoke(hints); yield break; }
+
+            int channels = clip.channels, rate = clip.frequency;
+            const int hop = 512;
+            const int chunkFrames = 16384;
+            float[] buffer = new float[chunkFrames * channels];
+            float bass = 0, presence = 0, slowLow = 0, slowHigh = 0;
+            float lowEnergy = 0, highEnergy = 0, sumStrength = 0;
+            int accumulator = 0;
+            float lowAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * 190f / rate);
+            float presenceAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * 1800f / rate);
+            var candidates = new List<AttackCandidate>();
+            for (int offset = 0; offset < clip.samples; offset += chunkFrames)
+            {
+                if (cancelled != null && cancelled()) yield break;
+                int length = Mathf.Min(chunkFrames, clip.samples - offset);
+                if (!clip.GetData(buffer, offset))
+                { complete?.Invoke(hints); yield break; }
+                for (int i = 0; i < length; ++i)
+                {
+                    int at = i * channels;
+                    float x = channels == 2 ? (buffer[at] + buffer[at + 1]) * .5f : buffer[at];
+                    bass += lowAlpha * (x - bass);
+                    presence += presenceAlpha * (x - presence);
+                    float high = x - presence;
+                    lowEnergy += bass * bass;
+                    highEnergy += high * high;
+                    if (++accumulator != hop) continue;
+                    float lo = Mathf.Sqrt(lowEnergy / hop);
+                    float hi = Mathf.Sqrt(highEnergy / hop);
+                    float onsetLow = Mathf.Max(0f, lo - slowLow * 1.15f);
+                    float onsetHigh = Mathf.Max(0f, hi - slowHigh * 1.17f);
+                    float strength = onsetLow * 1.45f + onsetHigh * .8f;
+                    sumStrength += strength;
+                    // Local contrast suppresses most steady tones and quiet noise.
+                    if (strength > .001f && (onsetLow > slowLow * .13f ||
+                        onsetHigh > slowHigh * .16f))
+                        candidates.Add(new AttackCandidate(Mathf.Max(0, offset + i - hop / 2),
+                            strength, onsetLow * 1.15f >= onsetHigh * .85f));
+                    slowLow = .87f * slowLow + .13f * lo;
+                    slowHigh = .87f * slowHigh + .13f * hi;
+                    lowEnergy = highEnergy = 0f;
+                    accumulator = 0;
+                }
+                yield return null; // bounded PCM work on the main thread
+            }
+            float threshold = Mathf.Max(.0015f, sumStrength /
+                Mathf.Max(1f, clip.samples / (float)hop) * 1.7f);
+            int minimumSpacing = Mathf.RoundToInt(rate * .075f);
+            // Keep the strongest candidate in each ~75ms neighborhood.
+            var picked = new List<AttackCandidate>();
+            foreach (var hit in candidates)
+            {
+                if (hit.strength < threshold) continue;
+                if (picked.Count > 0 && hit.frame - picked[picked.Count - 1].frame < minimumSpacing)
+                {
+                    if (hit.strength > picked[picked.Count - 1].strength)
+                        picked[picked.Count - 1] = hit;
+                }
+                else picked.Add(hit);
+            }
+            // A very long song would otherwise display thousands of guides.
+            // Keep a bounded set of the strongest; return in chronological order.
+            const int maxHints = 256;
+            if (picked.Count > maxHints)
+            {
+                picked.Sort((a, b) => b.strength.CompareTo(a.strength));
+                picked.RemoveRange(maxHints, picked.Count - maxHints);
+                picked.Sort((a, b) => a.frame.CompareTo(b.frame));
+            }
+            foreach (var hit in picked)
+                hints.Add(new TransientHint(Mathf.Clamp01(hit.frame / (float)clip.samples), hit.kick));
+            complete?.Invoke(hints);
+        }
+
         // Duration-derived estimate only. For an untrimmed song, users must set
         // source BPM manually; guessing BPM from duration is not beat detection.
         public static float EstimateLoopBpm(AudioClip clip, float songBpm)
@@ -141,6 +241,8 @@ namespace ZPunk.DAW
             var points = new List<WarpPoint> { new WarpPoint(0, 0) };
             float meanScore = totalScore / Mathf.Max(1, strengths.Count);
             float threshold = Mathf.Max(.0009f, meanScore * 1.8f);
+            var attackFrames = new List<int>();
+            int lastAttack = -sampleRate;
             int lastAccepted = -sampleRate;
             int minGap = Mathf.RoundToInt(sampleRate * .135f);
             float eighthFrames = sampleRate * 30f / targetBpm;
@@ -155,6 +257,12 @@ namespace ZPunk.DAW
                     strength < strengths[i + 1] || strength < strengths[i - 2] ||
                     strength < strengths[i + 2]) continue;
                 int sourceAt = positions[i];
+                if (sourceAt - lastAttack >= minGap && sourceAt >= 0 &&
+                    sourceAt < original.samples - inputGuard)
+                {
+                    attackFrames.Add(sourceAt);
+                    lastAttack = sourceAt;
+                }
                 if (sourceAt - lastAccepted < minGap || sourceAt < inputGuard ||
                     sourceAt > original.samples - inputGuard) continue;
                 int expected = Mathf.RoundToInt(sourceAt * ratio);
@@ -231,6 +339,11 @@ namespace ZPunk.DAW
                 Array.Clear(weightBuffer, 0, outFrames);
                 yield return StretchMappedBlock(inputBuffer, sourceFrames, sourceStart,
                     cursor, outFrames, channels, points, outputBuffer, weightBuffer, cancelled);
+                // WSOLA can double/blur sharp attacks. Replace just the narrow
+                // transient core with untouched source PCM and crossfade its edges.
+                // The body of each sound remains time-warped / pitch-preserved.
+                PreserveTransientCores(inputBuffer, sourceFrames, sourceStart,
+                    cursor, outFrames, channels, sampleRate, points, attackFrames, outputBuffer);
                 if (cancelled != null && cancelled())
                 { UnityEngine.Object.Destroy(target); yield break; }
                 if (tail != null)
@@ -280,6 +393,49 @@ namespace ZPunk.DAW
                 "GRID ALIGNED / " + shifted + " ATTACKS / " +
                 sourceBpm.ToString("0.#") + " TO " + targetBpm.ToString("0.#") + " BPM" :
                 "TEMPO MATCHED / NO GRID ATTACKS FOUND");
+        }
+
+        private static float MapSourceToOutput(List<WarpPoint> points, float source)
+        {
+            int left = 0, right = points.Count - 1;
+            while (left + 1 < right)
+            {
+                int middle = (left + right) / 2;
+                if (points[middle].source <= source) left = middle;
+                else right = middle;
+            }
+            WarpPoint a = points[left], b = points[right];
+            float t = Mathf.Clamp01((source - a.source) / Mathf.Max(1f, b.source - a.source));
+            return Mathf.Lerp(a.destination, b.destination, t);
+        }
+
+        private static void PreserveTransientCores(float[] input, int inputFrames, int inputStart,
+            int outputStart, int outputFrames, int channels, int rate,
+            List<WarpPoint> points, List<int> attacks, float[] output)
+        {
+            int pre = Mathf.Max(32, Mathf.RoundToInt(.010f * rate));
+            int post = Mathf.Max(64, Mathf.RoundToInt(.045f * rate));
+            int fade = Mathf.Max(16, Mathf.RoundToInt(.008f * rate));
+            foreach (int attack in attacks)
+            {
+                int center = Mathf.RoundToInt(MapSourceToOutput(points, attack));
+                int start = Mathf.Max(0, center - pre);
+                int end = Mathf.Min(outputStart + outputFrames, center + post);
+                if (end <= outputStart || start >= outputStart + outputFrames) continue;
+                for (int global = Mathf.Max(start, outputStart); global < end; global++)
+                {
+                    int sourceAt = attack + (global - center) - inputStart;
+                    if (sourceAt < 0 || sourceAt >= inputFrames) continue;
+                    float fadeIn = Mathf.Clamp01((global - (center - pre)) / (float)fade);
+                    float fadeOut = Mathf.Clamp01((center + post - global) / (float)fade);
+                    float blend = Mathf.Min(fadeIn, fadeOut);
+                    // Equal across channels to preserve stereo imaging.
+                    int outAt = (global - outputStart) * channels;
+                    int inAt = sourceAt * channels;
+                    for (int c = 0; c < channels; c++)
+                        output[outAt + c] = Mathf.Lerp(output[outAt + c], input[inAt + c], blend);
+                }
+            }
         }
 
         private static float MapOutputToSource(List<WarpPoint> points, float output)

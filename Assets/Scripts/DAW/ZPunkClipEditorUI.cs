@@ -42,6 +42,9 @@ namespace ZPunk.DAW
         private VisualElement samplerPage, samplerWave;
         private ScrollView samplerScroll;
         private Label samplerSelectedMarker;
+        private Button samplerSnapButton;
+        private readonly List<Button> samplerChopPads = new List<Button>();
+        private readonly List<VisualElement> samplerChopRangeBars = new List<VisualElement>();
         private Label samplerTitle, samplerWarpLabel, samplerLibraryLabel, samplerPitchLabel;
         private Label samplerSourceKeyLabel, samplerPitchedKeyLabel, generatorSampleKeyHint, clipSampleKeyReference;
         private Button generatorSampleKeyButton;
@@ -461,8 +464,10 @@ namespace ZPunk.DAW
             warpRow.style.flexShrink = 0;
             samplerWarpButton = Btn("WARP ON", () => { FindSampler(); samplePlayer?.DawToggleAutoWarp(); RefreshSampler(); }, 98);
             warpRow.Add(samplerWarpButton);
+            warpRow.Add(Btn("-10", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(-10); RefreshSampler(); }, 48));
             warpRow.Add(Btn("-1", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(-1); RefreshSampler(); }, 45));
             warpRow.Add(Btn("+1", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(1); RefreshSampler(); }, 45));
+            warpRow.Add(Btn("+10", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(10); RefreshSampler(); }, 48));
             warpCard.Add(warpRow);
             samplerWarpLabel = Txt("SOURCE BPM / WAITING",11,Accent);
             samplerWarpLabel.style.whiteSpace = WhiteSpace.Normal;
@@ -569,12 +574,18 @@ namespace ZPunk.DAW
             zoomActions.style.marginTop = 4;
             zoomActions.Add(Btn("- ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(false); RefreshSampler(); }, 80));
             zoomActions.Add(Btn("+ ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(true); RefreshSampler(); }, 80));
-            var gridCaption = Txt("BAR GRID  /  SNAP 1/16",10,Accent);
-            gridCaption.style.flexGrow = 1;
-            gridCaption.style.unityTextAlign = TextAnchor.MiddleRight;
-            zoomActions.Add(gridCaption);
-            samplerPage.Add(zoomActions);
-            var help = Txt("TAP EMPTY SPACE: ADD  /  DRAG MARK: MOVE  /  DRAG WAVE: PAN  /  SWIPE UP: SCROLL",10,Muted);
+            zoomActions.Add(Btn("FULL", () => { FindSampler(); samplePlayer?.DawShowFullSample(); RefreshSampler(); }, 66));
+            samplerSnapButton = Btn("HIT SNAP", () => { FindSampler(); samplePlayer?.DawToggleTransientSnap(); RefreshSampler(); }, 94);
+            zoomActions.Add(samplerSnapButton);
+            // Keep all four controls reachable even on narrow portrait phones.
+            var zoomScroll = new ScrollView(ScrollViewMode.Horizontal);
+            zoomScroll.style.height = 45;
+            zoomScroll.style.flexShrink = 0;
+            zoomScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            zoomScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            zoomScroll.Add(zoomActions);
+            samplerPage.Add(zoomScroll);
+            var help = Txt("DASHED AMBER: KICK EST.  /  VIOLET: SNARE EST.  /  TAP PAD: FOCUS CHOP  /  FULL: WHOLE SAMPLE",10,Muted);
             help.style.whiteSpace = WhiteSpace.Normal;
             help.style.flexShrink = 0;
             help.style.marginTop = 7;
@@ -621,21 +632,46 @@ namespace ZPunk.DAW
             {
                 var padRow = new VisualElement();
                 padRow.style.flexDirection = FlexDirection.Row;
-                padRow.style.height = 55;
+                padRow.style.height = 69;
                 padRow.style.flexShrink = 0;
                 for (int j = 0; j < 4; j++)
                 {
                     int slice = group * 4 + j + 1;
                     var button = Btn("S"+slice.ToString("00"),()=>{
-                        var drum = FindObjectOfType<KMusicDrumSequencer>();
-                        if (drum != null) drum.AuditionChop(slice);
+                        FindSampler();
+                        samplePlayer?.DawSelectChopPad(slice);
+                        RefreshSampler();
                     },50);
                     button.style.flexGrow = 1;
                     button.style.flexShrink = 0;
                     button.style.minWidth = 56;
                     button.style.marginRight = 5;
-                    button.style.height = 48;
+                    button.style.height = 62;
+                    button.style.fontSize = 11;
+                    button.style.whiteSpace = WhiteSpace.Normal;
                     button.style.backgroundColor = Raised;
+                    button.style.position = Position.Relative;
+                    // A tiny bottom mini-timeline indicates which part of the
+                    // whole sample the pad plays, including its end boundary.
+                    var track = new VisualElement();
+                    track.pickingMode = PickingMode.Ignore;
+                    track.style.position = Position.Absolute;
+                    track.style.left = 5;
+                    track.style.right = 5;
+                    track.style.bottom = 5;
+                    track.style.height = 4;
+                    track.style.backgroundColor = Surface;
+                    var bar = new VisualElement();
+                    bar.pickingMode = PickingMode.Ignore;
+                    bar.style.position = Position.Absolute;
+                    bar.style.top = 0;
+                    bar.style.bottom = 0;
+                    bar.style.backgroundColor = Accent;
+                    bar.style.display = DisplayStyle.None;
+                    track.Add(bar);
+                    button.Add(track);
+                    samplerChopPads.Add(button);
+                    samplerChopRangeBars.Add(bar);
                     padRow.Add(button);
                 }
                 padScroll.Add(padRow);
@@ -1131,6 +1167,32 @@ namespace ZPunk.DAW
                 samplerLibraryLabel.text = samplePlayer != null ? samplePlayer.DawSampleFolder : "SAMPLE LIBRARY";
             if (samplerSelectedMarker != null)
                 samplerSelectedMarker.text = samplePlayer != null ? samplePlayer.DawSelectedMarkerLabel : "NO MARKER SELECTED";
+            if (samplerSnapButton != null)
+                samplerSnapButton.text = samplePlayer != null && samplePlayer.DawTransientSnapEnabled
+                    ? "HIT SNAP" : "GRID SNAP";
+            for (int i = 0; i < samplerChopPads.Count; ++i)
+            {
+                Button button = samplerChopPads[i];
+                VisualElement bar = samplerChopRangeBars[i];
+                float start = 0f, end = 0f;
+                bool exists = samplePlayer != null && samplePlayer.DawTryGetChopRange(i + 1, out start, out end);
+                bool selected = exists && samplePlayer.DawSelectedChopPad == i + 1;
+                float duration = samplePlayer != null ? samplePlayer.DawSampleDuration : 0f;
+                button.text = exists
+                    ? "S" + (i + 1).ToString("00") + "\n" +
+                      (start * duration).ToString("0.0") + " - " + (end * duration).ToString("0.0") + "s"
+                    : "S" + (i + 1).ToString("00") + "\nEMPTY";
+                button.style.color = exists ? Ink : Muted;
+                button.style.backgroundColor = selected ? new Color(.15f, .38f, .36f) : Raised;
+                button.style.borderBottomWidth = selected ? 2f : 0f;
+                button.style.borderBottomColor = Accent;
+                bar.style.display = exists ? DisplayStyle.Flex : DisplayStyle.None;
+                if (exists)
+                {
+                    bar.style.left = Length.Percent(start * 100f);
+                    bar.style.width = Length.Percent(Mathf.Max(1f, (end - start) * 100f));
+                }
+            }
         }
         private void RefreshClipSampleKeyReference()
         {

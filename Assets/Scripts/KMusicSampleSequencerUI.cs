@@ -246,10 +246,12 @@ public class KMusicSampleSequencerUI : MonoBehaviour
     {
         activeChop = Mathf.Clamp(chopId, 1, 16);
 
-        // Only an explicit tap/click auditions a chop. Startup, project restore,
-        // and UI rebinding must not trigger sample playback.
+        // Select the corresponding start marker and frame its slice in the
+        // shared waveform. Only explicit user taps should audition audio.
         if (audition)
         {
+            var player = FindObjectOfType<KMusicPlayerUI>();
+            player?.DawFocusChopPad(activeChop);
             if (_sequencer == null) _sequencer = FindObjectOfType<KMusicDrumSequencer>();
             _sequencer?.AuditionChop(activeChop);
         }
