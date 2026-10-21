@@ -64,7 +64,8 @@ public static bool TryGetCachedClip(out AudioClip clip)
             Debug.Log("[Chops] Cleared applied chops.");
         }
 
-public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNull, IList<float> markerPositions01)
+public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNull,
+            IList<float> markerPositions01, bool lastMarkerIsEndOnly = false)
         {
             string id = !string.IsNullOrEmpty(resourcesPathOrNull)
                 ? resourcesPathOrNull
@@ -75,7 +76,7 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
                 ? new List<float>(markerPositions01)
                 : new List<float>();
 
-            SaveApplied(id, list);
+            SaveApplied(id, list, lastMarkerIsEndOnly);
 
             _cachedId = id;
             _cachedClip = clip;
@@ -90,9 +91,11 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             public float[] sliceStart01;      // length 16
             public float[] sliceEnd01;        // length 16
             public float[] markerPositions01; // explicit user markers, allows 17th marker to close chop 16
+            public bool lastMarkerIsEndOnly; // true for hit-sliced closing boundary (including partial sets)
         }
 
-        public static void SaveApplied(string resourcesPath, List<float> userMarkers01)
+        public static void SaveApplied(string resourcesPath, List<float> userMarkers01,
+            bool lastMarkerIsEndOnly = false)
         {
             if (string.IsNullOrEmpty(resourcesPath)) return;
 
@@ -126,7 +129,8 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             var starts = new float[16];
             var ends = new float[16];
 
-            int playableCount = Mathf.Min(16, markers.Count);
+            lastMarkerIsEndOnly = lastMarkerIsEndOnly && markers.Count >= 2;
+            int playableCount = Mathf.Min(16, markers.Count - (lastMarkerIsEndOnly ? 1 : 0));
             for (int i = 0; i < 16; i++)
             {
                 if (i >= playableCount)
@@ -148,7 +152,8 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
                 resourcesPath = resourcesPath,
                 sliceStart01 = starts,
                 sliceEnd01 = ends,
-                markerPositions01 = markers.ToArray()
+                markerPositions01 = markers.ToArray(),
+                lastMarkerIsEndOnly = lastMarkerIsEndOnly
             };
 
             ProjectPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));
@@ -163,13 +168,22 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
         // A legacy project may have slice boundaries but no explicit markers.
         public static bool TryLoadAppliedMarkerPositions(out float[] markers01)
         {
+            bool ignored;
+            return TryLoadAppliedMarkerPositions(out markers01, out ignored);
+        }
+
+        public static bool TryLoadAppliedMarkerPositions(out float[] markers01,
+            out bool lastMarkerIsEndOnly)
+        {
             markers01 = null;
+            lastMarkerIsEndOnly = false;
             if (!ProjectPrefs.HasKey(PrefKey_Json)) return false;
             try
             {
                 var save = JsonUtility.FromJson<ChopSave>(ProjectPrefs.GetString(PrefKey_Json, ""));
                 if (save == null || save.markerPositions01 == null) return false;
                 markers01 = (float[])save.markerPositions01.Clone();
+                lastMarkerIsEndOnly = save.lastMarkerIsEndOnly;
                 Array.Sort(markers01);
                 return true;
             }
@@ -229,27 +243,31 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
                 Array.Copy(sliceEnd01, ends, Mathf.Min(16, sliceEnd01.Length));
 
             var markers = new List<float>();
+            int finalPlayable = -1;
             for (int i = 0; i < starts.Length; i++)
             {
                 float s = starts[i];
                 float e = ends[i];
                 if (e > s && (s > 0.0001f || (i == 0 && e > 0f)))
+                {
                     markers.Add(Mathf.Clamp01(s));
+                    finalPlayable = i;
+                }
             }
-            if (ends.Length >= 16)
-            {
-                float finalEnd = ends[15];
-                float finalStart = starts[15];
-                if (finalEnd > finalStart + 0.0001f && finalEnd < 0.9999f)
-                    markers.Add(Mathf.Clamp01(finalEnd));
-            }
+            // Project snapshots carry start/end arrays, not the end-only flag.
+            // Recover the last boundary even for 1..15 auto-sliced pads.
+            bool closing = finalPlayable >= 0 &&
+                ends[finalPlayable] > starts[finalPlayable] + 0.0001f &&
+                ends[finalPlayable] < 0.9999f;
+            if (closing) markers.Add(Mathf.Clamp01(ends[finalPlayable]));
 
             var save = new ChopSave
             {
                 resourcesPath = resourcesPath,
                 sliceStart01 = starts,
                 sliceEnd01 = ends,
-                markerPositions01 = markers.ToArray()
+                markerPositions01 = markers.ToArray(),
+                lastMarkerIsEndOnly = closing
             };
 
             ProjectPrefs.SetString(PrefKey_Json, JsonUtility.ToJson(save));

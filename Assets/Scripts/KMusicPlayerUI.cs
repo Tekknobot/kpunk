@@ -61,6 +61,9 @@ public class KMusicPlayerUI : MonoBehaviour
 
     // Markers: normalized [0..1); zero is a valid explicit S01 start.
     private readonly List<float> _chops01 = new();
+    // An automatic hit slice uses the final detected transient as an END,
+    // not another pad start. This also works when fewer than 16 hits remain.
+    private bool _closingHitMarker;
 
     // Hints are ephemeral: never write noisy, machine-detected candidates into
     // saved chop marker lists until the user explicitly adds/snaps a marker.
@@ -68,12 +71,19 @@ public class KMusicPlayerUI : MonoBehaviour
     private Coroutine _transientJob;
     private int _transientRevision;
     private bool _transientSnapEnabled = true;
-    // Stable beat-grid phase measured from the actual audio being DISPLAYED.
-    // Only chop generation uses this phase; estimated hits are never saved.
+    // Stable beat-grid phase measured from the displayed audio. Retained for
+    // ruler/grid snapping; SLICE HITS itself does not quantize the markers.
     private float _beatPhaseSeconds;
     private bool _beatPhaseFound;
-    public string DawGridStatus => _transientJob != null ? "ANALYZING RHYTHM" :
-        _beatPhaseFound ? "BEAT GRID FOUND" : "BPM GRID / NO CLEAR PHASE";
+    private bool _sliceHitsPending;
+    private float _pendingSliceStart01;
+    private string _sliceHitsFeedback = "";
+    public string DawHitSliceStatus => _warpProcessing ? "WAIT FOR WARP TO FINISH" :
+        _sliceHitsPending ? "WAITING FOR HIT ANALYSIS" :
+        _transientJob != null ? "ANALYZING HITS" :
+        !string.IsNullOrEmpty(_sliceHitsFeedback) ? _sliceHitsFeedback :
+        _clip == null ? "LOAD A SAMPLE" : _transientHints.Count == 0 ?
+        "NO HITS DETECTED" : "READY / " + _transientHints.Count + " HIT GUIDES";
 
     private void UpdateBeatGrid()
     {
@@ -133,6 +143,8 @@ public class KMusicPlayerUI : MonoBehaviour
         _transientHints.Clear();
         _beatPhaseSeconds = 0f;
         _beatPhaseFound = false;
+        _sliceHitsPending = false;
+        _sliceHitsFeedback = "";
         _wave?.SetTransientGuides(null);
         UpdateBeatGrid();
     }
@@ -153,11 +165,17 @@ public class KMusicPlayerUI : MonoBehaviour
             _wave?.SetTransientGuides(_transientHints);
             UpdateBeatGrid();
             _transientJob = null;
+            if (_sliceHitsPending)
+            {
+                float requestedStart = _pendingSliceStart01;
+                _sliceHitsPending = false;
+                SliceAtDetectedHits(requestedStart);
+            }
         }, () => _transientRevision != revision || _clip != source ||
             analyzed != (_warpedClip != null ? _warpedClip : _clip) || this == null));
     }
 
-    // Beat-grid fallback remains available for material with no clear attacks.
+    // Beat-grid snapping remains available for manually moved markers.
     private float SnapMarker01(float proposed01)
     {
         if (_transientSnapEnabled && _clip != null && _clip.length > 0f)
@@ -186,14 +204,16 @@ public class KMusicPlayerUI : MonoBehaviour
 
     public bool DawTransientSnapEnabled => _transientSnapEnabled;
     public int DawSelectedChopPad => _selectedMarkerIndex >= 0 &&
-        _selectedMarkerIndex < 16 && _selectedMarkerIndex < _chops01.Count
+        _selectedMarkerIndex < 16 &&
+        _selectedMarkerIndex < _chops01.Count - (_closingHitMarker ? 1 : 0)
             ? _selectedMarkerIndex + 1 : 0;
     public float DawSampleDuration => (_warpedClip != null ? _warpedClip : _clip) != null
         ? (_warpedClip != null ? _warpedClip : _clip).length : 0f;
     public bool DawTryGetChopRange(int pad, out float start01, out float end01)
     {
         start01 = end01 = 0f;
-        if (_clip == null || pad < 1 || pad > 16 || pad > _chops01.Count) return false;
+        if (_clip == null || pad < 1 || pad > 16 ||
+            pad > _chops01.Count - (_closingHitMarker ? 1 : 0)) return false;
         start01 = _chops01[pad - 1];
         end01 = pad < _chops01.Count ? _chops01[pad] : 1f;
         return end01 > start01 + .00001f;
@@ -217,58 +237,88 @@ public class KMusicPlayerUI : MonoBehaviour
         _wave?.ResetZoom();
     }
 
-    // Evenly-spaced musical slices, beginning on the inferred beat phase.
-    // This never alters audio and only replaces the markers when explicitly
-    // selected; existing manually placed chops remain otherwise untouched.
-    // beatsPerChop = .5, 1 or 4 for half-beats, beats or bars.
-    public void DawGridChop(float beatsPerChop)
+    // Slice directly on the existing GHOST attack guides. Unlike GRID CHOP,
+    // each boundary follows the detected recording, not an idealized tempo.
+    // HEAD is deliberately kept as marker one, without quantizing it again.
+    public void DawSliceHits()
     {
-        if (_clip == null || DawSampleDuration <= 0f) return;
+        if (_clip == null || DawSampleDuration <= 0f)
+        { _sliceHitsFeedback = "LOAD A SAMPLE FIRST"; return; }
+        if (_warpProcessing)
+        { _sliceHitsFeedback = "WAIT FOR WARP TO FINISH"; return; }
+        float start01 = Mathf.Clamp01(_scrub01);
+        if (_transientJob != null)
+        {
+            // Capture the exact playhead at button press; a song can take time
+            // to analyze on phones. The action runs when current PCM finishes.
+            _pendingSliceStart01 = start01;
+            _sliceHitsPending = true;
+            _sliceHitsFeedback = "WAITING FOR HIT ANALYSIS";
+            UpdateTrackTitle("SLICE HITS / ANALYZING");
+            return;
+        }
+        SliceAtDetectedHits(start01);
+    }
+
+    private void SliceAtDetectedHits(float start01)
+    {
         float duration = DawSampleDuration;
+        if (_clip == null || duration <= 0f || _transientHints.Count == 0)
+        {
+            _sliceHitsFeedback = "NO TRANSIENTS FOUND";
+            UpdateTrackTitle(_sliceHitsFeedback);
+            return; // Never destroy existing chops when analysis found no hits.
+        }
+
+        // Follow the actual kick/snare suggestions after HEAD, not the beat grid.
+        // A short musical-rate guard prevents flam/double-detection/hats from
+        // creating a few-millisecond unusable pad, but does not move any hit.
         float beatSeconds = 60f / Mathf.Max(1f, CurrentSongTempo());
-        float step = beatSeconds * Mathf.Clamp(beatsPerChop, .5f, 16f);
-        float cursor = Mathf.Clamp01(_scrub01) * duration;
-        float phase = _beatPhaseFound ? _beatPhaseSeconds : 0f;
-        // At file load use the first detected hit. Later grid-chop actions can
-        // target a different section by moving the playhead first.
-        float first = phase + Mathf.Max(0f,
-            Mathf.Round((Mathf.Max(cursor, phase) - phase) / beatSeconds)) * beatSeconds;
-        if (duration - first < Mathf.Max(.05f, step * .35f))
-        { UpdateTrackTitle("NO ROOM FOR GRID CHOPS"); return; }
+        float minInterval = Mathf.Max(MinMarkerGapSeconds,
+            Mathf.Min(.14f, beatSeconds * .28f));
+        float firstSeconds = Mathf.Clamp01(start01) * duration;
+        float lastSeconds = firstSeconds;
+        var boundaries = new List<float>(17) { Mathf.Clamp01(start01) };
+        foreach (var hit in _transientHints)
+        {
+            float at = Mathf.Clamp01(hit.position01) * duration;
+            if (at < lastSeconds + minInterval || at > duration - MinMarkerGapSeconds)
+                continue;
+            boundaries.Add(hit.position01);
+            lastSeconds = at;
+            if (boundaries.Count == 17) break; // 16 pads + END boundary.
+        }
+        if (boundaries.Count < 2)
+        {
+            _sliceHitsFeedback = "NO FOLLOWING HITS / MOVE HEAD EARLIER";
+            UpdateTrackTitle(_sliceHitsFeedback);
+            return; // Preserve the user's preexisting chop work.
+        }
+
+        // The last boundary is always an END, even if the song offers fewer
+        // than 16 usable hits. No unwanted tail pad to the end of a long song.
         _chops01.Clear();
-        for (int pad = 0; pad < 16; pad++)
-        {
-            float at = first + pad * step;
-            if (at >= duration - MinMarkerGapSeconds) break;
-            _chops01.Add(at / duration);
-        }
-        if (_chops01.Count == 0) return;
-        // Explicit closing marker for pad 16. Without this, its end defaults
-        // to the entire remaining song rather than exactly one beat/bar.
-        // The chop-state serializer supports seventeen markers: sixteen pad
-        // starts plus one closing boundary (not a seventeenth playable pad).
-        if (_chops01.Count == 16)
-        {
-            float closing = first + 16f * step;
-            if (closing < duration - MinMarkerGapSeconds)
-                _chops01.Add(closing / duration);
-        }
+        _chops01.AddRange(boundaries);
+        _closingHitMarker = true;
+        _selectedMarkerIndex = 0;
         _chopArmed = true;
         _markerAddMode = true;
         if (_wave != null) _wave.MarkersDraggable = true;
-        _selectedMarkerIndex = 0;
-        _scrub01 = _chops01[0];
-        _wave?.SetPlayhead01(_scrub01);
         SyncMarkersToWave();
         UpdateMarkerNavigatorUI();
         PersistMarkersIfPossible();
-        float end = Mathf.Min(duration, first + step);
-        _wave?.FocusSlice01(first / duration, end / duration);
-        UpdateTrackTitle("GRID CHOP / " + _chops01.Count + " PADS");
+        _scrub01 = start01;
+        SeekTo01(start01);
+        _wave?.FocusSlice01(boundaries[0], boundaries[1]);
+        int pads = boundaries.Count - 1;
+        _sliceHitsFeedback = "SLICED " + pads + " HIT CHOPS / FROM HEAD";
+        UpdateTrackTitle(_sliceHitsFeedback);
     }
+
     public void DawToggleTransientSnap()
     {
         _transientSnapEnabled = !_transientSnapEnabled;
+        if (_wave != null) _wave.PlayheadSnapsToGuides = _transientSnapEnabled;
         ProjectPrefs.SetInt("zpunk.sampler.snap.transient", _transientSnapEnabled ? 1 : 0);
         ProjectPrefs.Save();
     }
@@ -363,6 +413,7 @@ public class KMusicPlayerUI : MonoBehaviour
     // Last known playhead position from scrubbing/UI.
     // Used when dropping markers via buttons even if audio isn't playing.
     private float _scrub01 = 0f;
+    private bool _playheadGrabbed;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
     private TrackInfo[] _deviceTracks = Array.Empty<TrackInfo>();
@@ -867,6 +918,11 @@ public class KMusicPlayerUI : MonoBehaviour
         _wave.MarkerDrag01 += OnWaveMarkerDrag01;
         _wave.MarkerSelected -= OnWaveMarkerSelected;
         _wave.MarkerSelected += OnWaveMarkerSelected;
+        _wave.PlayheadMoved01 -= OnWavePlayheadMoved01;
+        _wave.PlayheadMoved01 += OnWavePlayheadMoved01;
+        _wave.PlayheadGrabbed -= OnWavePlayheadGrabbed;
+        _wave.PlayheadGrabbed += OnWavePlayheadGrabbed;
+        _wave.PlayheadSnapsToGuides = _transientSnapEnabled;
         _wave.MarkersDraggable = _chopArmed;
 
         if (_btnPlay != null) _btnPlay.clicked += OnPlayClicked;
@@ -953,6 +1009,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private void RestoreMarkersFromAppliedState()
     {
         _chops01.Clear();
+        _closingHitMarker = false;
 
         if (_clip == null || string.IsNullOrEmpty(_clipResourcesPath))
         {
@@ -974,7 +1031,8 @@ public class KMusicPlayerUI : MonoBehaviour
 
         // Prefer the exact saved marker positions, which distinguish an explicit
         // marker at 0.0 from legacy slice arrays with an implicit 0.0 boundary.
-        if (KMusicChopState.TryLoadAppliedMarkerPositions(out float[] savedMarkers))
+        if (KMusicChopState.TryLoadAppliedMarkerPositions(out float[] savedMarkers,
+            out bool lastIsEndOnly))
         {
             for (int i = 0; i < savedMarkers.Length; i++)
             {
@@ -985,6 +1043,7 @@ public class KMusicPlayerUI : MonoBehaviour
                 _chops01.Add(marker);
             }
             _chops01.Sort();
+            _closingHitMarker = lastIsEndOnly && _chops01.Count >= 2;
             ClampSelectedMarkerIndex();
             SyncMarkersToWave();
             UpdateMarkerNavigatorUI();
@@ -1067,7 +1126,10 @@ public class KMusicPlayerUI : MonoBehaviour
             _wave.UserTap01 -= OnWaveTap01;
             _wave.MarkerDrag01 -= OnWaveMarkerDrag01;
             _wave.MarkerSelected -= OnWaveMarkerSelected;
+            _wave.PlayheadMoved01 -= OnWavePlayheadMoved01;
+            _wave.PlayheadGrabbed -= OnWavePlayheadGrabbed;
         }
+        _playheadGrabbed = false;
 
         if (_markerPreviewCoroutine != null)
         {
@@ -1135,6 +1197,7 @@ public class KMusicPlayerUI : MonoBehaviour
         index = Mathf.Clamp(index, 0, _clips.Length - 1);
 
         _chops01.Clear();
+        _closingHitMarker = false;
         SyncMarkersToWave();
 
         _clipIndex = index;
@@ -1412,11 +1475,15 @@ public class KMusicPlayerUI : MonoBehaviour
         if (audioSource != null && active != null)
         {
             bool wasPlaying = audioSource.isPlaying;
-            float ratio = audioSource.clip != null && audioSource.clip.length > 0f
-                ? audioSource.time / audioSource.clip.length : 0f;
+            // A stopped AudioSource often reports time 0 even when the user
+            // has moved the playhead elsewhere. Preserve the scrub position.
+            float ratio = wasPlaying && audioSource.clip != null && audioSource.clip.length > 0f
+                ? audioSource.time / audioSource.clip.length : _scrub01;
+            _scrub01 = Mathf.Clamp01(ratio);
             audioSource.clip = active;
-            audioSource.time = Mathf.Clamp01(ratio) * Mathf.Max(0f, active.length - .001f);
+            audioSource.time = _scrub01 * Mathf.Max(0f, active.length - .001f);
             if (wasPlaying) audioSource.Play();
+            _wave?.SetPlayhead01(_scrub01);
         }
         if (!string.IsNullOrEmpty(_clipResourcesPath))
             KMusicChopState.SetCachedClip(_clipResourcesPath, active);
@@ -1479,7 +1546,9 @@ public class KMusicPlayerUI : MonoBehaviour
         {
             if (_selectedMarkerIndex < 0 || _selectedMarkerIndex >= _chops01.Count || _clip == null)
                 return "TAP A MARKER TO SELECT / DRAG TO ADJUST";
-            return "SELECTED M" + (_selectedMarkerIndex + 1).ToString("00") +
+            string markerRole = _closingHitMarker && _selectedMarkerIndex == _chops01.Count - 1
+                ? " / END" : "";
+            return "SELECTED M" + (_selectedMarkerIndex + 1).ToString("00") + markerRole +
                 "  /  " + (_chops01[_selectedMarkerIndex] * DawSampleDuration).ToString("0.000") +
                 "s  /  DRAG OR NUDGE 10 MS";
         }
@@ -1858,24 +1927,44 @@ public class KMusicPlayerUI : MonoBehaviour
         UpdateTrackTitle("IMPORT CANCELLED");
     }
 
+    private void CancelMarkerPreview()
+    {
+        if (_markerPreviewCoroutine == null) return;
+        StopCoroutine(_markerPreviewCoroutine);
+        _markerPreviewCoroutine = null;
+    }
+
     private void OnPlayClicked()
     {
         if (_clip == null || audioSource == null) return;
 
+        // Stop() rewinds an AudioSource. Restore the actual cursor position
+        // AFTER stopping, or every Play will unintentionally start at zero.
+        CancelMarkerPreview();
+        AudioClip active = _warpedClip != null ? _warpedClip : _clip;
+        float start01 = Mathf.Clamp01(_scrub01);
         audioSource.Stop();
-        audioSource.clip = _warpedClip != null ? _warpedClip : _clip;
+        audioSource.clip = active;
         audioSource.loop = false;
         audioSource.pitch = Mathf.Max(0.01f, GetCurrentSamplePitchRate());
+        audioSource.time = Mathf.Clamp(start01 * active.length, 0f,
+            Mathf.Max(0f, active.length - .001f));
+        _wave?.SetPlayhead01(start01);
         audioSource.Play();
     }
 
     private void OnStopClicked()
     {
-        if (audioSource != null)
-        {
-            audioSource.Stop();
-            audioSource.pitch = 1f;
-        }
+        if (audioSource == null) return;
+        AudioClip active = _warpedClip != null ? _warpedClip : _clip;
+        if (audioSource.isPlaying && active != null && audioSource.clip == active)
+            _scrub01 = Mathf.Clamp01(audioSource.time / Mathf.Max(.001f, active.length));
+        CancelMarkerPreview();
+        audioSource.Stop();
+        audioSource.pitch = 1f;
+        _wave?.SetPlayhead01(_scrub01);
+        UpdateTimeLabels(active != null ? _scrub01 * active.length : 0f,
+            active != null ? active.length : 0f);
     }
 
     private void ToggleChop()
@@ -1890,6 +1979,23 @@ public class KMusicPlayerUI : MonoBehaviour
 
         if (_wave != null) _wave.MarkersDraggable = _chopArmed;
         UpdateTrackTitle(_chopArmed ? "CHOP MODE" : (_clip != null ? _clip.name : "TRACK"));
+    }
+
+    private void OnWavePlayheadGrabbed(bool grabbed)
+    {
+        _playheadGrabbed = grabbed;
+        if (grabbed && _markerPreviewCoroutine != null)
+        {
+            // Stop a short marker audition before the user scrubs. Otherwise
+            // that coroutine can stop a newly started preview or reset time.
+            CancelMarkerPreview();
+            if (audioSource != null) audioSource.Stop();
+        }
+    }
+
+    private void OnWavePlayheadMoved01(float t01)
+    {
+        SeekTo01(t01);
     }
 
     private void OnWavePointer01(float t01, bool isDrag)
@@ -2078,9 +2184,9 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
 
         if (!string.IsNullOrEmpty(_clipResourcesPath))
-            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01);
+            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01, _closingHitMarker);
         else
-            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01);
+            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01, lastMarkerIsEndOnly: _closingHitMarker);
     }
 
     private void OnAddMarkerButton()
@@ -2151,6 +2257,9 @@ public class KMusicPlayerUI : MonoBehaviour
             if (Mathf.Abs(_chops01[i] - t01) < minSlice01)
                 return;
 
+        if (_closingHitMarker && _chops01.Count > 0 &&
+            t01 > _chops01[_chops01.Count - 1])
+            _closingHitMarker = false;
         _chops01.Add(t01);
         _chops01.Sort();
         _selectedMarkerIndex = _chops01.FindIndex(v => Mathf.Abs(v - t01) <= 0.0001f);
@@ -2184,7 +2293,9 @@ public class KMusicPlayerUI : MonoBehaviour
         if (best >= 0 && bestDist <= 0.03f)
         {
             float removed = _chops01[best];
+            bool removedClosingMarker = _closingHitMarker && best == _chops01.Count - 1;
             _chops01.RemoveAt(best);
+            if (removedClosingMarker || _chops01.Count < 2) _closingHitMarker = false;
             if (_selectedMarkerIndex == best) _selectedMarkerIndex = Mathf.Clamp(best - 1, 0, _chops01.Count - 1);
             else if (_selectedMarkerIndex > best) _selectedMarkerIndex--;
             ClampSelectedMarkerIndex();
@@ -2205,9 +2316,9 @@ public class KMusicPlayerUI : MonoBehaviour
         boundaries.Sort();
 
         if (!string.IsNullOrEmpty(_clipResourcesPath))
-            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01);
+            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01, _closingHitMarker);
         else
-            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01);
+            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01, lastMarkerIsEndOnly: _closingHitMarker);
 
         UpdateTrackTitle($"APPLIED {Mathf.Min(16, _chops01.Count)} SLICES");
     }
@@ -2217,9 +2328,9 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null || _clip.length <= 0f) return;
 
         if (!string.IsNullOrEmpty(_clipResourcesPath))
-            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01);
+            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01, _closingHitMarker);
         else
-            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01);
+            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01, lastMarkerIsEndOnly: _closingHitMarker);
 
         UpdateTrackTitle($"SENT {Mathf.Min(16, _chops01.Count)} CHOPS");
     }
@@ -2305,7 +2416,7 @@ public class KMusicPlayerUI : MonoBehaviour
             var btn = _chopPickerButtons[i];
             if (btn == null) continue;
 
-            bool hasMarker = i < _chops01.Count && i < 16;
+            bool hasMarker = i < _chops01.Count - (_closingHitMarker ? 1 : 0) && i < 16;
             btn.SetEnabled(hasMarker);
             btn.EnableInClassList("km-chop-btn--wired", hasMarker);
             btn.EnableInClassList("km-chop-btn--active", hasMarker && i == _selectedMarkerIndex);
@@ -2327,7 +2438,8 @@ public class KMusicPlayerUI : MonoBehaviour
             else
             {
                 float t = _chops01[_selectedMarkerIndex] * DawSampleDuration;
-                string role = (_selectedMarkerIndex == 16) ? "END 16" : $"START {_selectedMarkerIndex + 1:00}";
+                string role = (_closingHitMarker && _selectedMarkerIndex == _chops01.Count - 1) ||
+                    _selectedMarkerIndex == 16 ? "END" : $"START {_selectedMarkerIndex + 1:00}";
                 _markerNavLabel.text = $"M{_selectedMarkerIndex + 1:00}  {role}  {t:0.00}s";
             }
         }
@@ -2404,6 +2516,14 @@ public class KMusicPlayerUI : MonoBehaviour
                 active != null ? active.length : 0f);
             return;
         }
+        // Do not let the 30Hz playback poll erase a placed cursor when
+        // stopped, or fight a finger that is holding the playhead.
+        if (_playheadGrabbed || !audioSource.isPlaying)
+        {
+            _wave?.SetPlayhead01(_scrub01);
+            UpdateTimeLabels(_scrub01 * active.length, active.length);
+            return;
+        }
         float t = audioSource.time;
         float t01 = Mathf.Clamp01(t / active.length);
         _scrub01 = t01;
@@ -2461,6 +2581,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private void ResetAllMarkers()
     {
         _chops01.Clear();
+        _closingHitMarker = false;
         _selectedMarkerIndex = -1;
         SyncMarkersToWave();
         UpdateMarkerNavigatorUI();
@@ -2481,6 +2602,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null || _clip.length <= 0f) return;
 
         _chops01.Clear();
+        _closingHitMarker = false;
 
         divisions = Mathf.Clamp(divisions, 1, 16);
 
