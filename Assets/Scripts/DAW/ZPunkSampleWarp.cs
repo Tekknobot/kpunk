@@ -53,6 +53,63 @@ namespace ZPunk.DAW
             { frame = at; strength = value; kick = isKick; }
         }
 
+        // The analysis FFT/RMS windows describe a REGION, not the first sample of
+        // an attack. Find its actual leading edge in 1 ms envelopes around a
+        // candidate, preventing ghost markers from preceding the visible hit.
+        // Reuse the PCM buffer: songs can contain thousands of onsets.
+        private static int RefineAttackFrame(AudioClip clip, int estimate,
+            ref float[] pcm, ref float[] envelope)
+        {
+            int rate = clip.frequency;
+            int channels = clip.channels;
+            int windowStart = Mathf.Max(0, estimate - Mathf.RoundToInt(rate * .020f));
+            int windowEnd = Mathf.Min(clip.samples, estimate + Mathf.RoundToInt(rate * .020f));
+            int frames = windowEnd - windowStart;
+            if (frames < 64) return Mathf.Clamp(estimate, 0, clip.samples - 1);
+            if (pcm == null || pcm.Length < frames * channels)
+                pcm = new float[frames * channels];
+            if (!clip.GetData(pcm, windowStart)) return Mathf.Clamp(estimate, 0, clip.samples - 1);
+
+            int step = Mathf.Max(16, rate / 1000); // about one millisecond
+            int bins = frames / step;
+            if (bins < 8) return Mathf.Clamp(estimate, 0, clip.samples - 1);
+            if (envelope == null || envelope.Length < bins) envelope = new float[bins];
+            for (int b = 0; b < bins; b++)
+            {
+                float energy = 0f;
+                for (int n = b * step; n < (b + 1) * step; n++)
+                {
+                    int p = n * channels;
+                    float v = channels == 2 ? (pcm[p] + pcm[p + 1]) * .5f : pcm[p];
+                    energy += v * v;
+                }
+                envelope[b] = Mathf.Sqrt(energy / step);
+            }
+            // The strongest positive envelope slope identifies an attack. Search
+            // around it for the first substantial rise, rather than returning its
+            // (usually later) energy peak or a fixed number of milliseconds.
+            int minBin = Mathf.Max(2, (estimate - windowStart) / step - 15);
+            int maxBin = Mathf.Min(bins - 2, (estimate - windowStart) / step + 14);
+            int bestBin = -1;
+            float bestRise = 0f;
+            for (int b = minBin; b <= maxBin; b++)
+            {
+                float before = (envelope[b - 1] + envelope[b - 2]) * .5f;
+                float rise = envelope[b] - before;
+                if (rise > bestRise) { bestRise = rise; bestBin = b; }
+            }
+            if (bestBin < 0 || bestRise < .0004f) return Mathf.Clamp(estimate, 0, clip.samples - 1);
+            int firstBin = bestBin;
+            int firstAllowed = Mathf.Max(minBin, bestBin - 8);
+            for (int b = bestBin - 1; b >= firstAllowed; b--)
+            {
+                float before = (envelope[b - 1] + envelope[b - 2]) * .5f;
+                if (envelope[b] - before < bestRise * .24f) break;
+                firstBin = b;
+            }
+            return Mathf.Clamp(windowStart + firstBin * step, 0, clip.samples - 1);
+        }
+
         public static IEnumerator AnalyzeTransientHints(AudioClip clip,
             Action<List<TransientHint>> complete, Func<bool> cancelled = null)
         {
@@ -96,7 +153,7 @@ namespace ZPunk.DAW
                     // Local contrast suppresses most steady tones and quiet noise.
                     if (strength > .001f && (onsetLow > slowLow * .13f ||
                         onsetHigh > slowHigh * .16f))
-                        candidates.Add(new AttackCandidate(Mathf.Max(0, offset + i - hop / 2),
+                        candidates.Add(new AttackCandidate(Mathf.Max(0, offset + i),
                             strength, onsetLow * 1.15f >= onsetHigh * .85f));
                     slowLow = .87f * slowLow + .13f * lo;
                     slowHigh = .87f * slowHigh + .13f * hi;
@@ -129,8 +186,19 @@ namespace ZPunk.DAW
                 picked.RemoveRange(maxHints, picked.Count - maxHints);
                 picked.Sort((a, b) => a.frame.CompareTo(b.frame));
             }
-            foreach (var hit in picked)
-                hints.Add(new TransientHint(Mathf.Clamp01(hit.frame / (float)clip.samples), hit.kick));
+            float[] detailPcm = null, detailEnvelope = null;
+            int lastFrame = -minimumSpacing;
+            for (int i = 0; i < picked.Count; i++)
+            {
+                if (cancelled != null && cancelled()) yield break;
+                var hit = picked[i];
+                int attackFrame = RefineAttackFrame(clip, hit.frame, ref detailPcm, ref detailEnvelope);
+                // Refinement must not collapse distinct events into a duplicate.
+                if (attackFrame - lastFrame < minimumSpacing / 2) continue;
+                hints.Add(new TransientHint(Mathf.Clamp01(attackFrame / (float)clip.samples), hit.kick));
+                lastFrame = attackFrame;
+                if ((i & 31) == 31) yield return null;
+            }
             complete?.Invoke(hints);
         }
 
@@ -224,7 +292,7 @@ namespace ZPunk.DAW
                         float lowRise = Mathf.Max(0f, lowRms - slowLow * 1.12f);
                         float highRise = Mathf.Max(0f, highRms - slowHigh * 1.16f);
                         float score = lowRise * 1.35f + highRise * .75f;
-                        positions.Add(scan + i - AnalysisHop / 2);
+                        positions.Add(scan + i);
                         strengths.Add(score);
                         totalScore += score;
                         slowLow = .9f * slowLow + .1f * lowRms;
@@ -246,9 +314,45 @@ namespace ZPunk.DAW
             int lastAccepted = -sampleRate;
             int minGap = Mathf.RoundToInt(sampleRate * .135f);
             float eighthFrames = sampleRate * 30f / targetBpm;
+            float beatFrames = eighthFrames * 2f;
+            // A song may have silence before the first kick. Find the phase
+            // shared by rhythmic transients instead of forcing every attack
+            // toward a grid with its first beat at sample frame zero.
+            float phaseFrames = 0f, peakPhaseScore = 0f, phaseTotal = 0f;
+            float phaseTolerance = Mathf.Min(sampleRate * .055f, beatFrames * .18f);
+            const int phaseBins = 48;
+            for (int phaseBin = 0; phaseBin < phaseBins; phaseBin++)
+            {
+                float phase = beatFrames * phaseBin / phaseBins;
+                float score = 0f, total = 0f;
+                for (int k = 2; k + 2 < strengths.Count; k++)
+                {
+                    float power = strengths[k];
+                    if (power < threshold || power < strengths[k - 1] ||
+                        power < strengths[k + 1]) continue;
+                    float at = positions[k] * ratio;
+                    float distance = Mathf.Abs(Mathf.Repeat(at - phase + beatFrames * .5f,
+                        beatFrames) - beatFrames * .5f);
+                    total += power;
+                    if (distance < phaseTolerance)
+                        score += power * (1f - distance / phaseTolerance);
+                }
+                if (score > peakPhaseScore)
+                { peakPhaseScore = score; phaseFrames = phase; phaseTotal = total; }
+                if ((phaseBin & 7) == 7)
+                {
+                    if (cancelled != null && cancelled()) yield break;
+                    progress?.Invoke(.25f, "LOCKING BEAT GRID");
+                    yield return null;
+                }
+            }
+            // Low-confidence audio is left on the normal zero-based beat grid.
+            if (phaseTotal <= .0001f || peakPhaseScore / phaseTotal < .16f)
+                phaseFrames = 0f;
             float maxSnapFrames = sampleRate * Mathf.Min(.075f, 9.6f / targetBpm);
             int inputGuard = Mathf.RoundToInt(sampleRate * .1f);
             int lastDest = 0;
+            float[] attackPcm = null, attackEnvelope = null;
             for (int i = 2; i + 2 < strengths.Count; i++)
             {
                 if (cancelled != null && cancelled()) yield break;
@@ -256,7 +360,7 @@ namespace ZPunk.DAW
                 if (strength < threshold || strength < strengths[i - 1] ||
                     strength < strengths[i + 1] || strength < strengths[i - 2] ||
                     strength < strengths[i + 2]) continue;
-                int sourceAt = positions[i];
+                int sourceAt = RefineAttackFrame(original, positions[i], ref attackPcm, ref attackEnvelope);
                 if (sourceAt - lastAttack >= minGap && sourceAt >= 0 &&
                     sourceAt < original.samples - inputGuard)
                 {
@@ -266,7 +370,8 @@ namespace ZPunk.DAW
                 if (sourceAt - lastAccepted < minGap || sourceAt < inputGuard ||
                     sourceAt > original.samples - inputGuard) continue;
                 int expected = Mathf.RoundToInt(sourceAt * ratio);
-                int snapped = Mathf.RoundToInt(Mathf.Round(expected / eighthFrames) * eighthFrames);
+                int snapped = Mathf.RoundToInt(phaseFrames +
+                    Mathf.Round((expected - phaseFrames) / eighthFrames) * eighthFrames);
                 float deviation = Mathf.Abs(snapped - expected);
                 if (deviation < sampleRate * .004f || deviation > maxSnapFrames ||
                     snapped <= lastDest + sampleRate * .13f ||

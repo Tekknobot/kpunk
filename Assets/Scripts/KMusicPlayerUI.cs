@@ -68,6 +68,62 @@ public class KMusicPlayerUI : MonoBehaviour
     private Coroutine _transientJob;
     private int _transientRevision;
     private bool _transientSnapEnabled = true;
+    // Stable beat-grid phase measured from the actual audio being DISPLAYED.
+    // Only chop generation uses this phase; estimated hits are never saved.
+    private float _beatPhaseSeconds;
+    private bool _beatPhaseFound;
+    public string DawGridStatus => _transientJob != null ? "ANALYZING RHYTHM" :
+        _beatPhaseFound ? "BEAT GRID FOUND" : "BPM GRID / NO CLEAR PHASE";
+
+    private void UpdateBeatGrid()
+    {
+        _wave?.SetMusicalRuler(CurrentSongTempo(), DawSampleDuration, _beatPhaseSeconds);
+    }
+
+    private void DetectBeatPhase(List<ZPunkSampleWarp.TransientHint> hits)
+    {
+        _beatPhaseSeconds = 0f;
+        _beatPhaseFound = false;
+        float duration = DawSampleDuration;
+        float beat = 60f / Mathf.Max(1f, CurrentSongTempo());
+        if (duration < beat * 2f || hits == null || hits.Count < 3) return;
+        // A kick/snare phase histogram (weighted toward kick candidates),
+        // rather than independently quantizing each marker to the file start.
+        // This handles songs with a little silence before the first downbeat.
+        const int bins = 64;
+        float bestScore = 0f, sumWeights = 0f;
+        int bestBin = 0;
+        foreach (var hit in hits) sumWeights += hit.kick ? 1.5f : 1f;
+        float tolerance = Mathf.Min(.055f, beat * .18f);
+        for (int i = 0; i < bins; i++)
+        {
+            float phase = i * beat / bins;
+            float score = 0f;
+            foreach (var hit in hits)
+            {
+                float time = hit.position01 * duration;
+                float displacement = Mathf.Abs(Mathf.Repeat(time - phase + beat * .5f, beat) - beat * .5f);
+                if (displacement < tolerance)
+                    score += (hit.kick ? 1.5f : 1f) * (1f - displacement / tolerance);
+            }
+            if (score > bestScore) { bestScore = score; bestBin = i; }
+        }
+        // Never infer a confidently locked groove from a few unrelated hits.
+        if (bestScore < 2.1f || bestScore / Mathf.Max(.01f, sumWeights) < .17f) return;
+        float coarsePhase = bestBin * beat / bins;
+        float weightedOffset = 0f, weightTotal = 0f;
+        foreach (var hit in hits)
+        {
+            float time = hit.position01 * duration;
+            float delta = Mathf.Repeat(time - coarsePhase + beat * .5f, beat) - beat * .5f;
+            if (Mathf.Abs(delta) > tolerance) continue;
+            float weight = (hit.kick ? 1.5f : 1f) * (1f - Mathf.Abs(delta) / tolerance);
+            weightedOffset += delta * weight;
+            weightTotal += weight;
+        }
+        _beatPhaseSeconds = Mathf.Repeat(coarsePhase + weightedOffset / Mathf.Max(.001f, weightTotal), beat);
+        _beatPhaseFound = true;
+    }
 
     private void ResetTransientAnalysis()
     {
@@ -75,7 +131,10 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_transientJob != null) StopCoroutine(_transientJob);
         _transientJob = null;
         _transientHints.Clear();
+        _beatPhaseSeconds = 0f;
+        _beatPhaseFound = false;
         _wave?.SetTransientGuides(null);
+        UpdateBeatGrid();
     }
 
     private void BeginTransientAnalysis()
@@ -84,13 +143,18 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null) return;
         int revision = _transientRevision;
         AudioClip source = _clip;
-        _transientJob = StartCoroutine(ZPunkSampleWarp.AnalyzeTransientHints(source, hits =>
+        AudioClip analyzed = _warpedClip != null ? _warpedClip : _clip;
+        _transientJob = StartCoroutine(ZPunkSampleWarp.AnalyzeTransientHints(analyzed, hits =>
         {
-            if (_transientRevision != revision || source != _clip) return;
+            if (_transientRevision != revision || source != _clip ||
+                analyzed != (_warpedClip != null ? _warpedClip : _clip)) return;
             _transientHints.AddRange(hits);
+            DetectBeatPhase(_transientHints);
             _wave?.SetTransientGuides(_transientHints);
+            UpdateBeatGrid();
             _transientJob = null;
-        }, () => _transientRevision != revision || _clip != source || this == null));
+        }, () => _transientRevision != revision || _clip != source ||
+            analyzed != (_warpedClip != null ? _warpedClip : _clip) || this == null));
     }
 
     // Beat-grid fallback remains available for material with no clear attacks.
@@ -98,7 +162,7 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (_transientSnapEnabled && _clip != null && _clip.length > 0f)
         {
-            float maxDistance = .085f / Mathf.Max(.001f, DawSampleDuration);
+            float maxDistance = .055f / Mathf.Max(.001f, DawSampleDuration);
             float distance = maxDistance;
             float nearest = -1f;
             foreach (var hint in _transientHints)
@@ -151,6 +215,56 @@ public class KMusicPlayerUI : MonoBehaviour
     public void DawShowFullSample()
     {
         _wave?.ResetZoom();
+    }
+
+    // Evenly-spaced musical slices, beginning on the inferred beat phase.
+    // This never alters audio and only replaces the markers when explicitly
+    // selected; existing manually placed chops remain otherwise untouched.
+    // beatsPerChop = .5, 1 or 4 for half-beats, beats or bars.
+    public void DawGridChop(float beatsPerChop)
+    {
+        if (_clip == null || DawSampleDuration <= 0f) return;
+        float duration = DawSampleDuration;
+        float beatSeconds = 60f / Mathf.Max(1f, CurrentSongTempo());
+        float step = beatSeconds * Mathf.Clamp(beatsPerChop, .5f, 16f);
+        float cursor = Mathf.Clamp01(_scrub01) * duration;
+        float phase = _beatPhaseFound ? _beatPhaseSeconds : 0f;
+        // At file load use the first detected hit. Later grid-chop actions can
+        // target a different section by moving the playhead first.
+        float first = phase + Mathf.Max(0f,
+            Mathf.Round((Mathf.Max(cursor, phase) - phase) / beatSeconds)) * beatSeconds;
+        if (duration - first < Mathf.Max(.05f, step * .35f))
+        { UpdateTrackTitle("NO ROOM FOR GRID CHOPS"); return; }
+        _chops01.Clear();
+        for (int pad = 0; pad < 16; pad++)
+        {
+            float at = first + pad * step;
+            if (at >= duration - MinMarkerGapSeconds) break;
+            _chops01.Add(at / duration);
+        }
+        if (_chops01.Count == 0) return;
+        // Explicit closing marker for pad 16. Without this, its end defaults
+        // to the entire remaining song rather than exactly one beat/bar.
+        // The chop-state serializer supports seventeen markers: sixteen pad
+        // starts plus one closing boundary (not a seventeenth playable pad).
+        if (_chops01.Count == 16)
+        {
+            float closing = first + 16f * step;
+            if (closing < duration - MinMarkerGapSeconds)
+                _chops01.Add(closing / duration);
+        }
+        _chopArmed = true;
+        _markerAddMode = true;
+        if (_wave != null) _wave.MarkersDraggable = true;
+        _selectedMarkerIndex = 0;
+        _scrub01 = _chops01[0];
+        _wave?.SetPlayhead01(_scrub01);
+        SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+        PersistMarkersIfPossible();
+        float end = Mathf.Min(duration, first + step);
+        _wave?.FocusSlice01(first / duration, end / duration);
+        UpdateTrackTitle("GRID CHOP / " + _chops01.Count + " PADS");
     }
     public void DawToggleTransientSnap()
     {
@@ -1193,7 +1307,6 @@ public class KMusicPlayerUI : MonoBehaviour
     private void OnSourceSampleReady()
     {
         BeginSampleKeyAnalysis();
-        BeginTransientAnalysis();
         // A sample selection is a load, not a play command. This also prevents
         // a pending auto-warp completion from resuming an old preview.
         if (audioSource != null) audioSource.Stop();
@@ -1214,8 +1327,9 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_warpedClip != null && _warpedClip != _clip) Destroy(_warpedClip, 5f);
         _warpedClip = null;
         _sourceBpm = ZPunkSampleWarp.EstimateLoopBpm(_clip, CurrentSongTempo());
-        _wave?.SetMusicalRuler(CurrentSongTempo(), _clip != null ? _clip.length : 0f);
+        UpdateBeatGrid();
         _lastSongBpm = -1f;
+        BeginTransientAnalysis();
         QueueWarp(true);
     }
     private void QueueWarp(bool immediate = false)
@@ -1239,7 +1353,7 @@ public class KMusicPlayerUI : MonoBehaviour
             if (Mathf.Abs(tempo - _lastSongBpm) > .5f)
             {
                 _lastSongBpm = tempo;
-                _wave?.SetMusicalRuler(tempo, _clip.length);
+                UpdateBeatGrid();
                 QueueWarp();
             }
         }
@@ -1311,11 +1425,14 @@ public class KMusicPlayerUI : MonoBehaviour
             float start01 = _wave.ViewStart01, len01 = _wave.ViewLen01;
             _wave.SetClip(active);
             _wave.RestoreWindow(start01, len01);
-            _wave.SetMusicalRuler(CurrentSongTempo(), active != null ? active.length : 0f);
+            UpdateBeatGrid();
             SyncMarkersToWave();
             _wave.SetTransientGuides(_transientHints);
             HighlightSelectedSlice();
         }
+        // The displayed PCM changed: re-detect against the waveform's real
+        // audio timeline so ghost guides and preview chop boundaries agree.
+        if (oldWarp != _warpedClip) BeginTransientAnalysis();
         if (oldWarp != null && oldWarp != _clip && oldWarp != active)
             Destroy(oldWarp, 5f);
         if (generation == _warpGeneration) _warpJob = null;
@@ -1335,7 +1452,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_wave != null)
         {
             _wave.MarkersDraggable = true;
-            _wave.SetMusicalRuler(CurrentSongTempo(), _clip != null ? _clip.length : 0f);
+            UpdateBeatGrid();
         }
     }
     public void DawAddMarker() { DawEnableManualMarkers(); DropChopMarkerAt01(_scrub01); }
@@ -2013,7 +2130,8 @@ public class KMusicPlayerUI : MonoBehaviour
         float secondsPerSixteenth = 15f / Mathf.Max(1f, CurrentSongTempo());
         float seconds = Mathf.Max(.001f, DawSampleDuration);
         float time = Mathf.Clamp01(position) * seconds;
-        float snapped = Mathf.Round(time / secondsPerSixteenth) * secondsPerSixteenth;
+        float snapped = _beatPhaseSeconds +
+            Mathf.Round((time - _beatPhaseSeconds) / secondsPerSixteenth) * secondsPerSixteenth;
         return Mathf.Clamp01(snapped / seconds);
     }
 

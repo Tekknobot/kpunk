@@ -75,13 +75,15 @@ namespace KMusic.UI
         private readonly List<Label> _rulerLabels = new();
         private float _rulerBpm = 120f;
         private float _rulerSeconds;
+        private float _beatPhaseSeconds;
 
         // Waveform ruler uses true musical beats at the active tempo. The viewport
         // clips bars naturally when zooming and panning; slices remain normalized.
-        public void SetMusicalRuler(float bpm, float seconds)
+        public void SetMusicalRuler(float bpm, float seconds, float phaseSeconds = 0f)
         {
             _rulerBpm = Mathf.Max(1f, bpm);
             _rulerSeconds = Mathf.Max(0f, seconds);
+            _beatPhaseSeconds = Mathf.Max(0f, phaseSeconds);
             UpdateMarkerLabels();
             MarkDirtyRepaint();
         }
@@ -366,7 +368,13 @@ namespace KMusic.UI
                     int idx = i0 + i;
                     if (idx < 0 || idx >= _peakCount) continue;
 
-                    float tWin = i / (float)span; // 0..1 across visible window
+                    // Use each peak's absolute sample position. Mapping the
+                    // first/last visible bins to the window edges made drums
+                    // appear shifted against accurate transient markers when
+                    // zooming into a chop (particularly with long songs).
+                    float t01 = idx / (float)_peakCount;
+                    float tWin = (t01 - v0) / vLen;
+                    if (tWin < 0f || tWin > 1f) continue;
                     float px = r.x + tWin * r.width;
 
                     float min = _peaks[idx * 2];
@@ -386,13 +394,14 @@ namespace KMusic.UI
             if (_rulerSeconds > 0f && _rulerBpm > 0f)
             {
                 float totalBeats = _rulerSeconds * _rulerBpm / 60f;
+                float phaseBeats = _beatPhaseSeconds * _rulerBpm / 60f;
                 float visibleBeats = totalBeats * vLen;
                 int stepBeats = visibleBeats > 128f ? 16 : visibleBeats > 48f ? 4 : 1;
-                int startBeat = Mathf.Max(0, Mathf.CeilToInt(v0 * totalBeats / stepBeats) * stepBeats);
+                int startBeat = Mathf.Max(0, Mathf.CeilToInt((v0 * totalBeats - phaseBeats) / stepBeats) * stepBeats);
                 painter.lineWidth = 1f;
-                for (int beat = startBeat; beat < totalBeats * v1; beat += stepBeats)
+                for (int beat = startBeat; beat + phaseBeats < totalBeats * v1; beat += stepBeats)
                 {
-                    float x = r.x + (beat / totalBeats - v0) / vLen * r.width;
+                    float x = r.x + ((beat + phaseBeats) / totalBeats - v0) / vLen * r.width;
                     painter.strokeColor = beat % 4 == 0
                         ? new Color(.25f, .49f, .57f, .50f) : new Color(.2f, .3f, .39f, .25f);
                     painter.BeginPath();
@@ -402,23 +411,19 @@ namespace KMusic.UI
                 }
             }
 
-            // Thin, dashed ghost guides. Kicks are amber, broadband/snare
-            // estimates muted violet. They do not create editable chop markers.
+            // Solid, restrained onset guides, separate from draggable chop markers.
             foreach (var guide in _guides)
             {
                 if (guide.position01 < v0 || guide.position01 > v1) continue;
                 float x = r.x + (guide.position01 - v0) / vLen * r.width;
                 painter.strokeColor = guide.kick
-                    ? new Color(1f, .69f, .34f, .55f)
-                    : new Color(.73f, .58f, 1f, .52f);
-                painter.lineWidth = 1.3f;
-                for (float y = r.y + 25f; y < r.y + r.height; y += 10f)
-                {
-                    painter.BeginPath();
-                    painter.MoveTo(new Vector2(x, y));
-                    painter.LineTo(new Vector2(x, Mathf.Min(y + 4f, r.y + r.height)));
-                    painter.Stroke();
-                }
+                    ? new Color(.95f, .67f, .38f, .29f)
+                    : new Color(.70f, .63f, .91f, .29f);
+                painter.lineWidth = 1f;
+                painter.BeginPath();
+                painter.MoveTo(new Vector2(x, r.y + 24f));
+                painter.LineTo(new Vector2(x, r.y + r.height));
+                painter.Stroke();
             }
 
             // Markers (only those inside window)
@@ -762,8 +767,9 @@ namespace KMusic.UI
             if (_rulerSeconds <= 0f || _rulerBpm <= 0f || contentRect.width < 10f) return;
 
             float totalBeats = _rulerSeconds * _rulerBpm / 60f;
-            float start = ViewStart01 * totalBeats;
-            float end = (ViewStart01 + ViewLen01) * totalBeats;
+            float phaseBeats = _beatPhaseSeconds * _rulerBpm / 60f;
+            float start = ViewStart01 * totalBeats - phaseBeats;
+            float end = (ViewStart01 + ViewLen01) * totalBeats - phaseBeats;
             float pixelsPerBar = 4f / Mathf.Max(.0001f, totalBeats * ViewLen01) * contentRect.width;
             int barStep = pixelsPerBar < 32f ? 16 : pixelsPerBar < 65f ? 4 : 1;
             int firstBar = Mathf.Max(0, Mathf.CeilToInt(start / 4f / barStep) * barStep);
@@ -783,7 +789,7 @@ namespace KMusic.UI
                 }
                 var item = _rulerLabels[labelIndex++];
                 item.text = (bar + 1).ToString();
-                item.style.left = (bar * 4f / totalBeats - ViewStart01) / ViewLen01 * contentRect.width + 3f;
+                item.style.left = ((bar * 4f + phaseBeats) / totalBeats - ViewStart01) / ViewLen01 * contentRect.width + 3f;
                 item.style.display = DisplayStyle.Flex;
             }
         }

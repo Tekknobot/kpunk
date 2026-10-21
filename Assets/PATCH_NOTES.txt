@@ -1,0 +1,35 @@
+ZPUNK SAMPLER / GROOVE GRID PATCH (2026-10-21)
+
+Copy the Scripts/ and KMusic/ directories into your Unity Assets/ folder,
+replacing only the matching C# files. Keep existing .meta files.
+
+CHANGES
+- Correct detected kick/snare onset guides using the real waveform attack
+  rather than the center of a spectral RMS analysis window.
+- Reanalyze the active (warped or original) AudioClip when its timeline changes,
+  so guides match what the waveform and playback actually use.
+- Ghost guides are thin, solid and translucent (amber kick / violet snare).
+- Correct waveform peak placement in zoomed slices.
+- Detect a probable phase offset of the beat grid from the actual song audio.
+  Ruler/bar labels, musical snap and grid chops share that timing reference.
+- GRID 1/2, GRID BEAT, GRID BAR actions create up to 16 equal-length
+  half-beat, one-beat and one-bar chops starting around the playhead.
+- The final pad receives an explicit closing marker when the song is long
+  enough. Editing other markers remains manual and non-destructive.
+- Warp points also use attack refinement and an estimated musical grid
+  phase, reducing arbitrary timing shifts when samples have a lead-in.
+
+USE
+1. Set the correct SOURCE BPM and song tempo if different.
+2. For the original, undamaged PCM, use WARP OFF.
+3. Move the playhead to a chosen section; press GRID BEAT (or GRID 1/2
+   or GRID BAR). These actions replace the current chop markers deliberately.
+4. Tap a pad to zoom to and audition its segment. FULL shows the whole file.
+5. Ghost guides are ESTIMATES and may be unreliable on complex music,
+   swing, quiet or pitched attacks. An uncertain rhythmic phase falls back
+   to a normal BPM grid starting at zero.
+
+VALIDATION
+Static C# structural checks, source/UI linkage checks, closing boundary
+and timing math tests completed. Unity Editor compilation and device audio
+playback were not possible in this environment and should be tested.

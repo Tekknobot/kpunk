@@ -41,7 +41,7 @@ namespace ZPunk.DAW
         private VisualElement editorPlayhead;
         private VisualElement samplerPage, samplerWave;
         private ScrollView samplerScroll;
-        private Label samplerSelectedMarker;
+        private Label samplerSelectedMarker, samplerGridStatus;
         private Button samplerSnapButton;
         private readonly List<Button> samplerChopPads = new List<Button>();
         private readonly List<VisualElement> samplerChopRangeBars = new List<VisualElement>();
@@ -585,12 +585,25 @@ namespace ZPunk.DAW
             zoomScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             zoomScroll.Add(zoomActions);
             samplerPage.Add(zoomScroll);
-            var help = Txt("DASHED AMBER: KICK EST.  /  VIOLET: SNARE EST.  /  TAP PAD: FOCUS CHOP  /  FULL: WHOLE SAMPLE",10,Muted);
+            var help = Txt("FAINT SOLID LINES: KICK / SNARE ESTIMATES. GRID CHOP MAKES EVEN PADS; SET SOURCE BPM FOR BEST WARP RESULTS.",10,Muted);
             help.style.whiteSpace = WhiteSpace.Normal;
             help.style.flexShrink = 0;
             help.style.marginTop = 7;
             help.style.marginBottom = 8;
             samplerPage.Add(help);
+            var gridRow = new VisualElement();
+            gridRow.style.flexDirection = FlexDirection.Row;
+            gridRow.style.alignItems = Align.Center;
+            gridRow.style.height = 44;
+            gridRow.style.flexShrink = 0;
+            gridRow.Add(Btn("GRID 1/2", () => { FindSampler(); samplePlayer?.DawGridChop(.5f); RefreshSampler(); }, 91));
+            gridRow.Add(Btn("GRID BEAT", () => { FindSampler(); samplePlayer?.DawGridChop(1f); RefreshSampler(); }, 100));
+            gridRow.Add(Btn("GRID BAR", () => { FindSampler(); samplePlayer?.DawGridChop(4f); RefreshSampler(); }, 92));
+            samplerPage.Add(gridRow);
+            samplerGridStatus = Txt("GRID / ANALYZING", 10, Muted);
+            samplerGridStatus.style.marginTop = 2;
+            samplerGridStatus.style.marginBottom = 6;
+            samplerPage.Add(samplerGridStatus);
             var slices = new VisualElement();
             slices.style.flexDirection = FlexDirection.Row;
             slices.style.height = 46;
@@ -1167,6 +1180,9 @@ namespace ZPunk.DAW
                 samplerLibraryLabel.text = samplePlayer != null ? samplePlayer.DawSampleFolder : "SAMPLE LIBRARY";
             if (samplerSelectedMarker != null)
                 samplerSelectedMarker.text = samplePlayer != null ? samplePlayer.DawSelectedMarkerLabel : "NO MARKER SELECTED";
+            if (samplerGridStatus != null)
+                samplerGridStatus.text = samplePlayer != null ? samplePlayer.DawGridStatus +
+                    "  /  16 PADS MAX  /  FROM PLAYHEAD" : "GRID / NO SAMPLE";
             if (samplerSnapButton != null)
                 samplerSnapButton.text = samplePlayer != null && samplePlayer.DawTransientSnapEnabled
                     ? "HIT SNAP" : "GRID SNAP";
