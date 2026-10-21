@@ -162,6 +162,15 @@ public class KMusicPlayerUI : MonoBehaviour
                 analyzed != (_warpedClip != null ? _warpedClip : _clip)) return;
             _transientHints.AddRange(hits);
             DetectBeatPhase(_transientHints);
+            // Keep the visual 1/2/3/4 ruler pinned to the same user-selected
+            // beat 1 when showing beat-aligned audio, not a new noisy guess.
+            if (_beatAlignFromHead && _warpedClip != null)
+            {
+                float beatSeconds = 60f / Mathf.Max(1f, CurrentSongTempo());
+                _beatPhaseSeconds = Mathf.Repeat(_beatAlignStart01 * DawSampleDuration,
+                    beatSeconds);
+                _beatPhaseFound = true;
+            }
             _wave?.SetTransientGuides(_transientHints);
             UpdateBeatGrid();
             _transientJob = null;
@@ -190,7 +199,7 @@ public class KMusicPlayerUI : MonoBehaviour
             }
             if (nearest >= 0f) return nearest;
         }
-        return SnapMusical01(proposed01);
+        return _transientSnapEnabled ? SnapMusical01(proposed01) : Mathf.Clamp01(proposed01);
     }
 
     private void HighlightSelectedSlice()
@@ -237,9 +246,134 @@ public class KMusicPlayerUI : MonoBehaviour
         _wave?.ResetZoom();
     }
 
-    // Slice directly on the existing GHOST attack guides. Unlike GRID CHOP,
-    // each boundary follows the detected recording, not an idealized tempo.
-    // HEAD is deliberately kept as marker one, without quantizing it again.
+    // The HEAD gesture establishes beat one. Detect a recurring kick/snare
+    // pulse before proposing near-quarter-note boundaries. The source PCM is
+    // never stretched or moved by this operation. We snap each predicted beat
+    // to a nearby actual onset and otherwise retain the beat position, giving
+    // usable, nearly even slices without chasing every hat or flam.
+    private bool TryBuildBeatHitBoundaries(float start01, float duration,
+        List<float> boundaries, out float beatSeconds, out int matched)
+    {
+        beatSeconds = 0f;
+        matched = 0;
+        if (duration < 2f || _transientHints.Count < 5) return false;
+        float anchor = Mathf.Clamp01(start01) * duration;
+        // On full songs hundreds of ghost hints may exist. Only the next
+        // ~14 seconds are relevant to 16 chops at slower source tempos.
+        var nearbyHits = new List<ZPunkSampleWarp.TransientHint>();
+        foreach (var hint in _transientHints)
+        {
+            float seconds = hint.position01 * duration;
+            if (seconds >= anchor - .08f && seconds <= anchor + 14.5f)
+                nearbyHits.Add(hint);
+        }
+        if (nearbyHits.Count < 5) return false;
+        // Explore roughly 70-190 BPM. Evaluate the FIRST 12 beats instead
+        // of a full song: a slightly loose older recording may drift later.
+        float favorite = Mathf.Clamp(CurrentSongTempo(), 70f, 190f);
+        float bestScore = 0f;
+        float bestInterval = 0f;
+        int bestMatches = 0;
+        for (float interval = .315f; interval <= .858f; interval += .003f)
+        {
+            int beats = Mathf.Min(12, Mathf.FloorToInt((duration - .055f - anchor) / interval));
+            if (beats < 5) continue;
+            float tolerance = Mathf.Min(.075f, interval * .17f);
+            float score = 0f;
+            int matches = 0, kickMatches = 0;
+            for (int beat = 1; beat <= beats; ++beat)
+            {
+                float expected = anchor + interval * beat;
+                float quality = 0f;
+                bool found = false, kick = false;
+                foreach (var hint in nearbyHits)
+                {
+                    float distance = Mathf.Abs(hint.position01 * duration - expected);
+                    if (distance >= tolerance) continue;
+                    // An onset's intensity matters: this avoids treating soft
+                    // hats as equivalent to strong main drum attacks.
+                    float attack = Mathf.Clamp(hint.strength, .15f, 2f);
+                    float weight = (hint.kick ? 1.18f : 1.05f) *
+                        (.75f + .25f * attack) * (1f - .35f * distance / tolerance);
+                    if (weight <= quality) continue;
+                    quality = weight;
+                    found = true;
+                    kick = hint.kick;
+                }
+                if (!found) continue;
+                matches++;
+                if (kick) kickMatches++;
+                score += quality;
+            }
+            // A half-time candidate that ignores strong backbeat snares
+            // halfway between its beats should not defeat a real 1-2-3-4
+            // pulse. Quiet hi-hats are intentionally below this penalty.
+            float offbeatPenalty = 0f;
+            for (int beat = 0; beat < beats; ++beat)
+            {
+                float middle = anchor + (beat + .5f) * interval;
+                foreach (var hint in nearbyHits)
+                {
+                    if (hint.strength < .9f ||
+                        Mathf.Abs(hint.position01 * duration - middle) > tolerance * .65f)
+                        continue;
+                    offbeatPenalty += .22f * Mathf.Clamp01(hint.strength);
+                    break;
+                }
+            }
+            if (matches < 4 || matches < beats * .52f) continue;
+            // Reward rhythmic coverage more than harmonic subdivisions;
+            // prefer kick evidence and the song tempo only as weak tie-breaks.
+            float coverage = matches / (float)beats;
+            float rating = (score - offbeatPenalty) / beats * (.65f + .35f * coverage);
+            if (kickMatches == 0) rating *= .83f;
+            float tempo = 60f / interval;
+            rating *= 1f - .045f * Mathf.Clamp01(Mathf.Abs(
+                Mathf.Log(tempo / favorite)) / .7f);
+            if (rating > bestScore)
+            {
+                bestScore = rating;
+                bestInterval = interval;
+                bestMatches = matches;
+            }
+        }
+        if (bestInterval <= 0f || bestScore < .51f || bestMatches < 4)
+            return false;
+
+        beatSeconds = bestInterval;
+        boundaries.Add(Mathf.Clamp01(start01));
+        matched = 0;
+        float previous = anchor;
+        for (int beat = 1; beat <= 16; ++beat)
+        {
+            float expected = anchor + beat * bestInterval;
+            if (expected >= duration - MinMarkerGapSeconds) break;
+            float target = expected;
+            float tolerance = Mathf.Min(.075f, bestInterval * .17f);
+            float bestQuality = 0f;
+            foreach (var hint in nearbyHits)
+            {
+                float time = hint.position01 * duration;
+                float distance = Mathf.Abs(time - expected);
+                if (distance >= tolerance) continue;
+                float quality = (.65f + .35f * Mathf.Clamp(hint.strength, .1f, 2f)) *
+                    (1f - .5f * distance / tolerance);
+                if (quality <= bestQuality) continue;
+                bestQuality = quality;
+                target = time;
+            }
+            if (bestQuality > 0f) matched++;
+            if (target <= previous + MinMarkerGapSeconds) target = expected;
+            if (target <= previous + MinMarkerGapSeconds) break;
+            boundaries.Add(Mathf.Clamp01(target / duration));
+            previous = target;
+        }
+        // The final boundary is a slice END, not another playable pad.
+        return boundaries.Count >= 2;
+    }
+
+    // Beat-guided by default, with a plain transient-following fallback for
+    // loops whose rhythm cannot safely be inferred (odd/variable meters).
     public void DawSliceHits()
     {
         if (_clip == null || DawSampleDuration <= 0f)
@@ -270,23 +404,30 @@ public class KMusicPlayerUI : MonoBehaviour
             return; // Never destroy existing chops when analysis found no hits.
         }
 
-        // Follow the actual kick/snare suggestions after HEAD, not the beat grid.
-        // A short musical-rate guard prevents flam/double-detection/hats from
-        // creating a few-millisecond unusable pad, but does not move any hit.
-        float beatSeconds = 60f / Mathf.Max(1f, CurrentSongTempo());
-        float minInterval = Mathf.Max(MinMarkerGapSeconds,
-            Mathf.Min(.14f, beatSeconds * .28f));
-        float firstSeconds = Mathf.Clamp01(start01) * duration;
-        float lastSeconds = firstSeconds;
-        var boundaries = new List<float>(17) { Mathf.Clamp01(start01) };
-        foreach (var hit in _transientHints)
+        var boundaries = new List<float>(17);
+        float beatInterval;
+        int hitsMatched;
+        bool beatGuided = TryBuildBeatHitBoundaries(start01, duration,
+            boundaries, out beatInterval, out hitsMatched);
+        if (!beatGuided)
         {
-            float at = Mathf.Clamp01(hit.position01) * duration;
-            if (at < lastSeconds + minInterval || at > duration - MinMarkerGapSeconds)
-                continue;
-            boundaries.Add(hit.position01);
-            lastSeconds = at;
-            if (boundaries.Count == 17) break; // 16 pads + END boundary.
+            // Conservative fallback: keep the source transients as-is and
+            // avoid extremely short chops from ghost duplicates/flams.
+            boundaries.Clear();
+            float beatSeconds = 60f / Mathf.Max(1f, CurrentSongTempo());
+            float minInterval = Mathf.Max(MinMarkerGapSeconds,
+                Mathf.Min(.19f, beatSeconds * .34f));
+            float lastSeconds = Mathf.Clamp01(start01) * duration;
+            boundaries.Add(Mathf.Clamp01(start01));
+            foreach (var hit in _transientHints)
+            {
+                float at = Mathf.Clamp01(hit.position01) * duration;
+                if (at < lastSeconds + minInterval ||
+                    at > duration - MinMarkerGapSeconds) continue;
+                boundaries.Add(hit.position01);
+                lastSeconds = at;
+                if (boundaries.Count == 17) break;
+            }
         }
         if (boundaries.Count < 2)
         {
@@ -311,7 +452,57 @@ public class KMusicPlayerUI : MonoBehaviour
         SeekTo01(start01);
         _wave?.FocusSlice01(boundaries[0], boundaries[1]);
         int pads = boundaries.Count - 1;
-        _sliceHitsFeedback = "SLICED " + pads + " HIT CHOPS / FROM HEAD";
+        _sliceHitsFeedback = beatGuided
+            ? "SLICED " + pads + " BEAT-GUIDED CHOPS / " +
+              Mathf.RoundToInt(60f / beatInterval) + " BPM EST. / " +
+              hitsMatched + " HIT MATCHES / ORIGINAL AUDIO"
+            : "SLICED " + pads + " FREE-HIT CHOPS / BEAT UNCERTAIN";
+        UpdateTrackTitle(_sliceHitsFeedback);
+    }
+
+    // Following a successful beat alignment, these are real quarter-note
+    // divisions in the processed waveform, not arbitrary slices from a BPM
+    // guessed from the entire track's duration. A 17th END bounds pad 16.
+    public void DawSliceAlignedBeats()
+    {
+        if (_clip == null || !_beatAlignFromHead)
+        { _sliceHitsFeedback = "ALIGN 1-2-3-4 FIRST"; return; }
+        if (_warpProcessing)
+        { _sliceHitsFeedback = "WAIT FOR BEAT ALIGN TO FINISH"; return; }
+        float duration = DawSampleDuration;
+        float secondsPerBeat = 60f / Mathf.Max(1f, CurrentSongTempo());
+        if (duration <= secondsPerBeat) return;
+        float anchorSeconds = _beatAlignStart01 * duration;
+        int nearestBeat = Mathf.Max(0, Mathf.RoundToInt(
+            (_scrub01 * duration - anchorSeconds) / secondsPerBeat));
+        float sliceStart = anchorSeconds + nearestBeat * secondsPerBeat;
+        var boundaries = new List<float>(17);
+        for (int beat = 0; beat <= 16; beat++)
+        {
+            float at = sliceStart + beat * secondsPerBeat;
+            if (at > duration - MinMarkerGapSeconds) break;
+            boundaries.Add(Mathf.Clamp01(at / duration));
+        }
+        if (boundaries.Count < 2)
+        {
+            _sliceHitsFeedback = "MOVE HEAD EARLIER FOR BEAT CHOPS";
+            return;
+        }
+        _chops01.Clear();
+        _chops01.AddRange(boundaries);
+        _closingHitMarker = true;
+        _selectedMarkerIndex = 0;
+        _chopArmed = true;
+        _markerAddMode = true;
+        if (_wave != null) _wave.MarkersDraggable = true;
+        SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+        PersistMarkersIfPossible();
+        _scrub01 = boundaries[0];
+        SeekTo01(_scrub01);
+        _wave?.FocusSlice01(boundaries[0], boundaries[1]);
+        _sliceHitsFeedback = "SLICED " + (boundaries.Count - 1) +
+            " EQUAL BEAT CHOPS / FROM HEAD";
         UpdateTrackTitle(_sliceHitsFeedback);
     }
 
@@ -373,6 +564,46 @@ public class KMusicPlayerUI : MonoBehaviour
     private string _clipResourcesPath = null;
     private bool _autoWarpEnabled = true;
     private float _sourceBpm;
+    // When set, HEAD establishes beat 1 for quarter-note beat alignment.
+    // Position refers to the original, unwarped clip timeline.
+    private bool _beatAlignFromHead;
+    private float _beatAlignStart01;
+    private int _tempoDetectionRevision;
+    private bool _tempoDetectionRunning;
+    private string _tempoDetectionStatus = "";
+    public string DawTempoDetectionStatus => _tempoDetectionRunning ?
+        "ANALYZING SOURCE BPM" : _tempoDetectionStatus;
+    public void DawDetectSourceBpm()
+    {
+        if (_clip == null || _tempoDetectionRunning) return;
+        int revision = ++_tempoDetectionRevision;
+        _tempoDetectionRunning = true;
+        _tempoDetectionStatus = "";
+        AudioClip source = _clip;
+        StartCoroutine(DetectSourceTempoAsync(source, revision));
+    }
+    private IEnumerator DetectSourceTempoAsync(AudioClip source, int revision)
+    {
+        List<ZPunkSampleWarp.TransientHint> found = null;
+        yield return StartCoroutine(ZPunkSampleWarp.AnalyzeTransientHints(source,
+            hits => { found = hits; },
+            () => revision != _tempoDetectionRevision || _clip != source || this == null));
+        if (revision != _tempoDetectionRevision || _clip != source || this == null)
+            yield break;
+        _tempoDetectionRunning = false;
+        float confidence;
+        float bpm = ZPunkSampleWarp.EstimateRhythmicBpm(found, source.length,
+            CurrentSongTempo(), out confidence);
+        if (bpm <= 0f)
+        {
+            _tempoDetectionStatus = "BPM UNCERTAIN / SET SOURCE BPM MANUALLY";
+            yield break;
+        }
+        _sourceBpm = bpm;
+        _tempoDetectionStatus = "AUTO BPM " + bpm.ToString("0.0") +
+            " / " + Mathf.RoundToInt(confidence * 100f) + "% RHYTHMIC MATCH";
+        QueueWarp(true);
+    }
     private float _lastSongBpm;
     private float _nextWarpCheck;
     private float _warpPendingAt = -1f;
@@ -812,7 +1043,7 @@ public class KMusicPlayerUI : MonoBehaviour
         // Loading a project or a saved sample must never audition it automatically.
         if (audioSource != null) audioSource.Stop();
         EnsureImportFolders();
-        _autoWarpEnabled = ProjectPrefs.GetInt(WarpEnabledKey, 1) != 0;
+        _autoWarpEnabled = ProjectPrefs.GetInt(WarpEnabledKey, 0) != 0;
         _transientSnapEnabled = ProjectPrefs.GetInt("zpunk.sampler.snap.transient", 1) != 0;
     }
 
@@ -1330,6 +1561,24 @@ public class KMusicPlayerUI : MonoBehaviour
             audioSource.pitch = Mathf.Pow(2f, snapped / 12f);
     }
     public bool DawAutoWarp => _autoWarpEnabled;
+    public bool DawBeatAlignFromHead => _beatAlignFromHead;
+    public void DawAlignBeatsFromHead()
+    {
+        if (_clip == null || _clip.samples < 1024) return;
+        // Even when switching from an existing warp, HEAD is a normalized
+        // position in that clip. It maps approximately onto original time;
+        // the source clip is always used for offline resynthesis.
+        _beatAlignStart01 = Mathf.Clamp(_scrub01, 0f, .99999f);
+        _beatAlignFromHead = true;
+        if (!_autoWarpEnabled)
+        {
+            _autoWarpEnabled = true;
+            ProjectPrefs.SetInt(WarpEnabledKey, 1);
+            ProjectPrefs.Save();
+        }
+        _warpStatus = "BEAT 1 SET / ALIGNING";
+        QueueWarp(true);
+    }
     public string DawWarpStatus => _warpStatus;
     public float DawSourceBpm => _sourceBpm;
     public string DawSampleFolder
@@ -1357,6 +1606,14 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null) return;
         _sourceBpm = Mathf.Clamp((_sourceBpm > 0 ? _sourceBpm : CurrentSongTempo()) + delta, 40f, 240f);
         _sourceBpm = Mathf.Round(_sourceBpm * 10f) / 10f;
+        QueueWarp(true);
+    }
+    public void DawScaleSourceBpm(float scale)
+    {
+        if (_clip == null) return;
+        _sourceBpm = Mathf.Round(Mathf.Clamp(_sourceBpm * scale,
+            40f, 240f) * 10f) / 10f;
+        _tempoDetectionStatus = "SOURCE BPM ADJUSTED / CHECK BY EAR";
         QueueWarp(true);
     }
     private float CurrentSongTempo()
@@ -1389,7 +1646,12 @@ public class KMusicPlayerUI : MonoBehaviour
         _warpJob = null;
         if (_warpedClip != null && _warpedClip != _clip) Destroy(_warpedClip, 5f);
         _warpedClip = null;
+        _tempoDetectionRevision++;
+        _tempoDetectionRunning = false;
+        _tempoDetectionStatus = "";
         _sourceBpm = ZPunkSampleWarp.EstimateLoopBpm(_clip, CurrentSongTempo());
+        _beatAlignFromHead = false; // a new sample needs a new first-beat anchor
+        _beatAlignStart01 = 0f;
         UpdateBeatGrid();
         _lastSongBpm = -1f;
         BeginTransientAnalysis();
@@ -1458,7 +1720,7 @@ public class KMusicPlayerUI : MonoBehaviour
                     if (generation != _warpGeneration) return;
                     _warpProgress = Mathf.Clamp01(value);
                     _warpStage = stage;
-                }));
+                }, _beatAlignFromHead ? _beatAlignStart01 : -1f));
             if (generation != _warpGeneration)
             {
                 if (next != null && next != _clip) Destroy(next);
@@ -1521,6 +1783,18 @@ public class KMusicPlayerUI : MonoBehaviour
             _wave.MarkersDraggable = true;
             UpdateBeatGrid();
         }
+    }
+    public void DawPrepareSliceLab()
+    {
+        DawEnableManualMarkers();
+        if (!_autoWarpEnabled) return;
+        // An intentionally non-destructive default: leave warp available as
+        // an explicit secondary button, but not applied behind the user's back.
+        _autoWarpEnabled = false;
+        _beatAlignFromHead = false;
+        ProjectPrefs.SetInt(WarpEnabledKey, 0);
+        ProjectPrefs.Save();
+        QueueWarp(true);
     }
     public void DawAddMarker() { DawEnableManualMarkers(); DropChopMarkerAt01(_scrub01); }
     public void DawDeleteMarker()

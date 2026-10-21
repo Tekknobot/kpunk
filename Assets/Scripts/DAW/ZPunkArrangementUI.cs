@@ -33,6 +33,16 @@ namespace ZPunk.DAW
         private VisualElement trackHeaders;
         private VisualElement canvas;
         private VisualElement playhead;
+        // A playback cursor belongs only to an active clip, not to every lane.
+        private sealed class ClipPlaybackCursor
+        {
+            public TrackData track;
+            public ClipData clip;
+            public long sourceLengthTicks;
+            public VisualElement marker;
+            public float width;
+        }
+        private readonly List<ClipPlaybackCursor> clipPlaybackCursors = new List<ClipPlaybackCursor>();
         private ScrollView timelineViewport;
         private Label visibleBarLabel;
         private int viewStartBar;
@@ -476,6 +486,7 @@ namespace ZPunk.DAW
             Vector2 previousOffset = timelineViewport != null ? timelineViewport.scrollOffset : Vector2.zero;
             trackHeaders.Clear();
             canvas.Clear();
+            clipPlaybackCursors.Clear();
             int count = song.tracks != null ? song.tracks.Count : 0;
             int bars = (int)Math.Ceiling((double)Math.Max(song.lengthTicks, SongData.TicksPerBar4) / SongData.TicksPerBar4);
             renderedBars = Mathf.Clamp(bars + 4, 16, MaxVisibleBars);
@@ -598,13 +609,15 @@ namespace ZPunk.DAW
                 }
                 if (track.clips == null) continue;
                 foreach (var clip in track.clips)
-                    if (clip != null && clip.lengthTicks > 0) AddClipView(lane, clip, color);
+                    if (clip != null && clip.lengthTicks > 0) AddClipView(lane, track, clip, color);
             }
             playhead = new VisualElement();
             playhead.style.position = Position.Absolute;
             playhead.style.top = 0;
             playhead.style.width = 2;
-            playhead.style.height = RulerHeight + count * RowHeight;
+            // A thin time reference stays in the ruler; individual clip cursors
+            // appear only when their clips are active and audible.
+            playhead.style.height = RulerHeight;
             playhead.style.backgroundColor = Highlight;
             playhead.pickingMode = PickingMode.Ignore;
             canvas.Add(playhead);
@@ -631,7 +644,7 @@ namespace ZPunk.DAW
             if (visibleBarLabel != null) visibleBarLabel.text = "BAR " + (viewStartBar + 1);
         }
 
-        private void AddClipView(VisualElement lane, ClipData clip, Color color)
+        private void AddClipView(VisualElement lane, TrackData track, ClipData clip, Color color)
         {
             string id = clip.id;
             float left = TickToPixel(clip.startTick);
@@ -670,6 +683,28 @@ namespace ZPunk.DAW
             // Keep the visual grip slim; its parent provides a larger invisible touch target.
             resizeGrip.pickingMode = PickingMode.Ignore;
             rect.Add(resizeGrip);
+
+            // Draw within the clip instead of across all track lanes.
+            var cursor = new VisualElement { name = "ActiveClipCursor" };
+            cursor.style.position = Position.Absolute;
+            cursor.style.top = 0;
+            cursor.style.bottom = 0;
+            cursor.style.left = 0;
+            cursor.style.width = 3;
+            cursor.style.backgroundColor = Highlight;
+            cursor.style.opacity = .95f;
+            cursor.style.display = DisplayStyle.None;
+            cursor.pickingMode = PickingMode.Ignore;
+            rect.Add(cursor);
+            ClipContentData source = ArrangementEditing.FindContent(song, clip.contentId);
+            clipPlaybackCursors.Add(new ClipPlaybackCursor
+            {
+                track = track,
+                clip = clip,
+                sourceLengthTicks = Math.Max(1L, source != null ? source.lengthTicks : clip.lengthTicks),
+                marker = cursor,
+                width = width
+            });
             lane.Add(rect);
         }
 
@@ -1069,8 +1104,37 @@ namespace ZPunk.DAW
         {
             if (playhead == null || song == null) return;
             bool moving = transport != null && transport.SongMode && transport.IsPlaying;
+            // The ruler remains a global time reference. Bright green markers
+            // inside clip rectangles belong only to active, audible clips.
             playhead.style.display = moving ? DisplayStyle.Flex : DisplayStyle.None;
             if (moving) playhead.style.left = TickToPixel(transport.CurrentTick);
+
+            long tick = moving ? transport.CurrentTick : -1;
+            bool anySolo = false;
+            if (moving && song.tracks != null)
+                foreach (var track in song.tracks)
+                    if (track != null && track.solo) { anySolo = true; break; }
+
+            foreach (var entry in clipPlaybackCursors)
+            {
+                TrackData track = entry.track;
+                ClipData clip = entry.clip;
+                bool audible = moving && track != null && !track.mute && track.volume > 0f &&
+                    (!anySolo || track.solo);
+                long relativeTick = audible && clip != null ? tick - clip.startTick : -1;
+                bool active = audible && clip != null && relativeTick >= 0 &&
+                    relativeTick < clip.lengthTicks;
+                if (active && !clip.loopEnabled)
+                {
+                    long length = entry.sourceLengthTicks;
+                    long offset = ((clip.sourceOffsetTick % length) + length) % length;
+                    active = relativeTick + offset < length;
+                }
+                entry.marker.style.display = active ? DisplayStyle.Flex : DisplayStyle.None;
+                if (active)
+                    entry.marker.style.left = Mathf.Clamp(TickToPixel(relativeTick), 0f,
+                        Mathf.Max(0f, entry.width - 3f));
+            }
         }
         private void Update()
         {

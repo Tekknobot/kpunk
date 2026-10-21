@@ -414,11 +414,13 @@ namespace ZPunk.DAW
 
         private void BuildSamplerPage()
         {
+            // One vertical scroll surface: no horizontally clipped transport or
+            // nested scroll areas that steal pad and waveform drag gestures.
             samplerScroll = new ScrollView(ScrollViewMode.Vertical) { name = "ZPunkSamplerPage" };
             samplerScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             samplerScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             samplerScroll.contentContainer.style.flexDirection = FlexDirection.Column;
-            samplerScroll.contentContainer.style.paddingBottom = 16;
+            samplerScroll.contentContainer.style.paddingBottom = 20;
             samplerPage = samplerScroll;
             samplerPage.style.display = DisplayStyle.None;
             samplerPage.style.flexDirection = FlexDirection.Column;
@@ -426,68 +428,125 @@ namespace ZPunk.DAW
             samplerPage.style.flexShrink = 1;
             samplerPage.style.minHeight = 0;
             samplerPage.style.paddingTop = 9;
-            var heading = Txt("SAMPLER  /  SLICE LAB",16,Ink);
-            heading.style.unityFontStyleAndWeight = FontStyle.Bold;
-            samplerPage.Add(heading);
-            samplerTitle = Txt("NO SAMPLE",12,Accent);
-            samplerTitle.style.height = 39;
-            samplerTitle.style.whiteSpace = WhiteSpace.Normal;
-            samplerPage.Add(samplerTitle);
-            var row = new VisualElement();
-            row.style.flexDirection = FlexDirection.Row;
-            row.style.flexWrap = Wrap.NoWrap;
-            row.style.height = 43;
-            row.Add(Btn("BACK",()=>ShowSampler(false),65));
-            row.Add(Btn("BROWSE",()=>{FindSampler();samplePlayer?.DawOpenBrowser();},80));
-            row.Add(Btn("<",()=>{FindSampler();samplePlayer?.DawPreviousSample();RefreshSampler();},43));
-            row.Add(Btn(">",()=>{FindSampler();samplePlayer?.DawNextSample();RefreshSampler();},43));
-            row.Add(Btn("PLAY",()=>{FindSampler();samplePlayer?.DawPlaySample();},60));
-            row.Add(Btn("STOP",()=>{FindSampler();samplePlayer?.DawStopSample();},60));
-            var actions = new ScrollView(ScrollViewMode.Horizontal);
-            actions.style.height = 46;
-            actions.style.flexShrink = 0;
-            actions.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            actions.verticalScrollerVisibility = ScrollerVisibility.Hidden;
-            actions.Add(row);
-            samplerPage.Add(actions);
-            var warpCard = Box(new Color(.108f,.147f,.204f),5);
-            warpCard.style.paddingLeft = 8;
-            warpCard.style.paddingRight = 8;
-            warpCard.style.paddingTop = 7;
-            warpCard.style.paddingBottom = 7;
-            warpCard.style.marginTop = 7;
-            warpCard.style.flexShrink = 0;
-            var warpRow = new VisualElement();
-            warpRow.style.flexDirection = FlexDirection.Row;
-            warpRow.style.alignItems = Align.Center;
-            warpRow.style.height = 42;
-            warpRow.style.flexShrink = 0;
-            samplerWarpButton = Btn("WARP ON", () => { FindSampler(); samplePlayer?.DawToggleAutoWarp(); RefreshSampler(); }, 98);
-            warpRow.Add(samplerWarpButton);
-            warpRow.Add(Btn("-10", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(-10); RefreshSampler(); }, 48));
-            warpRow.Add(Btn("-1", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(-1); RefreshSampler(); }, 45));
-            warpRow.Add(Btn("+1", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(1); RefreshSampler(); }, 45));
-            warpRow.Add(Btn("+10", () => { FindSampler(); samplePlayer?.DawAdjustSourceBpm(10); RefreshSampler(); }, 48));
-            warpCard.Add(warpRow);
-            samplerWarpLabel = Txt("SOURCE BPM / WAITING",11,Accent);
-            samplerWarpLabel.style.whiteSpace = WhiteSpace.Normal;
-            warpCard.Add(samplerWarpLabel);
 
-            // Local PCM warp progress: the track fills only while analysis or
-            // transient-guided stretch is running. Its width follows real work.
-            samplerWarpProgressLabel = Txt("ANALYZING / 0%", 10, Muted);
-            samplerWarpProgressLabel.style.marginTop = 7;
-            samplerWarpProgressLabel.style.marginBottom = 3;
+            var headingRow = new VisualElement();
+            headingRow.style.flexDirection = FlexDirection.Row;
+            headingRow.style.alignItems = Align.Center;
+            headingRow.style.justifyContent = Justify.SpaceBetween;
+            headingRow.style.height = 43;
+            var heading = Txt("SAMPLER / SLICE LAB", 16, Ink);
+            heading.style.unityFontStyleAndWeight = FontStyle.Bold;
+            heading.style.flexShrink = 1;
+            headingRow.Add(heading);
+            // An explicit exit remains available even without the obsolete
+            // BACK / previous / next sample toolbar.
+            var done = Btn("DONE", () => ShowSampler(false), 62);
+            done.style.height = 35;
+            headingRow.Add(done);
+            samplerPage.Add(headingRow);
+
+            var sampleRow = new VisualElement();
+            sampleRow.style.flexDirection = FlexDirection.Row;
+            sampleRow.style.alignItems = Align.Center;
+            sampleRow.style.height = 45;
+            sampleRow.style.marginBottom = 6;
+            samplerTitle = Txt("NO SAMPLE", 12, Accent);
+            samplerTitle.style.flexGrow = 1;
+            samplerTitle.style.flexShrink = 1;
+            samplerTitle.style.minWidth = 0;
+            samplerTitle.style.whiteSpace = WhiteSpace.NoWrap;
+            samplerTitle.style.overflow = Overflow.Hidden;
+            samplerTitle.style.textOverflow = TextOverflow.Ellipsis;
+            sampleRow.Add(samplerTitle);
+            var browse = Btn("BROWSE", () => { FindSampler(); samplePlayer?.DawOpenBrowser(); }, 83);
+            browse.style.marginRight = 0;
+            sampleRow.Add(browse);
+            samplerPage.Add(sampleRow);
+
+            var primaryRow = new VisualElement();
+            primaryRow.style.flexDirection = FlexDirection.Row;
+            primaryRow.style.alignItems = Align.Center;
+            primaryRow.style.height = 53;
+            primaryRow.style.marginBottom = 4;
+            var sliceHits = Btn("SLICE HITS", () =>
+            {
+                FindSampler();
+                samplePlayer?.DawSliceHits();
+                RefreshSampler();
+            }, 110);
+            sliceHits.style.flexGrow = 1;
+            sliceHits.style.minWidth = 0;
+            sliceHits.style.height = 50;
+            sliceHits.style.backgroundColor = Accent;
+            sliceHits.style.color = new Color(.035f, .09f, .105f);
+            sliceHits.style.fontSize = 15;
+            primaryRow.Add(sliceHits);
+            samplerWarpButton = Btn("WARP OFF", () =>
+            {
+                FindSampler();
+                samplePlayer?.DawToggleAutoWarp();
+                RefreshSampler();
+            }, 105);
+            samplerWarpButton.style.height = 50;
+            samplerWarpButton.style.marginRight = 0;
+            samplerWarpButton.style.fontSize = 11;
+            primaryRow.Add(samplerWarpButton);
+            samplerPage.Add(primaryRow);
+
+            samplerHitSliceStatus = Txt("SET HEAD ON A MAIN HIT, THEN SLICE HITS", 10, Muted);
+            samplerHitSliceStatus.style.whiteSpace = WhiteSpace.Normal;
+            samplerHitSliceStatus.style.marginBottom = 5;
+            samplerPage.Add(samplerHitSliceStatus);
+
+            // Transport belongs to the waveform being auditioned; the main
+            // application play/stop controls above remain unchanged.
+            var transport = new VisualElement();
+            transport.style.flexDirection = FlexDirection.Row;
+            transport.style.alignItems = Align.Center;
+            transport.style.height = 47;
+            var samplePlay = Btn("PLAY", () => { FindSampler(); samplePlayer?.DawPlaySample(); }, 58);
+            var sampleStop = Btn("STOP", () => { FindSampler(); samplePlayer?.DawStopSample(); }, 60);
+            samplePlay.style.flexGrow = 1;
+            samplePlay.style.minWidth = 0;
+            sampleStop.style.flexGrow = 1;
+            sampleStop.style.minWidth = 0;
+            samplePlay.style.backgroundColor = new Color(.12f, .33f, .31f);
+            transport.Add(samplePlay);
+            transport.Add(sampleStop);
+            samplerSnapButton = Btn("HIT SNAP", () =>
+            {
+                FindSampler();
+                samplePlayer?.DawToggleTransientSnap();
+                RefreshSampler();
+            }, 85);
+            samplerSnapButton.style.flexGrow = 1;
+            samplerSnapButton.style.minWidth = 0;
+            samplerSnapButton.style.fontSize = 11;
+            transport.Add(samplerSnapButton);
+            var full = Btn("FULL", () => { FindSampler(); samplePlayer?.DawShowFullSample(); RefreshSampler(); }, 53);
+            full.style.minWidth = 53;
+            full.style.marginRight = 0;
+            transport.Add(full);
+            samplerPage.Add(transport);
+
+            samplerWave = Box(new Color(.049f,.073f,.105f), 5);
+            samplerWave.style.height = 175;
+            samplerWave.style.flexShrink = 0;
+            samplerWave.style.marginTop = 3;
+            samplerWave.style.marginBottom = 4;
+            samplerPage.Add(samplerWave);
+
+            // Keep the warp job status and optional pitch/key tools directly below
+            // the waveform, where their effect can be seen while editing samples.
+            samplerWarpLabel = Txt("ORIGINAL AUDIO / NON-DESTRUCTIVE SLICING", 10, Muted);
+            samplerWarpLabel.style.whiteSpace = WhiteSpace.Normal;
+            samplerWarpLabel.style.marginTop = 4;
+            samplerPage.Add(samplerWarpLabel);
+            samplerWarpProgressLabel = Txt("WARPING", 10, Muted);
             samplerWarpProgressLabel.style.display = DisplayStyle.None;
-            warpCard.Add(samplerWarpProgressLabel);
-            samplerWarpProgressTrack = new VisualElement();
+            samplerPage.Add(samplerWarpProgressLabel);
+            samplerWarpProgressTrack = Box(Surface, 3);
             samplerWarpProgressTrack.style.height = 5;
-            samplerWarpProgressTrack.style.flexShrink = 0;
-            samplerWarpProgressTrack.style.backgroundColor = Surface;
-            samplerWarpProgressTrack.style.borderTopLeftRadius = 3;
-            samplerWarpProgressTrack.style.borderTopRightRadius = 3;
-            samplerWarpProgressTrack.style.borderBottomLeftRadius = 3;
-            samplerWarpProgressTrack.style.borderBottomRightRadius = 3;
             samplerWarpProgressTrack.style.overflow = Overflow.Hidden;
             samplerWarpProgressTrack.style.display = DisplayStyle.None;
             samplerWarpProgressFill = new VisualElement();
@@ -495,154 +554,98 @@ namespace ZPunk.DAW
             samplerWarpProgressFill.style.width = Length.Percent(0);
             samplerWarpProgressFill.style.backgroundColor = Accent;
             samplerWarpProgressTrack.Add(samplerWarpProgressFill);
-            warpCard.Add(samplerWarpProgressTrack);
+            samplerPage.Add(samplerWarpProgressTrack);
 
-            // Integer-only pitch transport. Step buttons make accidental cents / 
-            // in-between pitches impossible, including on touchscreens.
-            var pitchCaption = Txt("PITCH  /  SEMITONES (-12 TO +12)",10,Muted);
-            pitchCaption.style.marginTop = 8;
-            pitchCaption.style.marginBottom = 3;
-            warpCard.Add(pitchCaption);
+
+            // Optional pitch/key tools remain available without dominating the
+            // chopping workflow or pushing the waveform far down the screen.
+            var utility = Box(new Color(.085f,.12f,.17f), 5);
+            utility.style.marginTop = 8;
+            utility.style.paddingLeft = 8;
+            utility.style.paddingRight = 8;
+            utility.style.paddingTop = 6;
+            utility.style.paddingBottom = 6;
             var pitchRow = new VisualElement();
             pitchRow.style.flexDirection = FlexDirection.Row;
             pitchRow.style.alignItems = Align.Center;
-            pitchRow.style.height = 44;
-            pitchRow.style.flexShrink = 0;
-            pitchRow.Add(Btn("-1", () => { FindSampler(); samplePlayer?.DawAdjustPitchSemitones(-1); RefreshSampler(); }, 52));
-            samplerPitchLabel = Txt("0 ST",13,Accent);
-            samplerPitchLabel.style.minWidth = 68;
+            pitchRow.style.height = 43;
+            pitchRow.Add(Txt("PITCH", 11, Muted));
+            pitchRow.Add(Btn("-1", () => { FindSampler(); samplePlayer?.DawAdjustPitchSemitones(-1); RefreshSampler(); }, 43));
+            samplerPitchLabel = Txt("0 ST", 12, Accent);
             samplerPitchLabel.style.flexGrow = 1;
             samplerPitchLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
-            samplerPitchLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
             pitchRow.Add(samplerPitchLabel);
-            pitchRow.Add(Btn("+1", () => { FindSampler(); samplePlayer?.DawAdjustPitchSemitones(1); RefreshSampler(); }, 52));
-            pitchRow.Add(Btn("RESET", () => { FindSampler(); samplePlayer?.DawSetPitchSemitones(0); RefreshSampler(); }, 68));
-            warpCard.Add(pitchRow);
-
-            var keyArea = new VisualElement();
-            keyArea.style.flexDirection = FlexDirection.Column;
-            keyArea.style.marginTop = 6;
-            keyArea.style.paddingTop = 8;
-            keyArea.style.paddingBottom = 6;
-            keyArea.style.paddingLeft = 7;
-            keyArea.style.paddingRight = 7;
-            keyArea.style.backgroundColor = Surface;
-            keyArea.style.borderTopLeftRadius = 5;
-            keyArea.style.borderTopRightRadius = 5;
-            keyArea.style.borderBottomLeftRadius = 5;
-            keyArea.style.borderBottomRightRadius = 5;
-            samplerSourceKeyLabel = Txt("SOURCE KEY  /  WAITING", 12, Ink);
+            pitchRow.Add(Btn("+1", () => { FindSampler(); samplePlayer?.DawAdjustPitchSemitones(1); RefreshSampler(); }, 43));
+            pitchRow.Add(Btn("RESET", () => { FindSampler(); samplePlayer?.DawSetPitchSemitones(0); RefreshSampler(); }, 63));
+            utility.Add(pitchRow);
+            samplerSourceKeyLabel = Txt("SOURCE KEY / NO SAMPLE", 11, Ink);
             samplerSourceKeyLabel.style.whiteSpace = WhiteSpace.Normal;
-            samplerSourceKeyLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-            keyArea.Add(samplerSourceKeyLabel);
-            samplerPitchedKeyLabel = Txt("PITCHED KEY  /  UNKNOWN", 12, Accent);
+            utility.Add(samplerSourceKeyLabel);
+            samplerPitchedKeyLabel = Txt("PITCHED KEY / UNKNOWN", 11, Accent);
             samplerPitchedKeyLabel.style.whiteSpace = WhiteSpace.Normal;
-            samplerPitchedKeyLabel.style.marginTop = 5;
-            keyArea.Add(samplerPitchedKeyLabel);
-            warpCard.Add(keyArea);
-
-            samplerLibraryLabel = Txt("SAMPLE LIBRARY",10,Muted);
+            samplerPitchedKeyLabel.style.marginTop = 4;
+            utility.Add(samplerPitchedKeyLabel);
+            samplerLibraryLabel = Txt("SAMPLE LIBRARY", 10, Muted);
             samplerLibraryLabel.style.whiteSpace = WhiteSpace.Normal;
-            samplerLibraryLabel.style.marginTop = 4;
-            warpCard.Add(samplerLibraryLabel);
-            samplerPage.Add(warpCard);
-            samplerPage.schedule.Execute(() =>
-            {
-                if (showingSampler) RefreshSampler();
-                RefreshClipSampleKeyReference();
-                if (generatorPanel != null && generatorPanel.style.display.value == DisplayStyle.Flex && generatorSampleKeyHint != null)
-                {
-                    FindSampler();
-                    bool available = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
-                    generatorSampleKeyButton?.SetEnabled(available);
-                    generatorSampleKeyHint.text = samplePlayer == null ? "NO SAMPLE" :
-                        samplePlayer.DawSampleKeyAnalyzing ? "ANALYZING SAMPLE" :
-                        available ? samplePlayer.DawPitchedKeyText + " / " + samplePlayer.DawSampleKeyConfidence + " EST." :
-                        "KEY NOT DETECTED";
-                }
-            }).Every(500);
-            samplerWave = Box(new Color(.049f,.073f,.105f),4);
-            samplerWave.style.height = 145;
-            samplerWave.style.flexShrink = 0;
-            samplerWave.style.marginTop = 10;
-            samplerPage.Add(samplerWave);
-            var zoomActions = new VisualElement();
-            zoomActions.style.flexDirection = FlexDirection.Row;
-            zoomActions.style.alignItems = Align.Center;
-            zoomActions.style.height = 43;
-            zoomActions.style.flexShrink = 0;
-            zoomActions.style.marginTop = 4;
-            zoomActions.Add(Btn("- ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(false); RefreshSampler(); }, 80));
-            zoomActions.Add(Btn("+ ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(true); RefreshSampler(); }, 80));
-            zoomActions.Add(Btn("FULL", () => { FindSampler(); samplePlayer?.DawShowFullSample(); RefreshSampler(); }, 66));
-            samplerSnapButton = Btn("HIT SNAP", () => { FindSampler(); samplePlayer?.DawToggleTransientSnap(); RefreshSampler(); }, 94);
-            zoomActions.Add(samplerSnapButton);
-            // Keep all four controls reachable even on narrow portrait phones.
-            var zoomScroll = new ScrollView(ScrollViewMode.Horizontal);
-            zoomScroll.style.height = 45;
-            zoomScroll.style.flexShrink = 0;
-            zoomScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            zoomScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
-            zoomScroll.Add(zoomActions);
-            samplerPage.Add(zoomScroll);
-            var help = Txt("DRAG HEAD TO A GHOST HIT, THEN SLICE HITS TO CHOP AT THE FOLLOWING ATTACKS. PLAY STARTS AT HEAD. HIT SNAP LOCKS TO GHOSTS.",10,Muted);
-            help.style.whiteSpace = WhiteSpace.Normal;
-            help.style.flexShrink = 0;
-            help.style.marginTop = 7;
-            help.style.marginBottom = 8;
-            samplerPage.Add(help);
-            var sliceHits = Btn("SLICE HITS", () =>
-            {
-                FindSampler();
-                samplePlayer?.DawSliceHits();
-                RefreshSampler();
-            }, 160);
-            sliceHits.style.height = 42;
-            sliceHits.style.flexShrink = 0;
-            sliceHits.style.marginTop = 2;
-            sliceHits.style.backgroundColor = new Color(.14f, .34f, .32f);
-            sliceHits.style.color = Ink;
-            samplerPage.Add(sliceHits);
-            samplerHitSliceStatus = Txt("PLACE HEAD ON FIRST HIT, THEN SLICE HITS", 10, Muted);
-            samplerHitSliceStatus.style.whiteSpace = WhiteSpace.Normal;
-            samplerHitSliceStatus.style.marginTop = 4;
-            samplerHitSliceStatus.style.marginBottom = 7;
-            samplerHitSliceStatus.style.flexShrink = 0;
-            samplerPage.Add(samplerHitSliceStatus);
-            var slices = new VisualElement();
-            slices.style.flexDirection = FlexDirection.Row;
-            slices.style.height = 46;
-            slices.Add(Btn("ADD MARK",()=>{FindSampler();samplePlayer?.DawAddMarker();RefreshSampler();},86));
-            slices.Add(Btn("DEL SELECTED",()=>{FindSampler();samplePlayer?.DawDeleteMarker();RefreshSampler();},111));
-            slices.Add(Btn("APPLY", ApplySamplerChops, 75));
-            var sliceActions = new ScrollView(ScrollViewMode.Horizontal);
-            sliceActions.style.height = 49;
-            sliceActions.style.flexShrink = 0;
-            sliceActions.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            sliceActions.verticalScrollerVisibility = ScrollerVisibility.Hidden;
-            sliceActions.Add(slices);
-            samplerPage.Add(sliceActions);
-            // One continuous vertical scroller owns the entire sampler page;
-            // nested scroll views previously trapped touch drags on the chop pads.
-            samplerSelectedMarker = Txt("SELECT A MARKER TO MOVE OR DELETE",11,Accent);
+            samplerLibraryLabel.style.marginTop = 6;
+            utility.Add(samplerLibraryLabel);
+            samplerPage.Add(utility);
+
+
+            var zoomRow = new VisualElement();
+            zoomRow.style.flexDirection = FlexDirection.Row;
+            zoomRow.style.alignItems = Align.Center;
+            zoomRow.style.height = 40;
+            zoomRow.Add(Btn("- ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(false); }, 77));
+            zoomRow.Add(Btn("+ ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(true); }, 77));
+            var zoomHint = Txt("DRAG HEAD TO A HIT", 10, Muted);
+            zoomHint.style.flexGrow = 1;
+            zoomHint.style.unityTextAlign = TextAnchor.MiddleRight;
+            zoomRow.Add(zoomHint);
+            samplerPage.Add(zoomRow);
+
+            var editRow = new VisualElement();
+            editRow.style.flexDirection = FlexDirection.Row;
+            editRow.style.alignItems = Align.Center;
+            editRow.style.height = 47;
+            var add = Btn("ADD MARK", () => { FindSampler(); samplePlayer?.DawAddMarker(); RefreshSampler(); }, 87);
+            var del = Btn("DELETE", () => { FindSampler(); samplePlayer?.DawDeleteMarker(); RefreshSampler(); }, 72);
+            var apply = Btn("APPLY CHOPS", ApplySamplerChops, 98);
+            add.style.flexGrow = 1;
+            del.style.flexGrow = 1;
+            apply.style.flexGrow = 1;
+            add.style.minWidth = 0;
+            del.style.minWidth = 0;
+            apply.style.minWidth = 0;
+            apply.style.marginRight = 0;
+            editRow.Add(add);
+            editRow.Add(del);
+            editRow.Add(apply);
+            samplerPage.Add(editRow);
+            samplerSelectedMarker = Txt("TAP A PAD TO SELECT ITS MARKER", 10, Accent);
             samplerSelectedMarker.style.whiteSpace = WhiteSpace.Normal;
-            samplerSelectedMarker.style.marginTop = 5;
+            samplerSelectedMarker.style.marginTop = 4;
             samplerSelectedMarker.style.marginBottom = 5;
             samplerPage.Add(samplerSelectedMarker);
-            var markerTools = new ScrollView(ScrollViewMode.Horizontal);
-            markerTools.style.height = 48;
-            markerTools.style.flexShrink = 0;
-            markerTools.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            markerTools.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+
+            // These controls are for fine edits, not song navigation.
             var markerRow = new VisualElement();
             markerRow.style.flexDirection = FlexDirection.Row;
-            markerRow.style.flexWrap = Wrap.NoWrap;
-            markerRow.Add(Btn("< MARK", () => { FindSampler(); samplePlayer?.DawSelectMarker(-1); RefreshSampler(); }, 76));
-            markerRow.Add(Btn("MARK >", () => { FindSampler(); samplePlayer?.DawSelectMarker(1); RefreshSampler(); }, 76));
-            markerRow.Add(Btn("- 10 MS", () => { FindSampler(); samplePlayer?.DawNudgeSelectedMarker(-1); RefreshSampler(); }, 78));
-            markerRow.Add(Btn("+ 10 MS", () => { FindSampler(); samplePlayer?.DawNudgeSelectedMarker(1); RefreshSampler(); }, 78));
-            markerTools.Add(markerRow);
-            samplerPage.Add(markerTools);
+            markerRow.style.height = 43;
+            var prev = Btn("< MARK", () => { FindSampler(); samplePlayer?.DawSelectMarker(-1); RefreshSampler(); }, 70);
+            var next = Btn("MARK >", () => { FindSampler(); samplePlayer?.DawSelectMarker(1); RefreshSampler(); }, 70);
+            var nudgeL = Btn("- 10 MS", () => { FindSampler(); samplePlayer?.DawNudgeSelectedMarker(-1); RefreshSampler(); }, 70);
+            var nudgeR = Btn("+ 10 MS", () => { FindSampler(); samplePlayer?.DawNudgeSelectedMarker(1); RefreshSampler(); }, 70);
+            foreach (var button in new[] { prev, next, nudgeL, nudgeR })
+            {
+                button.style.flexGrow = 1;
+                button.style.minWidth = 0;
+                button.style.fontSize = 11;
+                markerRow.Add(button);
+            }
+            nudgeR.style.marginRight = 0;
+            samplerPage.Add(markerRow);
+
             var padScroll = new VisualElement();
             padScroll.style.flexDirection = FlexDirection.Column;
             padScroll.style.flexShrink = 0;
@@ -650,27 +653,26 @@ namespace ZPunk.DAW
             {
                 var padRow = new VisualElement();
                 padRow.style.flexDirection = FlexDirection.Row;
-                padRow.style.height = 69;
+                padRow.style.height = 68;
                 padRow.style.flexShrink = 0;
                 for (int j = 0; j < 4; j++)
                 {
                     int slice = group * 4 + j + 1;
-                    var button = Btn("S"+slice.ToString("00"),()=>{
+                    var button = Btn("S" + slice.ToString("00"), () =>
+                    {
                         FindSampler();
                         samplePlayer?.DawSelectChopPad(slice);
                         RefreshSampler();
-                    },50);
+                    }, 44);
                     button.style.flexGrow = 1;
-                    button.style.flexShrink = 0;
-                    button.style.minWidth = 56;
-                    button.style.marginRight = 5;
+                    button.style.flexShrink = 1;
+                    button.style.minWidth = 0;
+                    button.style.marginRight = j == 3 ? 0 : 5;
                     button.style.height = 62;
-                    button.style.fontSize = 11;
+                    button.style.fontSize = 10;
                     button.style.whiteSpace = WhiteSpace.Normal;
                     button.style.backgroundColor = Raised;
                     button.style.position = Position.Relative;
-                    // A tiny bottom mini-timeline indicates which part of the
-                    // whole sample the pad plays, including its end boundary.
                     var track = new VisualElement();
                     track.pickingMode = PickingMode.Ignore;
                     track.style.position = Position.Absolute;
@@ -695,6 +697,22 @@ namespace ZPunk.DAW
                 padScroll.Add(padRow);
             }
             samplerPage.Add(padScroll);
+
+            samplerPage.schedule.Execute(() =>
+            {
+                if (showingSampler) RefreshSampler();
+                RefreshClipSampleKeyReference();
+                if (generatorPanel != null && generatorPanel.style.display.value == DisplayStyle.Flex && generatorSampleKeyHint != null)
+                {
+                    FindSampler();
+                    bool available = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
+                    generatorSampleKeyButton?.SetEnabled(available);
+                    generatorSampleKeyHint.text = samplePlayer == null ? "NO SAMPLE" :
+                        samplePlayer.DawSampleKeyAnalyzing ? "ANALYZING SAMPLE" :
+                        available ? samplePlayer.DawPitchedKeyText + " / " + samplePlayer.DawSampleKeyConfidence + " EST." :
+                        "KEY NOT DETECTED";
+                }
+            }).Every(500);
             root.Add(samplerPage);
         }
 
@@ -1153,7 +1171,9 @@ namespace ZPunk.DAW
                 samplerWarpButton.text = samplePlayer != null && samplePlayer.DawAutoWarp ? "WARP ON" : "WARP OFF";
             if (samplerWarpLabel != null)
                 samplerWarpLabel.text = samplePlayer != null ?
-                    "SOURCE BPM (LENGTH EST.) " + samplePlayer.DawSourceBpm.ToString("0.#") + "  /  " + samplePlayer.DawWarpStatus :
+                    (samplePlayer.DawAutoWarp ?
+                        "WARP / SOURCE " + samplePlayer.DawSourceBpm.ToString("0.#") + " BPM / " + samplePlayer.DawWarpStatus :
+                        "ORIGINAL AUDIO / NO TIME STRETCH") :
                     "NO SAMPLE";
             bool warpBusy = samplePlayer != null && samplePlayer.DawWarpProcessing;
             if (samplerWarpProgressTrack != null)
@@ -1190,7 +1210,7 @@ namespace ZPunk.DAW
                     samplePlayer.DawHitSliceStatus + "  /  UP TO 16 PADS  /  FROM HEAD" : "NO SAMPLE";
             if (samplerSnapButton != null)
                 samplerSnapButton.text = samplePlayer != null && samplePlayer.DawTransientSnapEnabled
-                    ? "HIT SNAP" : "GRID SNAP";
+                    ? "HIT SNAP" : "SNAP OFF";
             for (int i = 0; i < samplerChopPads.Count; ++i)
             {
                 Button button = samplerChopPads[i];
@@ -1242,7 +1262,7 @@ namespace ZPunk.DAW
                     (value ? DisplayStyle.None : DisplayStyle.Flex);
             if (!value) return;
             FindSampler();
-            samplePlayer?.DawEnableManualMarkers();
+            samplePlayer?.DawPrepareSliceLab();
             if (samplerWave != null && samplerWave.childCount == 0)
             {
                 var doc = FindObjectOfType<UIDocument>();
@@ -1250,7 +1270,7 @@ namespace ZPunk.DAW
                 if (oldHost != null)
                 {
                     oldHost.RemoveFromHierarchy();
-                    oldHost.style.height = 140;
+                    oldHost.style.height = 170;
                     oldHost.style.flexGrow = 1;
                     samplerWave.Add(oldHost);
                     var waveform = oldHost.Q<KMusic.UI.WaveformView>();
@@ -2108,7 +2128,7 @@ namespace ZPunk.DAW
             editorPlayhead.style.opacity = 0.95f;
 
             editorPlayhead.pickingMode = PickingMode.Ignore;
-            editorPlayhead.style.display = DisplayStyle.Flex;
+            editorPlayhead.style.display = DisplayStyle.None;
 
             // Add to the outer grid so it spans the ruler and notes.
             // Adding it last also keeps it visible above the notes.
@@ -2123,6 +2143,7 @@ namespace ZPunk.DAW
                 rulerPlayhead.style.height = 25;
                 rulerPlayhead.style.backgroundColor = Accent;
                 rulerPlayhead.pickingMode = PickingMode.Ignore;
+                rulerPlayhead.style.display = DisplayStyle.None;
                 rulerContent.Add(rulerPlayhead);
             }
             plane.RegisterCallback<PointerDownEvent>(evt=>
@@ -2245,77 +2266,91 @@ namespace ZPunk.DAW
                     }
                 }).ExecuteLater(0);
         }
+        private void SetEditorPlayheadVisible(bool visible)
+        {
+            var display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+            if (editorPlayhead != null) editorPlayhead.style.display = display;
+            if (rulerPlayhead != null) rulerPlayhead.style.display = display;
+            if (!visible) lastPlayheadX = -1f;
+        }
+
         private void Update()
         {
-            // Keeping pitch guidance in sync doesn't depend on the transport playing.
+            // Sample-key guidance must continue updating when the transport is stopped.
             FollowPitchedSampleKey();
-            if (!ready ||
-                root == null ||
-                editorPlayhead == null ||
-                clip == null ||
-                content == null)
-                return;
+            if (!ready || editorPlayhead == null) return;
 
-            // Recover the transport if it was created after initialization.
             if (songTransport == null)
                 songTransport = FindObjectOfType<ZPunkSongTransport>();
 
-            if (songTransport == null)
+            if (root == null || root.resolvedStyle.display == DisplayStyle.None ||
+                showingSampler || songTransport == null || clip == null || content == null ||
+                song == null || song.tracks == null || trackIndex < 0 ||
+                trackIndex >= song.tracks.Count ||
+                !songTransport.SongMode || !songTransport.IsPlaying)
+            {
+                SetEditorPlayheadVisible(false);
                 return;
+            }
 
-            if (root.resolvedStyle.display == DisplayStyle.None ||
-                showingSampler)
+            // Only display the neon cursor while this particular clip is being
+            // played by the arrangement. Never wrap an inactive clip's timeline.
+            TrackData track = song.tracks[trackIndex];
+            if (track == null || track.mute || track.volume <= 0f)
+            {
+                SetEditorPlayheadVisible(false);
                 return;
-
-            // Limit UI Toolkit positioning updates to 30 FPS.
-            if (Time.unscaledTime < nextPlayheadPaint)
+            }
+            bool anotherTrackSoloed = false;
+            bool thisTrackSoloed = track.solo;
+            foreach (TrackData other in song.tracks)
+                if (other != null && other.solo) { anotherTrackSoloed = true; break; }
+            if (anotherTrackSoloed && !thisTrackSoloed)
+            {
+                SetEditorPlayheadVisible(false);
                 return;
+            }
 
+            long globalTick = songTransport.CurrentTick;
+            long clipRelativeTick = globalTick - clip.startTick;
+            if (clipRelativeTick < 0 || clip.lengthTicks <= 0 ||
+                clipRelativeTick >= clip.lengthTicks)
+            {
+                SetEditorPlayheadVisible(false);
+                return;
+            }
+
+            // Match SongEventPlanner: non-loop clips end after their source
+            // content has played; looping clips wrap at source-content length.
+            long contentTicks = Math.Max(1L, content.lengthTicks);
+            long sourceOffset = ((clip.sourceOffsetTick % contentTicks) + contentTicks) % contentTicks;
+            long sourceTick = clipRelativeTick + sourceOffset;
+            if (!clip.loopEnabled && sourceTick >= contentTicks)
+            {
+                SetEditorPlayheadVisible(false);
+                return;
+            }
+            if (clip.loopEnabled) sourceTick %= contentTicks;
+
+            // Throttle *position updates*, not the active/inactive visibility check.
+            SetEditorPlayheadVisible(true);
+            if (Time.unscaledTime < nextPlayheadPaint) return;
             nextPlayheadPaint = Time.unscaledTime + 1f / 30f;
 
-            // Use the arrangement's musical clock.
-            long globalTick = songTransport.CurrentTick;
-
-            // Calculate the selected clip's relative position.
-            long localTick = globalTick - clip.startTick
-                            + clip.sourceOffsetTick;
-
-            // Determine the visible editor sequence length.
-            long cycleTicks = clip.loopEnabled && content.lengthTicks > 0
-                ? content.lengthTicks
-                : Math.Max(content.lengthTicks, clip.lengthTicks);
-
-            long visibleTicks = (long)steps * quantum;
-
-            cycleTicks = Math.Max(
-                quantum,
-                Math.Min(cycleTicks, visibleTicks)
-            );
-
-            // Wrap the position instead of hiding the playhead.
-            // This also handles clips placed later in the arrangement.
-            long wrappedTick = localTick % cycleTicks;
-
-            if (wrappedTick < 0)
-                wrappedTick += cycleTicks;
-
-            // Convert ticks to horizontal grid pixels.
-            float x = (float)wrappedTick / quantum * StepW;
-
-            // Keep the line visible at the left edge.
-            x = Mathf.Max(1f, x);
-
-            // Only change the element when the position actually moves.
+            long visibleTicks = Math.Max(quantum, (long)steps * quantum);
+            if (sourceTick >= visibleTicks)
+            {
+                SetEditorPlayheadVisible(false);
+                return;
+            }
+            float x = Mathf.Max(1f, (float)sourceTick / quantum * StepW);
             if (Mathf.Abs(x - lastPlayheadX) >= 0.4f)
             {
                 lastPlayheadX = x;
                 editorPlayhead.style.left = x;
                 if (rulerPlayhead != null) rulerPlayhead.style.left = x;
             }
-
-            // Keep the position indicator visible even when stopped.
-            editorPlayhead.style.display = DisplayStyle.Flex;
-        }        
+        }
         private void DrawEvent(VisualElement plane, long tick, long duration, int row, int index, int eventVelocity)
         {
             float x = (float)tick / quantum * StepW;

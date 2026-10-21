@@ -6,11 +6,11 @@ using UnityEngine;
 namespace ZPunk.DAW
 {
     /// <summary>
-    /// Offline, pitch-preserving sample warp. Detects strong percussive attacks and
-    /// gently quantizes nearby attacks to the song's eighth-note grid. A monotonic
-    /// time map guides WSOLA overlap/add synthesis between timing anchors.
-    /// Original AudioClip data is never modified. Processing yields each frame.
-    /// This is transient-guided groove tightening, not kick/snare stem separation.
+    /// Offline, pitch-preserving, transient-protected WSOLA time stretch.
+    /// Optional playhead-anchored beat alignment locks prominent attacks near
+    /// quarter-note positions (1, 2, 3, 4), while less important transients
+    /// remain unquantized. This is NOT Ableton's proprietary Complex Pro engine.
+    /// Original AudioClip data is never modified. Long processing is cooperative.
     /// </summary>
     public static class ZPunkSampleWarp
     {
@@ -41,8 +41,11 @@ namespace ZPunk.DAW
         {
             public float position01;
             public bool kick;
-            public TransientHint(float position, bool isKick)
-            { position01 = position; kick = isKick; }
+            // Normalized onset intensity: used to distinguish prominent
+            // kick/snare attacks from soft hats when selecting beat slices.
+            public float strength;
+            public TransientHint(float position, bool isKick, float intensity = 1f)
+            { position01 = position; kick = isKick; strength = intensity; }
         }
         private struct AttackCandidate
         {
@@ -195,7 +198,8 @@ namespace ZPunk.DAW
                 int attackFrame = RefineAttackFrame(clip, hit.frame, ref detailPcm, ref detailEnvelope);
                 // Refinement must not collapse distinct events into a duplicate.
                 if (attackFrame - lastFrame < minimumSpacing / 2) continue;
-                hints.Add(new TransientHint(Mathf.Clamp01(attackFrame / (float)clip.samples), hit.kick));
+                hints.Add(new TransientHint(Mathf.Clamp01(attackFrame / (float)clip.samples),
+                    hit.kick, Mathf.Clamp(hit.strength / Mathf.Max(.001f, threshold * 2f), .1f, 2f)));
                 lastFrame = attackFrame;
                 if ((i & 31) == 31) yield return null;
             }
@@ -219,6 +223,52 @@ namespace ZPunk.DAW
             return best > 0f ? Mathf.Round(best * 10f) / 10f : 0f;
         }
 
+        /// <summary>
+        /// Estimate SOURCE BPM from periodic attack times, not the duration of
+        /// the file. Returns zero when timing is ambiguous. Half/double-time
+        /// aliases cannot always be resolved in a mixed song; the user can
+        /// override the result with the existing +/- source BPM controls.
+        /// </summary>
+        public static float EstimateRhythmicBpm(List<TransientHint> hits,
+            float durationSeconds, float preferredBpm, out float confidence)
+        {
+            confidence = 0f;
+            if (hits == null || hits.Count < 16 || durationSeconds < 5f)
+                return 0f;
+            float best = 0f, bestRating = 0f, bestCoherence = 0f;
+            // Scan fine enough to distinguish 119.8 from 120 on a long track.
+            for (int tenth = 600; tenth <= 1900; tenth++)
+            {
+                float bpm = tenth * .1f;
+                double real = 0d, imaginary = 0d, total = 0d;
+                for (int i = 0; i < hits.Count; i++)
+                {
+                    double weight = hits[i].kick ? 1.6 : 1.0;
+                    double cycle = hits[i].position01 * durationSeconds * bpm / 60.0;
+                    // Remove large whole cycles before evaluating trig functions.
+                    double angle = (cycle - Math.Floor(cycle)) * 2.0 * Math.PI;
+                    real += Math.Cos(angle) * weight;
+                    imaginary += Math.Sin(angle) * weight;
+                    total += weight;
+                }
+                float coherence = (float)(Math.Sqrt(real * real + imaginary * imaginary) /
+                    Math.Max(.00001d, total));
+                // A mild prior breaks occasional half/double tempo aliases but
+                // never overrules strong rhythmic evidence.
+                float proximity = 1f - .07f * Mathf.Clamp01(Mathf.Abs(
+                    Mathf.Log(bpm / Mathf.Clamp(preferredBpm, 40f, 240f))) / .7f);
+                float rating = coherence * proximity;
+                if (rating > bestRating)
+                {
+                    bestRating = rating;
+                    bestCoherence = coherence;
+                    best = bpm;
+                }
+            }
+            confidence = bestCoherence;
+            return bestCoherence >= .28f ? best : 0f;
+        }
+
         public static AudioClip Stretch(AudioClip source, float sourceBpm, float targetBpm,
             out string reason)
         {
@@ -239,9 +289,12 @@ namespace ZPunk.DAW
         }
 
         /// <param name="progress">Normalized 0..1, with stage text.</param>
+        /// <param name="beatAnchor01">Normalized ORIGINAL sample position of beat 1.
+        /// Negative value preserves the legacy automatic warp behavior.</param>
         public static IEnumerator StretchAsync(AudioClip original, float sourceBpm,
             float targetBpm, Action<AudioClip, string> complete,
-            Func<bool> cancelled = null, Action<float, string> progress = null)
+            Func<bool> cancelled = null, Action<float, string> progress = null,
+            float beatAnchor01 = -1f)
         {
             if (original == null) { complete?.Invoke(null, "NO SAMPLE"); yield break; }
             if (sourceBpm <= 0f || targetBpm <= 0f)
@@ -259,6 +312,8 @@ namespace ZPunk.DAW
             // Spectral-band energy onsets, analyzed in bounded buffers. No large
             // full-song PCM arrays or allocations on the audio callback thread.
             var strengths = new List<float>();
+            var lowOnsets = new List<float>();
+            var highOnsets = new List<float>();
             var positions = new List<int>();
             int analysisFrames = Math.Max(AnalysisHop, sampleRate / 4);
             var pcm = new float[analysisFrames * channels];
@@ -294,6 +349,8 @@ namespace ZPunk.DAW
                         float score = lowRise * 1.35f + highRise * .75f;
                         positions.Add(scan + i);
                         strengths.Add(score);
+                        lowOnsets.Add(lowRise);
+                        highOnsets.Add(highRise);
                         totalScore += score;
                         slowLow = .9f * slowLow + .1f * lowRms;
                         slowHigh = .9f * slowHigh + .1f * highRms;
@@ -307,9 +364,103 @@ namespace ZPunk.DAW
             }
 
             var points = new List<WarpPoint> { new WarpPoint(0, 0) };
+            var attackFrames = new List<int>();
             float meanScore = totalScore / Mathf.Max(1, strengths.Count);
             float threshold = Mathf.Max(.0009f, meanScore * 1.8f);
-            var attackFrames = new List<int>();
+            float[] attackPcm = null, attackEnvelope = null;
+            int anchorBeatCount = 0, anchoredAlignedCount = 0;
+            bool anchoredBeats = beatAnchor01 >= 0f && beatAnchor01 <= 1f;
+            if (anchoredBeats)
+            {
+                // The user's HEAD position explicitly establishes beat 1. Each
+                // subsequent source beat is projected using the SOURCE tempo.
+                // The best local percussion onset (not every hat/ghost hit) can
+                // be locked to that beat's corresponding TARGET timeline position.
+                // This avoids the old eighth-note nearest-peak quantizer.
+                int sourceAnchor = Mathf.Clamp(Mathf.RoundToInt(beatAnchor01 * original.samples),
+                    0, original.samples - 1);
+                float sourceBeat = sampleRate * 60f / sourceBpm;
+                float targetBeat = sampleRate * 60f / targetBpm;
+                float targetAnchor = sourceAnchor * ratio;
+                int firstBeat = Mathf.CeilToInt((0f - sourceAnchor) / sourceBeat);
+                int lastBeat = Mathf.FloorToInt((original.samples - 1f - sourceAnchor) / sourceBeat);
+                int beatWindow = Mathf.RoundToInt(Mathf.Min(sampleRate * .105f, sourceBeat * .19f));
+                int searchBins = Mathf.Max(1, beatWindow / AnalysisHop + 2);
+                int edgeGuard = Mathf.RoundToInt(sampleRate * .060f);
+                var proposed = new List<WarpPoint>();
+                for (int beat = firstBeat; beat <= lastBeat; beat++)
+                {
+                    if (cancelled != null && cancelled()) yield break;
+                    float idealSource = sourceAnchor + beat * sourceBeat;
+                    float idealTarget = targetAnchor + beat * targetBeat;
+                    if (idealSource < edgeGuard || idealSource > original.samples - edgeGuard ||
+                        idealTarget < edgeGuard || idealTarget > outputCount - edgeGuard) continue;
+                    anchorBeatCount++;
+                    // Beat 1 is user-pinned, not overridden by an unrelated onset.
+                    if (beat == 0)
+                    {
+                        proposed.Add(new WarpPoint(sourceAnchor,
+                            Mathf.RoundToInt(targetAnchor)));
+                        continue;
+                    }
+                    int middle = Mathf.RoundToInt(idealSource / AnalysisHop);
+                    float bestScore = 0f;
+                    int best = -1;
+                    for (int j = Mathf.Max(2, middle - searchBins);
+                        j < Mathf.Min(strengths.Count - 2, middle + searchBins + 1); j++)
+                    {
+                        if (strengths[j] < threshold * .58f ||
+                            strengths[j] < strengths[j - 1] ||
+                            strengths[j] < strengths[j + 1]) continue;
+                        float offset = Mathf.Abs(positions[j] - idealSource);
+                        if (offset > beatWindow) continue;
+                        // Alternating downbeat/backbeat evidence: kicks tend to
+                        // reinforce beats 1/3 and broadband snares beats 2/4.
+                        // Still accept either type on any beat for non-4/4 mixes.
+                        bool backbeat = (Math.Abs(beat) & 1) != 0;
+                        float drumScore = backbeat
+                            ? highOnsets[j] * 1.05f + lowOnsets[j] * .75f
+                            : lowOnsets[j] * 1.65f + highOnsets[j] * .63f;
+                        float proximity = 1f - .42f * offset / Mathf.Max(1f, beatWindow);
+                        float score = drumScore * proximity;
+                        if (score > bestScore) { bestScore = score; best = j; }
+                    }
+                    if (best < 0) continue; // missing beat: don't invent a hit
+                    int refined = RefineAttackFrame(original, positions[best],
+                        ref attackPcm, ref attackEnvelope);
+                    if (Mathf.Abs(refined - idealSource) > beatWindow + sampleRate * .012f)
+                        continue;
+                    proposed.Add(new WarpPoint(refined, Mathf.RoundToInt(idealTarget)));
+                    if ((anchorBeatCount & 31) == 0)
+                    {
+                        progress?.Invoke(.25f, "LOCKING MAIN BEATS");
+                        yield return null;
+                    }
+                }
+                proposed.Sort((a, b) => a.source.CompareTo(b.source));
+                int sourceGuard = Mathf.RoundToInt(sampleRate * .075f);
+                foreach (var proposedPoint in proposed)
+                {
+                    WarpPoint previous = points[points.Count - 1];
+                    if (proposedPoint.source - previous.source < sourceGuard ||
+                        proposedPoint.destination - previous.destination < sourceGuard * ratio)
+                        continue;
+                    float localRatio = (proposedPoint.destination - previous.destination) /
+                        Mathf.Max(1f, proposedPoint.source - previous.source);
+                    float endRatio = (outputCount - proposedPoint.destination) /
+                        Mathf.Max(1f, original.samples - proposedPoint.source);
+                    if (localRatio < ratio * .66f || localRatio > ratio * 1.52f ||
+                        endRatio < ratio * .66f || endRatio > ratio * 1.52f) continue;
+                    points.Add(proposedPoint);
+                    anchoredAlignedCount++;
+                }
+                // Preserve original attack PCM for all accepted main beats;
+                // do not overwrite these cores with overlapping WSOLA grains.
+                for (int i = 1; i < points.Count; i++)
+                    attackFrames.Add(points[i].source);
+            }
+            else
+            {
             int lastAttack = -sampleRate;
             int lastAccepted = -sampleRate;
             int minGap = Mathf.RoundToInt(sampleRate * .135f);
@@ -352,7 +503,6 @@ namespace ZPunk.DAW
             float maxSnapFrames = sampleRate * Mathf.Min(.075f, 9.6f / targetBpm);
             int inputGuard = Mathf.RoundToInt(sampleRate * .1f);
             int lastDest = 0;
-            float[] attackPcm = null, attackEnvelope = null;
             for (int i = 2; i + 2 < strengths.Count; i++)
             {
                 if (cancelled != null && cancelled()) yield break;
@@ -389,15 +539,24 @@ namespace ZPunk.DAW
                 lastAccepted = sourceAt;
                 lastDest = snapped;
             }
+
+            }
             points.Add(new WarpPoint(original.samples, outputCount));
-            progress?.Invoke(.25f, "ALIGNING GRID");
+            progress?.Invoke(.25f, anchoredBeats ? "ALIGNING MAIN BEATS" : "ALIGNING GRID");
             yield return null;
             if (cancelled != null && cancelled()) yield break;
             int shifted = points.Count - 2;
-            if (shifted == 0 && Mathf.Abs(ratio - 1f) < .001f)
+            bool movedAttack = false;
+            for (int i = 1; i + 1 < points.Count; i++)
+            {
+                if (Mathf.Abs(points[i].destination - points[i].source * ratio) >
+                    sampleRate * .0015f) { movedAttack = true; break; }
+            }
+            if (!movedAttack && Mathf.Abs(ratio - 1f) < .0001f)
             {
                 progress?.Invoke(1f, "ALREADY ALIGNED");
-                complete?.Invoke(original, "GRID / NO CORRECTION NEEDED");
+                complete?.Invoke(original, anchoredBeats ? "BEATS ALREADY ALIGNED" :
+                    "GRID / NO CORRECTION NEEDED");
                 yield break;
             }
             AudioClip target = null;
@@ -482,6 +641,7 @@ namespace ZPunk.DAW
                 }
                 cursor += writeFrames;
                 progress?.Invoke(.25f + .75f * cursor / outputCount,
+                    anchoredBeats ? "STRETCHING BEAT SECTIONS" :
                     shifted > 0 ? "ALIGNING TRANSIENTS" : "MATCHING TEMPO");
                 yield return null;
             }
@@ -493,7 +653,14 @@ namespace ZPunk.DAW
                 complete?.Invoke(null, "PCM READ/WRITE FAILED");
                 yield break;
             }
-            progress?.Invoke(1f, "GRID WARP COMPLETE");
+            progress?.Invoke(1f, anchoredBeats ? "BEAT ALIGN COMPLETE" : "GRID WARP COMPLETE");
+            if (anchoredBeats)
+            {
+                complete?.Invoke(target, "BEAT ALIGN / " + anchoredAlignedCount +
+                    " OF " + anchorBeatCount + " BEATS / " +
+                    sourceBpm.ToString("0.#") + " TO " + targetBpm.ToString("0.#") + " BPM");
+                yield break;
+            }
             complete?.Invoke(target, shifted > 0 ?
                 "GRID ALIGNED / " + shifted + " ATTACKS / " +
                 sourceBpm.ToString("0.#") + " TO " + targetBpm.ToString("0.#") + " BPM" :

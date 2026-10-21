@@ -11,13 +11,22 @@ namespace KMusic.UI
         public new class UxmlFactory : UxmlFactory<WaveformView, UxmlTraits> { }
         public new class UxmlTraits : VisualElement.UxmlTraits { }
 
+        // Full-resolution min/max envelope plus half-resolution summaries.
+        // A screen pixel reads only a few bins at its appropriate zoom level.
+        // Keeping min AND max preserves narrow drum transients and stereo attacks.
         private float[] _peaks;
+        private readonly List<float[]> _peakMip = new();
         private int _peakCount;
+        private float _peakLoaded01;
+        private bool _peakReadFailed;
+        // Reused drawing buffers prevent managed allocations while editing.
+        private float[] _columnHighs = new float[0];
+        private float[] _columnLows = new float[0];
         private AudioClip _peakClip;
         private IVisualElementScheduledItem _peakJob;
         private int _peakGeneration;
-        // This separate 2px element moves without rebuilding the whole 2k-
-        // segment vector waveform on every playback timer tick.
+        // Move the cursor independently, without re-tessellating the waveform
+        // on every playback timer tick.
         private readonly VisualElement _playheadOverlay;
         // A real touch target, not just a narrow 2.5px line. It is placed in
         // the ruler so dragging it never accidentally edits a chop boundary.
@@ -285,8 +294,8 @@ namespace KMusic.UI
 
         public void SetClip(AudioClip clip, int targetSamples = 2048)
         {
-            // Repeated sampler UI refreshes should not synchronously scan the
-            // entire AudioClip (potentially millions of PCM frames) again.
+            // Do not rescan on player, layout or playback refresh. A new clip
+            // (including a newly warped clip) starts a fresh, cancellable scan.
             if (ReferenceEquals(_peakClip, clip) && _peaks != null) return;
             _peakGeneration++;
             if (_peakJob != null) { _peakJob.Pause(); _peakJob = null; }
@@ -294,70 +303,212 @@ namespace KMusic.UI
             _guides.Clear();
             _sliceStart01 = _sliceEnd01 = -1f;
             _peaks = null;
+            _peakMip.Clear();
             _peakCount = 0;
+            _peakLoaded01 = 0f;
+            _peakReadFailed = false;
             ResetZoom();
             if (clip == null || clip.samples <= 0) { MarkDirtyRepaint(); return; }
 
+            // 32,768 source bins preserve roughly 1,024 bins at maximum 32x
+            // zoom, instead of the ~64 bins visible with the old 2k cache.
+            // Even long stereo recordings need only ~256 KiB for this level.
+            int total = clip.samples;
             int channels = Mathf.Max(1, clip.channels);
-            _peakCount = Mathf.Min(2048, Mathf.Max(128, clip.samples));
+            _peakCount = Mathf.Min(32768, total);
             _peaks = new float[_peakCount * 2];
             float[] peaks = _peaks;
-            int total = clip.samples;
             int buckets = _peakCount;
-            const int frameBudget = 32768;
-            float[] chunk = new float[Mathf.Min(frameBudget, total) * channels];
+            const int framesPerChunk = 32768;
+            float[] chunk = new float[Mathf.Min(framesPerChunk, total) * channels];
             int cursor = 0;
             int version = _peakGeneration;
-            Action work = () =>
+
+            Action workChunk = () =>
             {
-                if (version != _peakGeneration || _peakClip != clip) return;
-                int frames = Mathf.Min(frameBudget, total - cursor);
+                int frames = Mathf.Min(framesPerChunk, total - cursor);
                 if (frames <= 0) return;
-                // Reuse one input buffer across every frame. At the last chunk
-                // GetData may wrap, but only 'frames' valid samples are read.
+                // GetData offsets are measured in sample FRAMES, not floats.
+                // The final read may wrap within this reusable buffer, but we
+                // only inspect the valid frame count.
                 if (!clip.GetData(chunk, cursor))
                 {
+                    _peakReadFailed = true;
                     cursor = total;
                     return;
                 }
                 for (int frame = 0; frame < frames; ++frame)
                 {
-                    int bucket = Mathf.Min(buckets - 1,
-                        (int)((long)(cursor + frame) * buckets / total));
-                    float v = chunk[frame * channels];
-                    int ix = bucket * 2;
-                    peaks[ix] = Mathf.Min(peaks[ix], v);
-                    peaks[ix + 1] = Mathf.Max(peaks[ix + 1], v);
+                    int index = (int)((long)(cursor + frame) * buckets / total) * 2;
+                    int offset = frame * channels;
+                    float low = chunk[offset];
+                    float high = low;
+                    for (int c = 1; c < channels; ++c)
+                    {
+                        float value = chunk[offset + c];
+                        if (value < low) low = value;
+                        if (value > high) high = value;
+                    }
+                    if (low < peaks[index]) peaks[index] = low;
+                    if (high > peaks[index + 1]) peaks[index + 1] = high;
                 }
                 cursor += frames;
+                _peakLoaded01 = cursor / (float)total;
             };
-            // Short one-shots draw at once; songs and long chops are sampled
-            // across UI frames so no audio deadline is blocked by waveform IO.
-            if (total <= frameBudget * 2)
+
+            Action finish = () =>
             {
-                while (cursor < total) work();
+                if (version != _peakGeneration || !ReferenceEquals(_peakClip, clip)) return;
+                _peakJob?.Pause();
+                _peakJob = null;
+                if (!_peakReadFailed)
+                {
+                    // Build a min/max pyramid once. At full view a phone
+                    // draws ~500 aggregate bins, not 32k individual strokes.
+                    _peakMip.Add(peaks);
+                    float[] level = peaks;
+                    while (level.Length > 4)
+                    {
+                        int bins = level.Length / 2;
+                        int nextBins = (bins + 1) / 2;
+                        float[] next = new float[nextBins * 2];
+                        for (int i = 0; i < nextBins; ++i)
+                        {
+                            int a = i * 4;
+                            int b = Mathf.Min(a + 2, level.Length - 2);
+                            next[i * 2] = Mathf.Min(level[a], level[b]);
+                            next[i * 2 + 1] = Mathf.Max(level[a + 1], level[b + 1]);
+                        }
+                        _peakMip.Add(next);
+                        level = next;
+                    }
+                }
                 MarkDirtyRepaint();
+            };
+
+            // Small one-shots can render on their first frame. Larger samples
+            // are decoded incrementally to keep scrolling and pads responsive.
+            if (total <= framesPerChunk * 2)
+            {
+                while (cursor < total) workChunk();
+                finish();
             }
             else
             {
-                _peakJob = schedule.Execute(() =>
+                int ticks = 0;
+                IVisualElementScheduledItem thisJob = null;
+                thisJob = schedule.Execute(() =>
                 {
-                    if (version != _peakGeneration || _peakClip != clip)
+                    if (version != _peakGeneration || !ReferenceEquals(_peakClip, clip))
                     {
-                        _peakJob?.Pause();
+                        // Never pause a newer clip's scheduled scan.
+                        thisJob?.Pause();
                         return;
                     }
-                    work();
-                    if (cursor >= total)
+                    // Spend no more than ~3ms of a UI update reading peaks.
+                    // More work is done on fast devices without penalizing slow
+                    // phones, unlike a fixed 32k-frames-per-16ms scan.
+                    long deadline = System.Diagnostics.Stopwatch.GetTimestamp() +
+                        (long)(System.Diagnostics.Stopwatch.Frequency * .003);
+                    int chunks = 0;
+                    do
                     {
-                        _peakJob?.Pause();
-                        _peakJob = null;
-                        MarkDirtyRepaint();
+                        workChunk();
+                        ++chunks;
                     }
-                    else if ((cursor / frameBudget) % 8 == 0)
-                        MarkDirtyRepaint();
+                    while (cursor < total && chunks < 8 &&
+                           System.Diagnostics.Stopwatch.GetTimestamp() < deadline);
+
+                    if (cursor >= total) finish();
+                    else if (++ticks % 4 == 0) MarkDirtyRepaint();
                 }).Every(16);
+                _peakJob = thisJob;
             }
+        }
+
+        // Project a visible pixel column through the peak pyramid. Retaining
+        // both extrema produces crisp transients even at the full-song view.
+        // All calculations stay in the same normalized clip coordinate system
+        // as the HEAD cursor, chop boundaries and transient guides.
+        private void GetColumnEnvelope(float start01, float end01, int levelIndex,
+            out float minimum, out float maximum)
+        {
+            minimum = 0f;
+            maximum = 0f;
+            float[] level = _peakMip.Count > 0 ? _peakMip[levelIndex] : _peaks;
+            if (level == null) return;
+            int bins = level.Length / 2;
+            int first = Mathf.Clamp(Mathf.FloorToInt(start01 * bins), 0, bins - 1);
+            int last = Mathf.Clamp(Mathf.CeilToInt(end01 * bins) - 1, first, bins - 1);
+            for (int b = first; b <= last; ++b)
+            {
+                int ix = b * 2;
+                if (level[ix] < minimum) minimum = level[ix];
+                if (level[ix + 1] > maximum) maximum = level[ix + 1];
+            }
+        }
+
+        private void DrawWaveform(Painter2D painter, Rect rect, float start01, float length01)
+        {
+            if (_peaks == null || _peakCount <= 0 || _peakReadFailed) return;
+            float end01 = Mathf.Min(start01 + length01, _peakLoaded01);
+            if (end01 <= start01) return;
+
+            int columns = Mathf.Clamp(Mathf.CeilToInt(rect.width), 2, 1536);
+            int shownColumns = Mathf.Clamp(
+                Mathf.CeilToInt((end01 - start01) / length01 * columns), 1, columns);
+            float step = rect.width / columns;
+            float midY = rect.y + rect.height * .5f;
+            float gain = rect.height * .44f;
+
+            // Pick a summary whose buckets are around the same width as a
+            // displayed pixel. At high zoom use the un-decimated level.
+            int levelIndex = 0;
+            while (levelIndex + 1 < _peakMip.Count &&
+                   (_peakMip[levelIndex].Length * .5f * length01 / columns) > 2f)
+                ++levelIndex;
+
+            // Sample the envelope once per screen pixel. Store output in arrays
+            // so we can draw one filled silhouette and two fine outlines,
+            // rather than thousands of individual strokes/meshes.
+            if (_columnHighs.Length < shownColumns + 1)
+            {
+                _columnHighs = new float[shownColumns + 1];
+                _columnLows = new float[shownColumns + 1];
+            }
+            float[] highs = _columnHighs;
+            float[] lows = _columnLows;
+            for (int x = 0; x <= shownColumns; ++x)
+            {
+                float a = start01 + (x / (float)columns) * length01;
+                float b = Mathf.Min(_peakLoaded01, a + length01 / columns);
+                GetColumnEnvelope(a, b, levelIndex, out float low, out float high);
+                lows[x] = midY + low * gain;
+                highs[x] = midY + high * gain;
+            }
+
+            painter.fillColor = new Color(.51f, .83f, .91f, .58f);
+            painter.BeginPath();
+            painter.MoveTo(new Vector2(rect.x, highs[0]));
+            for (int x = 1; x <= shownColumns; ++x)
+                painter.LineTo(new Vector2(rect.x + x * step, highs[x]));
+            for (int x = shownColumns; x >= 0; --x)
+                painter.LineTo(new Vector2(rect.x + x * step, lows[x]));
+            painter.ClosePath();
+            painter.Fill();
+
+            painter.lineWidth = 1f;
+            painter.strokeColor = new Color(.81f, .96f, 1f, .78f);
+            painter.BeginPath();
+            painter.MoveTo(new Vector2(rect.x, highs[0]));
+            for (int x = 1; x <= shownColumns; ++x)
+                painter.LineTo(new Vector2(rect.x + x * step, highs[x]));
+            painter.Stroke();
+            painter.BeginPath();
+            painter.MoveTo(new Vector2(rect.x, lows[0]));
+            for (int x = 1; x <= shownColumns; ++x)
+                painter.LineTo(new Vector2(rect.x + x * step, lows[x]));
+            painter.Stroke();
         }
 
         private void OnGenerate(MeshGenerationContext ctx)
@@ -388,46 +539,8 @@ namespace KMusic.UI
                 painter.Fill();
             }
 
-            // Waveform: draw only the visible window range
-            if (_peaks != null && _peakCount > 0)
-            {
-                painter.lineWidth = 1.5f;
-                painter.strokeColor = WaveColor;
-
-                float midY = r.y + r.height * 0.5f;
-                float halfH = r.height * 0.45f;
-
-                // Map window into peak indices
-                int i0 = Mathf.Clamp(Mathf.FloorToInt(v0 * (_peakCount - 1)), 0, _peakCount - 1);
-                int i1 = Mathf.Clamp(Mathf.CeilToInt(v1 * (_peakCount - 1)), 0, _peakCount - 1);
-                int span = Mathf.Max(1, i1 - i0);
-
-                for (int i = 0; i <= span; i++)
-                {
-                    int idx = i0 + i;
-                    if (idx < 0 || idx >= _peakCount) continue;
-
-                    // Use each peak's absolute sample position. Mapping the
-                    // first/last visible bins to the window edges made drums
-                    // appear shifted against accurate transient markers when
-                    // zooming into a chop (particularly with long songs).
-                    float t01 = idx / (float)_peakCount;
-                    float tWin = (t01 - v0) / vLen;
-                    if (tWin < 0f || tWin > 1f) continue;
-                    float px = r.x + tWin * r.width;
-
-                    float min = _peaks[idx * 2];
-                    float max = _peaks[idx * 2 + 1];
-
-                    float y1p = midY + min * halfH;
-                    float y2p = midY + max * halfH;
-
-                    painter.BeginPath();
-                    painter.MoveTo(new Vector2(px, y1p));
-                    painter.LineTo(new Vector2(px, y2p));
-                    painter.Stroke();
-                }
-            }
+            // Peak pyramid + continuous envelope. No per-sample vector strokes.
+            DrawWaveform(painter, r, v0, vLen);
 
             // Subtle bar/beat grid shares the waveform's viewport transform.
             if (_rulerSeconds > 0f && _rulerBpm > 0f)
@@ -898,11 +1011,13 @@ namespace KMusic.UI
             float phaseBeats = _beatPhaseSeconds * _rulerBpm / 60f;
             float start = ViewStart01 * totalBeats - phaseBeats;
             float end = (ViewStart01 + ViewLen01) * totalBeats - phaseBeats;
-            float pixelsPerBar = 4f / Mathf.Max(.0001f, totalBeats * ViewLen01) * contentRect.width;
-            int barStep = pixelsPerBar < 32f ? 16 : pixelsPerBar < 65f ? 4 : 1;
-            int firstBar = Mathf.Max(0, Mathf.CeilToInt(start / 4f / barStep) * barStep);
+            float pixelsPerBeat = contentRect.width /
+                Mathf.Max(.0001f, totalBeats * ViewLen01);
+            int step = pixelsPerBeat >= 32f ? 1 :
+                pixelsPerBeat >= 8f ? 4 : pixelsPerBeat >= 2f ? 16 : 64;
+            int firstBeat = Mathf.Max(0, Mathf.CeilToInt(start / step) * step);
             int labelIndex = 0;
-            for (int bar = firstBar; bar * 4f <= end && labelIndex < 128; bar += barStep)
+            for (int beat = firstBeat; beat <= end && labelIndex < 128; beat += step)
             {
                 if (labelIndex >= _rulerLabels.Count)
                 {
@@ -916,8 +1031,13 @@ namespace KMusic.UI
                     _rulerLabels.Add(label);
                 }
                 var item = _rulerLabels[labelIndex++];
-                item.text = (bar + 1).ToString();
-                item.style.left = ((bar * 4f + phaseBeats) / totalBeats - ViewStart01) / ViewLen01 * contentRect.width + 3f;
+                // At close zoom show the four beats of each bar. At wider
+                // zoom label bars only, keeping the phone ruler uncluttered.
+                item.text = step == 1 ?
+                    ((beat / 4) + 1).ToString() + "." + ((beat % 4) + 1).ToString() :
+                    ((beat / 4) + 1).ToString();
+                item.style.left = ((beat + phaseBeats) / totalBeats - ViewStart01) /
+                    ViewLen01 * contentRect.width + 3f;
                 item.style.display = DisplayStyle.Flex;
             }
         }
