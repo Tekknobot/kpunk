@@ -116,6 +116,12 @@ public class KMusicPlayerUI : MonoBehaviour
     private float _nextWarpCheck;
     private float _warpPendingAt = -1f;
     private string _warpStatus = "NO SAMPLE";
+    private float _warpProgress;
+    private string _warpStage = "";
+    private bool _warpProcessing;
+    public float DawWarpProgress => _warpProgress;
+    public bool DawWarpProcessing => _warpProcessing;
+    public string DawWarpStage => _warpStage;
     private KMusicProjectManager _warpProjects;
     private KMusicApp _pitchApp;
     private KMusic.Core.ParameterBus _pitchBus;
@@ -1096,6 +1102,8 @@ public class KMusicPlayerUI : MonoBehaviour
         // Cancel any unfinished conversion of the previous sample; an old
         // stretch must never replace the newly selected source.
         _warpGeneration++;
+        _warpProcessing = false;
+        _warpProgress = 0f;
         // Let the old coroutine notice its generation change and release its
         // in-progress AudioClip. StopCoroutine bypasses its cleanup and leaked
         // megabytes of native audio memory when tempo/source changed repeatedly.
@@ -1110,6 +1118,13 @@ public class KMusicPlayerUI : MonoBehaviour
     private void QueueWarp(bool immediate = false)
     {
         _warpPendingAt = Time.unscaledTime + (immediate ? 0.05f : 0.35f);
+        if (_autoWarpEnabled && _clip != null)
+        {
+            _warpStatus = "WAITING TO WARP";
+            _warpProgress = 0f;
+            _warpStage = "QUEUED";
+            _warpProcessing = true;
+        }
     }
     private void Update()
     {
@@ -1138,6 +1153,8 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (_clip == null) return;
         int generation = ++_warpGeneration;
+        _warpProcessing = _autoWarpEnabled;
+        _warpProgress = 0f;
         // A stale worker aborts on its next chunk and destroys its temporary clip.
         // Do NOT hard-stop it here: that skips StretchAsync's native memory cleanup.
         _warpJob = StartCoroutine(RunWarp(generation));
@@ -1149,13 +1166,19 @@ public class KMusicPlayerUI : MonoBehaviour
         string result = "OFF / ORIGINAL AUDIO";
         if (_autoWarpEnabled)
         {
-            _warpStatus = "WARPING / PLEASE WAIT";
+            _warpStatus = "WARPING";
             yield return StartCoroutine(ZPunkSampleWarp.StretchAsync(_clip,
                 _sourceBpm, CurrentSongTempo(), (clip, status) =>
                 {
                     next = clip;
                     result = status;
-                }, () => generation != _warpGeneration || this == null));
+                }, () => generation != _warpGeneration || this == null,
+                (value, stage) =>
+                {
+                    if (generation != _warpGeneration) return;
+                    _warpProgress = Mathf.Clamp01(value);
+                    _warpStage = stage;
+                }));
             if (generation != _warpGeneration)
             {
                 if (next != null && next != _clip) Destroy(next);
@@ -1166,6 +1189,8 @@ public class KMusicPlayerUI : MonoBehaviour
         AudioClip oldWarp = _warpedClip;
         _warpedClip = next != _clip ? next : null;
         _warpStatus = result;
+        _warpProcessing = false;
+        _warpProgress = _autoWarpEnabled && next != null ? 1f : 0f;
         AudioClip active = _warpedClip != null ? _warpedClip : _clip;
         if (audioSource != null && active != null)
         {

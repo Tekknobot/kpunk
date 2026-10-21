@@ -46,6 +46,8 @@ namespace ZPunk.DAW
         private Label samplerSourceKeyLabel, samplerPitchedKeyLabel, generatorSampleKeyHint, clipSampleKeyReference;
         private Button generatorSampleKeyButton;
         private Button samplerWarpButton;
+        private VisualElement samplerWarpProgressTrack, samplerWarpProgressFill;
+        private Label samplerWarpProgressLabel;
         private bool showingSampler;
         private KMusicPlayerUI samplePlayer;
         private ZPunkSongTransport songTransport;
@@ -465,6 +467,30 @@ namespace ZPunk.DAW
             samplerWarpLabel = Txt("SOURCE BPM / WAITING",11,Accent);
             samplerWarpLabel.style.whiteSpace = WhiteSpace.Normal;
             warpCard.Add(samplerWarpLabel);
+
+            // Local PCM warp progress: the track fills only while analysis or
+            // transient-guided stretch is running. Its width follows real work.
+            samplerWarpProgressLabel = Txt("ANALYZING / 0%", 10, Muted);
+            samplerWarpProgressLabel.style.marginTop = 7;
+            samplerWarpProgressLabel.style.marginBottom = 3;
+            samplerWarpProgressLabel.style.display = DisplayStyle.None;
+            warpCard.Add(samplerWarpProgressLabel);
+            samplerWarpProgressTrack = new VisualElement();
+            samplerWarpProgressTrack.style.height = 5;
+            samplerWarpProgressTrack.style.flexShrink = 0;
+            samplerWarpProgressTrack.style.backgroundColor = Surface;
+            samplerWarpProgressTrack.style.borderTopLeftRadius = 3;
+            samplerWarpProgressTrack.style.borderTopRightRadius = 3;
+            samplerWarpProgressTrack.style.borderBottomLeftRadius = 3;
+            samplerWarpProgressTrack.style.borderBottomRightRadius = 3;
+            samplerWarpProgressTrack.style.overflow = Overflow.Hidden;
+            samplerWarpProgressTrack.style.display = DisplayStyle.None;
+            samplerWarpProgressFill = new VisualElement();
+            samplerWarpProgressFill.style.height = Length.Percent(100);
+            samplerWarpProgressFill.style.width = Length.Percent(0);
+            samplerWarpProgressFill.style.backgroundColor = Accent;
+            samplerWarpProgressTrack.Add(samplerWarpProgressFill);
+            warpCard.Add(samplerWarpProgressTrack);
 
             // Integer-only pitch transport. Step buttons make accidental cents / 
             // in-between pitches impossible, including on touchscreens.
@@ -1073,8 +1099,21 @@ namespace ZPunk.DAW
                 samplerWarpButton.text = samplePlayer != null && samplePlayer.DawAutoWarp ? "WARP ON" : "WARP OFF";
             if (samplerWarpLabel != null)
                 samplerWarpLabel.text = samplePlayer != null ?
-                    "SOURCE BPM EST. " + samplePlayer.DawSourceBpm.ToString("0.#") + "  /  " + samplePlayer.DawWarpStatus :
+                    "SOURCE BPM (LENGTH EST.) " + samplePlayer.DawSourceBpm.ToString("0.#") + "  /  " + samplePlayer.DawWarpStatus :
                     "NO SAMPLE";
+            bool warpBusy = samplePlayer != null && samplePlayer.DawWarpProcessing;
+            if (samplerWarpProgressTrack != null)
+                samplerWarpProgressTrack.style.display = warpBusy ? DisplayStyle.Flex : DisplayStyle.None;
+            if (samplerWarpProgressLabel != null)
+            {
+                samplerWarpProgressLabel.style.display = warpBusy ? DisplayStyle.Flex : DisplayStyle.None;
+                if (warpBusy)
+                    samplerWarpProgressLabel.text = samplePlayer.DawWarpStage + " / " +
+                        Mathf.RoundToInt(samplePlayer.DawWarpProgress * 100f) + "%";
+            }
+            if (samplerWarpProgressFill != null)
+                samplerWarpProgressFill.style.width = Length.Percent(
+                    samplePlayer != null ? Mathf.Clamp01(samplePlayer.DawWarpProgress) * 100f : 0f);
             if (samplerPitchLabel != null)
             {
                 int semitones = samplePlayer != null ? samplePlayer.DawPitchSemitones : 0;
