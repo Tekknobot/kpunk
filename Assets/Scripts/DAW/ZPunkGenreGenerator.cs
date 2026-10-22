@@ -112,6 +112,9 @@ namespace ZPunk.DAW
             // the arrangement can show an unwanted empty lead-in. Shift the whole
             // phrase, preserving every note's relative timing and duration.
             AlignToStart(clip);
+            // Apply expressive timing after the quantized musical patterns are built.
+            // The seed keeps rerendering, Undo/history and exported MIDI repeatable.
+            HumanizePhrase(clip, kind, genre, style, variation, seed);
             if (clip.notes.Count > 0)
                 clip.notes.Sort((a, b) => a.startTick == b.startTick ? a.pitch.CompareTo(b.pitch) : a.startTick.CompareTo(b.startTick));
             if (clip.drums.Count > 0)
@@ -518,10 +521,15 @@ namespace ZPunk.DAW
                                    new[] { 0, 2, 6, 8, 10, 12, 15 },
                                    new[] { 0, 3, 5, 8, 11, 12, 14 } };
             int[] starts = response ? replySteps[variant] : callSteps[variant];
+            // Repetition sells the hook: remove a few inner notes to leave
+            // breathing room for a vocal, the piano stabs and the backbeat.
+            // A two-bar call/reply retains its contour over the full clip.
             int[] callShape = { 0, 2, 4, 2, 1, 0, 2 };
             int[] replyShape = { 4, 2, 1, 0, 2, 1, 0 };
             for (int i = 0; i < starts.Length; ++i)
             {
+                if ((!response && (i == 2 || i == 5) && variant != 2) ||
+                    (response && (i == 1 || i == 4) && variant != 1)) continue;
                 int melodicDegree = degree + (response ? replyShape[i] : callShape[i]);
                 int pitch = Pitch(60, key, melodicDegree, minor);
                 while (pitch > 79) pitch -= 12;
@@ -648,6 +656,108 @@ namespace ZPunk.DAW
                          vel - voice * 3 - (i % 2) * 5, r);
             }
         }
+        /// <summary>
+        /// Musical humanization, not arbitrary quantization noise. Dance kicks hold the
+        /// grid; hats and ghost snares establish the pocket. MIDI chords remain aligned
+        /// as a block, with shorter offbeat stabs and breathing room in bass phrases.
+        /// Notes stay inside their clips and velocity/timing remain deterministic.
+        /// </summary>
+        private static void HumanizePhrase(ClipContentData clip, TrackKind kind, int genre,
+                                           int style, int variation, int seed)
+        {
+            var r = new Random(unchecked(seed ^ 0x5A2C31));
+            long sixteenth = SongData.TicksPerSixteenth;
+            long clipEnd = clip.lengthTicks;
+            bool relaxed = genre == 0 || genre == 3 || genre == 4;
+            int strength = Mod(variation - 1, 4);
+            if (kind == TrackKind.Drums)
+            {
+                foreach (var hit in clip.drums)
+                {
+                    long original = hit.startTick;
+                    int step = (int)((original / sixteenth) % 16);
+                    bool anchored = hit.lane == 0 && (genre == 1 || genre == 2 || genre == 5) && step % 4 == 0;
+                    int late = 0;
+                    if (!anchored)
+                    {
+                        if (hit.lane == 3 || hit.lane == 4) // hats: relaxed offbeats / swing
+                            late = (step % 2 == 1 ? (relaxed ? 15 : 10) : 0) + r.Next(-3, 4);
+                        else if (hit.lane == 1 || hit.lane == 2) // backbeat weight
+                            late = relaxed ? 9 + r.Next(-3, 5) : 2 + r.Next(-2, 4);
+                        else if (hit.lane == 6 || hit.lane == 7) // ghost percussion
+                            late = 7 + r.Next(-6, 7);
+                        else late = r.Next(-3, 5);
+                        if (strength == 2 && step % 2 == 1) late += 5;
+                    }
+                    hit.startTick = ClampTick(original + late, clipEnd);
+                    // Preserve weight on backbeats and strong kicks, soften busy hats.
+                    int accent = step % 4 == 0 ? 3 : step % 2 == 1 ? -4 : 0;
+                    if (hit.lane == 3 || hit.lane == 4) accent += (step / 2) % 2 == 0 ? 2 : -5;
+                    if (hit.lane == 6) accent -= 4;
+                    hit.velocity = Clamp(hit.velocity + accent + r.Next(-3, 4), 20, 127);
+                }
+                return;
+            }
+            if (clip.notes == null || clip.notes.Count == 0) return;
+            // A chord event is a group of pitches with exactly the same start time.
+            // Make the group breathe together, never arpeggiate accidentally.
+            var offsets = new Dictionary<long, int>();
+            foreach (var note in clip.notes)
+            {
+                long original = note.startTick;
+                int step = (int)((original / sixteenth) % 16);
+                int offset;
+                if (!offsets.TryGetValue(original, out offset))
+                {
+                    bool pickup = step % 2 == 1;
+                    if (kind == TrackKind.Pads) offset = r.Next(-2, 4);
+                    else if (kind == TrackKind.Bass)
+                        offset = (relaxed ? 6 : 1) + (pickup ? (relaxed ? 7 : 4) : 0) + r.Next(-3, 4);
+                    else
+                        offset = (relaxed ? 5 : 2) + (pickup ? 7 : 0) + r.Next(-3, 4);
+                    if (strength == 2 && pickup) offset += 4;
+                    // Do not add an empty lead-in to a clip that begins on step zero.
+                    if (original == 0) offset = 0;
+                    offsets.Add(original, offset);
+                }
+                long start = ClampTick(original + offset, clipEnd);
+                long maxDuration = Math.Max(1L, clipEnd - start);
+                long duration = note.durationTicks;
+                if (kind == TrackKind.Pads)
+                    duration += r.Next(-4, 5);
+                else
+                {
+                    // A small articulation difference matters more than a random
+                    // pitch change, especially for piano stabs and synth hooks.
+                    bool shortNote = duration <= sixteenth * 2;
+                    duration += shortNote ? r.Next(-9, 4) : r.Next(-12, 10);
+                    if (kind == TrackKind.Bass && step % 4 != 0) duration -= 5;
+                }
+                note.startTick = start;
+                note.durationTicks = Math.Max(1L, Math.Min(maxDuration, duration));
+                int accent = step % 4 == 0 ? 4 : step % 2 == 1 ? -2 : 0;
+                if (kind == TrackKind.Pads) accent /= 2;
+                note.velocity = Clamp(note.velocity + accent + r.Next(-3, 4), 25, 127);
+            }
+            // Never create same-pitch overlaps while re-articulating repeated notes.
+            var ordered = new List<NoteEvent>(clip.notes);
+            ordered.Sort((a, b) => a.startTick.CompareTo(b.startTick));
+            var lastByPitch = new Dictionary<int, NoteEvent>();
+            foreach (var note in ordered)
+            {
+                NoteEvent previous;
+                if (lastByPitch.TryGetValue(note.pitch, out previous))
+                    previous.durationTicks = Math.Min(previous.durationTicks,
+                        Math.Max(1L, note.startTick - previous.startTick - 1));
+                lastByPitch[note.pitch] = note;
+            }
+        }
+
+        private static long ClampTick(long tick, long clipEnd)
+        {
+            return Math.Max(0L, Math.Min(clipEnd - 1L, tick));
+        }
+
         private static int Clamp(int value, int minimum, int maximum) => Math.Max(minimum, Math.Min(maximum, value));
         private static int Mod(int value, int count) => ((value % count) + count) % count;
     }
