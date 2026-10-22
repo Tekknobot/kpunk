@@ -1097,13 +1097,75 @@ namespace ZPunk.DAW
             Changed(true, false);
             if (content.kind == ClipKind.Midi) FocusPatternNotes();
         }
+        // Prefer existing PAD or chord-mode SYNTH harmony at the selected clip location.
+        // Never read notes from the clip currently being regenerated.
+        private void ReadArrangementHarmony(int bars, out int[] degrees, out int[][] voices)
+        {
+            degrees = new int[bars];
+            voices = new int[bars][];
+            for (int b = 0; b < bars; b++) degrees[b] = -1;
+            if (song == null || song.tracks == null || song.contents == null || clip == null) return;
+            for (int b = 0; b < bars; b++)
+            {
+                long tick = clip.startTick + b * SongData.TicksPerBar4;
+                List<int> pitches = null;
+                foreach (var track in song.tracks)
+                {
+                    if (track == null || (track.kind != TrackKind.Pads && track.kind != TrackKind.Synth) || track.clips == null) continue;
+                    if (track.kind == song.tracks[trackIndex].kind && track.kind != TrackKind.Pads) continue;
+                    foreach (var item in track.clips)
+                    {
+                        if (item == null || item.id == clip.id || tick < item.startTick || tick >= item.startTick + item.lengthTicks) continue;
+                        var source = song.contents.Find(x => x != null && x.id == item.contentId);
+                        if (source == null || source.kind != ClipKind.Midi || source.notes == null || source.notes.Count < 3) continue;
+                        long local = tick - item.startTick + item.sourceOffsetTick;
+                        if (item.loopEnabled && source.lengthTicks > 0) local %= source.lengthTicks;
+                        var notes = new List<int>();
+                        foreach (var note in source.notes)
+                            if (note != null && note.startTick <= local && note.startTick + note.durationTicks > local)
+                                notes.Add(note.pitch);
+                        // A chord may be stabbed on an offbeat instead of held at the barline.
+                        if (notes.Count < 3)
+                            foreach (var note in source.notes)
+                                if (note != null && note.startTick >= local && note.startTick < local + SongData.TicksPerQuarter)
+                                    notes.Add(note.pitch);
+                        if (notes.Count >= 3) { pitches = notes; break; }
+                    }
+                    if (pitches != null) break;
+                }
+                if (pitches == null) continue;
+                pitches.Sort();
+                voices[b] = pitches.ToArray();
+                // Choose the diatonic triad whose pitch classes best fit the chord.
+                int bestDegree = -1, bestScore = -1;
+                int[] scale = generatorMinor ? new[] {0,2,3,5,7,8,10} : new[] {0,2,4,5,7,9,11};
+                for (int d = 0; d < 7; d++)
+                {
+                    int score = 0;
+                    for (int offset = 0; offset <= 4; offset += 2)
+                    {
+                        int pc = (generatorKey + scale[(d + offset) % 7]) % 12;
+                        foreach (int pitch in pitches)
+                            if ((pitch % 12 + 12) % 12 == pc) { score += offset == 0 ? 3 : 2; break; }
+                    }
+                    if (score > bestScore) { bestScore = score; bestDegree = d; }
+                }
+                if (bestScore >= 4) degrees[b] = bestDegree;
+            }
+        }
+
         private void ApplyGenerator()
         {
             if (!PrepareGeneratorContent(generatorBars)) return;
             TrackKind kind = song.tracks[trackIndex].kind;
             bool chords = kind == TrackKind.Synth && generatorSynthChords;
+            int[] detectedDegrees = null;
+            int[][] detectedVoices = null;
+            if (kind == TrackKind.Bass || (kind == TrackKind.Synth && !chords))
+                ReadArrangementHarmony(generatorBars, out detectedDegrees, out detectedVoices);
             ZPunkGenreGenerator.Fill(content, kind, generatorGenre, generatorStyle,
-                generatorBars, generatorKey, generatorMinor, generatorVariation, chords);
+                generatorBars, generatorKey, generatorMinor, generatorVariation, chords,
+                detectedDegrees, detectedVoices);
             ZPunkGenerationHistory.Add(projects.CurrentSlot, kind, generatorGenre, generatorStyle,
                 generatorKey, generatorMinor, generatorBars, generatorVariation, chords, content);
             FinishGeneratorContent();

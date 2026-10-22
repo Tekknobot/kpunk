@@ -29,7 +29,7 @@ namespace ZPunk.DAW
         private int loadingPresetIndex = -1;
         public HelmController BassController => bass;
         public string BassPresetName => bassPresetIndex>=0 && bassPresetIndex<bassPresets.Count
-            ? Path.GetFileNameWithoutExtension(bassPresets[bassPresetIndex]):"INITIALIZING";
+            ? bassPresets[bassPresetIndex].Replace(".helm", "").Replace("/", " / "):"INITIALIZING";
         public int BassPresetCount => bassPresets.Count;
         public int BassPresetIndex => bassPresetIndex;
         public string CurrentBassPresetRelPath => bassPresetIndex >= 0 && bassPresetIndex < bassPresets.Count

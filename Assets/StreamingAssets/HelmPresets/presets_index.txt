@@ -292,3 +292,12 @@ SFX/ZOR Sweep Midnight.helm
 SFX/ZOR Sweep Slow Motion.helm
 SFX/ZOR Sweep Tape.helm
 SFX/ZOR Sweep Whiteout.helm
+Bass/ZOR French Filter Bounce.helm
+Bass/ZOR French Disco Roller.helm
+Bass/ZOR French Velvet Bass.helm
+Bass/ZOR French Touch Shuffle.helm
+Keys/ZOR 90s Garage Piano.helm
+Keys/ZOR 90s Club Organ.helm
+Keys/ZOR 90s Rave Keys.helm
+Keys/ZOR 90s Deep Chords.helm
+Keys/ZOR 90s Warehouse Stabs.helm

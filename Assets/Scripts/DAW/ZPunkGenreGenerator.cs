@@ -10,13 +10,14 @@ namespace ZPunk.DAW
     /// </summary>
     public static class ZPunkGenreGenerator
     {
-        public static readonly string[] Genres = { "BOOM BAP", "HOUSE", "TECHNO", "BREAKS", "FUNK" };
+        public static readonly string[] Genres = { "BOOM BAP", "HOUSE", "TECHNO", "BREAKS", "FUNK", "FRENCH HOUSE" };
         public static readonly string[][] Styles = {
             new[] { "CLASSIC", "DUSTY", "SYNCOPATED" },
             new[] { "CLASSIC", "DEEP", "JACKIN" },
             new[] { "DRIVING", "MINIMAL", "INDUSTRIAL" },
             new[] { "AMEN", "JUNGLE", "HALF-TIME" },
-            new[] { "DISCO", "POCKET", "ELECTRO" }
+            new[] { "DISCO", "POCKET", "ELECTRO" },
+            new[] { "FILTER", "DISCO", "TOUCH" }
         };
         public static readonly string[] Keys = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
         private static readonly int[] Major = { 0, 2, 4, 5, 7, 9, 11 };
@@ -36,7 +37,8 @@ namespace ZPunk.DAW
                 new[] { "Four-to-floor, offbeat hats and rolling bass", "Warm, open spaces and restrained chord movement", "Jackin accents, swung-feel hats and chord stabs" },
                 new[] { "Steady machine pulse with evolving punctuation", "Sparse, hypnotic drums and focused low notes", "Hard syncopated percussion and clipped motifs" },
                 new[] { "Break-style ghost snares and rolling kick variations", "Denser jungle accents with restless hat patterns", "Half-time backbeat with spacious, heavy hits" },
-                new[] { "Disco pulse, tight claps and bright offbeat percussion", "Dry kick/snare pocket, ghost hits and loose syncopation", "Electro-funk accents, crisp hats and syncopated kicks" }
+                new[] { "Disco pulse, tight claps and bright offbeat percussion", "Dry kick/snare pocket, ghost hits and loose syncopation", "Electro-funk accents, crisp hats and syncopated kicks" },
+                new[] { "Four-on-the-floor with clipped filtered disco accents", "Tight disco drums with playful offbeat hats", "Bouncy French-touch percussion and small fills" }
             };
             return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, 2)];
         }
@@ -47,7 +49,8 @@ namespace ZPunk.DAW
                 new[] { "Disco-style offbeat bounce and octave movement", "Warm sustained roots with restrained funk accents", "Tight jackin sixteenths and chromatic turnarounds" },
                 new[] { "Hypnotic root pulse with occasional octave jumps", "Minimal long notes with deliberate gaps", "Clipped industrial syncopation and fifths" },
                 new[] { "Broken low-end call and response", "Restless bass movement with octave accents", "Heavy spaced roots with sharp pickups" },
-                new[] { "Disco-funk octave bounce and short plucked notes", "Deep pocket with sparse fifths and rhythmic silence", "Electro-funk sixteenths, octave pops and passing tones" }
+                new[] { "Disco-funk octave bounce and short plucked notes", "Deep pocket with sparse fifths and rhythmic silence", "Electro-funk sixteenths, octave pops and passing tones" },
+                new[] { "Filtered repetitive octave bass and short pickups", "Disco-root bounce with fifths and sixteenth-note silence", "Rubbery syncopated French-touch bass with turnarounds" }
             };
             return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, 2)];
         }
@@ -58,13 +61,15 @@ namespace ZPunk.DAW
                 new[] { "Seventh chord offbeats with smooth voice leading", "Long deep-house voicings with warm extensions", "Clipped piano-style sevenths and quick answers" },
                 new[] { "Restrained dark triads with machine-like repeats", "Open fifths, suspended intervals and plenty of air", "Short, tense minor-flavored harmonic hits" },
                 new[] { "Tight soulful stabs between snare accents", "Chopped voicings with quick delayed replies", "Sustained seventh colors over a half-time pulse" },
-                new[] { "Short disco sevenths and ninths with rhythmic replies", "Sparse, warm ninth voicings and tightly muted stabs", "Bright clipped sevenths with synth-funk syncopation" }
+                new[] { "Short disco sevenths and ninths with rhythmic replies", "Sparse, warm ninth voicings and tightly muted stabs", "Bright clipped sevenths with synth-funk syncopation" },
+                new[] { "Filtered disco sevenths and clipped offbeat stabs", "Classic French-touch piano chords with rhythmic responses", "Short, bright 90s-influenced house chord punches" }
             };
             return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, 2)];
         }
 
         public static void Fill(ClipContentData clip, TrackKind kind, int genre, int style,
-                                int bars, int key, bool minor, int variation, bool synthChords = false)
+                                int bars, int key, bool minor, int variation, bool synthChords = false,
+                                int[] harmonyDegrees = null, int[][] harmonyVoices = null)
         {
             if (clip == null) throw new ArgumentNullException(nameof(clip));
             if (kind == TrackKind.Chops) return;
@@ -86,8 +91,10 @@ namespace ZPunk.DAW
             for (int bar = 0; bar < bars; bar++)
             {
                 if (kind == TrackKind.Drums) { GenerateDrums(clip, genre, style, bar, bars, variation, rng); continue; }
-                int degree = Progression(genre, minor)[bar % 4];
-                if (kind == TrackKind.Bass) GenerateBass(clip, genre, style, bar, bars, degree, key, minor, variation, rng);
+                int degree = harmonyDegrees != null && bar < harmonyDegrees.Length && harmonyDegrees[bar] >= 0
+                    ? harmonyDegrees[bar] : Progression(genre, minor)[bar % 4];
+                if (kind == TrackKind.Bass) GenerateBass(clip, genre, style, bar, bars, degree, key, minor, variation, rng,
+                    harmonyDegrees != null && (bar + 1) % bars < harmonyDegrees.Length ? harmonyDegrees[(bar + 1) % bars] : -1);
                 else if (kind == TrackKind.Pads || (kind == TrackKind.Synth && synthChords))
                 {
                     // Use actual semitones of the current chord, not the tonic triad transposed
@@ -97,7 +104,8 @@ namespace ZPunk.DAW
                     chordVoices[bar] = VoiceChord(degree, key, minor, genre, style, pads, previous);
                     GenerateHarmony(clip, genre, style, bar, pads, chordVoices[bar], variation, rng);
                 }
-                else GenerateMelody(clip, genre, style, bar, degree, key, minor, variation, rng);
+                else GenerateMelody(clip, genre, style, bar, degree, key, minor, variation, rng,
+                    harmonyVoices != null && bar < harmonyVoices.Length ? harmonyVoices[bar] : null);
             }
             // Some styles begin with an intentional offbeat. Generated clip content,
             // however, must start at local tick zero: otherwise the piano roll and
@@ -147,6 +155,7 @@ namespace ZPunk.DAW
             if (g == 2) return new[] { 0, 0, 0, 4 };
             if (g == 3) return minor ? new[] { 0, 5, 3, 4 } : new[] { 0, 5, 1, 4 };
             // Funk stays close to the tonic; the last bar turns toward the dominant.
+            if (g == 5) return minor ? new[] { 0, 5, 3, 4 } : new[] { 0, 3, 4, 3 };
             return minor ? new[] { 0, 0, 3, 4 } : new[] { 0, 0, 3, 4 };
         }
         private static int Scale(int degree, bool minor)
@@ -281,8 +290,13 @@ namespace ZPunk.DAW
                                  int pitch, int velocity, Random r)
         {
             if (step < 0 || step > 15 || duration < 1) return;
+            long tick = bar * SongData.TicksPerBar4 + step * SongData.TicksPerSixteenth;
+            // Prevent doubled same-pitch MIDI notes when a turnaround and the
+            // underlying style both schedule the same sixteenth.
+            foreach (var existing in c.notes)
+                if (existing.startTick == tick && existing.pitch == pitch) return;
             c.notes.Add(new NoteEvent {
-                startTick = bar * SongData.TicksPerBar4 + step * SongData.TicksPerSixteenth,
+                startTick = tick,
                 durationTicks = Math.Min(16 - step, duration) * SongData.TicksPerSixteenth,
                 pitch = Clamp(pitch, 0, 127), velocity = Clamp(velocity + r.Next(-5, 6), 25, 127)
             });
@@ -290,23 +304,42 @@ namespace ZPunk.DAW
         // Expressive, playable funk/disco-inspired bass. Style templates keep the
         // original genres recognisable; variation changes accents, fills and octave
         // choices rather than scattering unmusical random notes across the scale.
-        private static void GenerateBass(ClipContentData c, int g, int s, int bar, int bars,
-                                         int degree, int key, bool minor, int variation, Random r)
+        private static int ApproachBass(int nextRoot, int currentRoot)
         {
-            // Keep the bass in a practical C1-C3-ish register for ZPUNK's presets.
-            int root = Pitch(24, key, degree, minor);
-            while (root > 43) root -= 12;
-            while (root < 28) root += 12;
+            // Leading chromatic pickup, kept in the normal bass register.
+            int target = nextRoot;
+            while (target - currentRoot > 7) target -= 12;
+            while (currentRoot - target > 7) target += 12;
+            int approach = target - 1;
+            return approach < 35 ? approach + 12 : approach;
+        }
+
+        private static int BassRoot(int key, int degree, bool minor)
+        {
+            int pitch = Pitch(36, key, degree, minor);
+            while (pitch > 59) pitch -= 12;
+            while (pitch < 36) pitch += 12;
+            // Prefer nearby low-mid inversions of progression notes rather than
+            // dropping back to the sub octave at each chord change.
+            if (pitch >= 48) pitch -= 12;
+            return pitch;
+        }
+
+        private static void GenerateBass(ClipContentData c, int g, int s, int bar, int bars,
+                                         int degree, int key, bool minor, int variation, Random r, int nextHarmonyDegree = -1)
+        {
+            // MIDI note 36 is C2 (60 is C4). Keep the main bass around
+            // C2-B2; A2 is MIDI 45 / 110 Hz. Lower octaves remain available
+            // when the user edits a clip for dedicated sub-bass parts.
+            int root = BassRoot(key, degree, minor);
             int fifth = Scale(degree + 4, minor) - Scale(degree, minor);
             int seventh = Scale(degree + 6, minor) - Scale(degree, minor);
             int family = Mod(variation - 1, 4);
             bool answer = (bar & 1) != 0;
             // Approach the chord which actually follows in THIS clip, including
             // the return to its beginning when 1/2/4-bar clips loop.
-            int nextDegree = Progression(g, minor)[(bar + 1) % bars];
-            int nextRoot = Pitch(24, key, nextDegree, minor);
-            while (nextRoot > 43) nextRoot -= 12;
-            while (nextRoot < 28) nextRoot += 12;
+            int nextDegree = nextHarmonyDegree >= 0 ? nextHarmonyDegree : Progression(g, minor)[(bar + 1) % bars];
+            int nextRoot = BassRoot(key, nextDegree, minor);
             if (g == 0) // BOOM BAP: warm, behind-the-beat syncopation and small pickups.
             {
                 int[] steps = s == 1 ? new[] { 0, 7, 10 } :
@@ -314,13 +347,13 @@ namespace ZPunk.DAW
                 for (int i = 0; i < steps.Length; i++)
                 {
                     int step = steps[i];
-                    int pitch = step == 14 ? (family == 2 ? nextRoot - 1 : root + fifth) :
+                    int pitch = step == 14 ? (family == 2 ? ApproachBass(nextRoot, root) : root + fifth) :
                                 step == 10 && family == 1 ? root + 12 :
                                 step == 6 && family == 3 ? root + fifth : root;
                     Note(c, bar, step, step == 0 ? 4 : s == 1 ? 3 : 2,
                          pitch, step == 0 ? 112 : i % 2 == 0 ? 94 : 82, r);
                 }
-                if (s == 2 && family == 3) Note(c, bar, 15, 1, nextRoot - 1, 66, r);
+                if (s == 2 && family == 3) Note(c, bar, 15, 1, ApproachBass(nextRoot, root), 66, r);
             }
             else if (g == 1) // HOUSE: tight disco-funk bounce between the kicks.
             {
@@ -330,7 +363,7 @@ namespace ZPunk.DAW
                 for (int i = 0; i < steps.Length; i++)
                 {
                     int step = steps[i];
-                    int pitch = step == 15 ? nextRoot - 1 :
+                    int pitch = step == 15 ? ApproachBass(nextRoot, root) :
                                 step == 7 && family != 0 ? root + 12 :
                                 step == 10 && (family == 1 || s == 2) ? root + fifth :
                                 step == 14 && family == 3 ? root + 12 : root;
@@ -338,7 +371,7 @@ namespace ZPunk.DAW
                     Note(c, bar, step, length, pitch,
                          step == 0 ? 111 : step % 4 == 2 ? 102 : 84, r);
                 }
-                if (family == 2 && s != 2) Note(c, bar, 15, 1, nextRoot - 1, 69, r);
+                if (family == 2 && s != 2) Note(c, bar, 15, 1, ApproachBass(nextRoot, root), 69, r);
             }
             else if (g == 2) // TECHNO: repetitive machine pulse with small funky skips.
             {
@@ -354,7 +387,7 @@ namespace ZPunk.DAW
                     Note(c, bar, step, s == 1 ? (step == 0 ? 5 : 3) : 1, pitch,
                          step % 4 == 0 ? 109 : 82, r);
                 }
-                if (family == 2 && s == 2) Note(c, bar, 15, 1, nextRoot - 1, 72, r);
+                if (family == 2 && s == 2) Note(c, bar, 15, 1, ApproachBass(nextRoot, root), 72, r);
             }
             else if (g == 3) // BREAKS: broken, syncopated low end with octave calls.
             {
@@ -364,11 +397,27 @@ namespace ZPunk.DAW
                 for (int i = 0; i < steps.Length; i++)
                 {
                     int step = steps[i];
-                    int pitch = step == 14 ? (family == 2 ? nextRoot - 1 : root + fifth) :
+                    int pitch = step == 14 ? (family == 2 ? ApproachBass(nextRoot, root) : root + fifth) :
                                 step == 7 && (family == 1 || s == 1) ? root + 12 :
                                 step == 10 && family == 3 ? root + fifth : root;
                     Note(c, bar, step, step == 0 ? 3 : s == 2 && step == 7 ? 3 : 2,
                          pitch, step == 0 ? 112 : i % 2 == 0 ? 97 : 84, r);
+                }
+            }
+            else if (g == 5) // FRENCH HOUSE: repeating filtered-disco bass hooks.
+            {
+                int[] steps = s == 0 ? new[] { 0, 3, 6, 8, 11, 14 } :
+                              s == 1 ? new[] { 0, 2, 6, 10, 12, 14 } :
+                                       new[] { 0, 3, 5, 7, 10, 13, 15 };
+                for (int i = 0; i < steps.Length; i++)
+                {
+                    int step = steps[i];
+                    int pitch = step == 15 ? ApproachBass(nextRoot, root) :
+                                (step == 6 || step == 7) ? root + 12 :
+                                (step == 10 && family != 0) ? root + fifth :
+                                (step == 14 && answer && family >= 2) ? root + fifth : root;
+                    Note(c, bar, step, s == 1 && step == 0 ? 3 : 1 + (step == 0 ? 1 : 0),
+                         pitch, step == 0 ? 113 : step % 4 == 2 ? 101 : 84, r);
                 }
             }
             else // FUNK: repetitive pocket, percussive rests, octave pops and pickups.
@@ -380,7 +429,7 @@ namespace ZPunk.DAW
                 {
                     int step = steps[i];
                     // Musical 5th, octave and approach colors instead of random leaps.
-                    int pitch = step == 15 ? nextRoot - 1 :
+                    int pitch = step == 15 ? ApproachBass(nextRoot, root) :
                                 step == 7 && s != 0 ? root + 12 :
                                 step == 6 && family == 1 ? root + fifth :
                                 step == 10 ? (family == 2 ? root + seventh - 12 : root + fifth) :
@@ -392,12 +441,12 @@ namespace ZPunk.DAW
                 }
                 // Only occasional turnaround notes. Let the space create groove.
                 if (answer && family == 1 && s != 2)
-                    Note(c, bar, 15, 1, nextRoot - 1, 68, r);
+                    Note(c, bar, 15, 1, ApproachBass(nextRoot, root), 68, r);
             }
         }
 
         private static void GenerateMelody(ClipContentData c, int g, int s, int bar, int degree,
-                                           int key, bool minor, int variation, Random r)
+                                           int key, bool minor, int variation, Random r, int[] sourceChord = null)
         {
             // Motifs repeat on bar pairs; answer bars vary the end, not every note.
             int family = Mod(variation - 1, 4);
@@ -411,6 +460,9 @@ namespace ZPunk.DAW
             for (int i = 0; i < starts.Length; i++)
             {
                 int position = starts[i];
+                // Answer bar stays recognisable but breathes slightly differently.
+                if (answer && i == starts.Length - 1 && position > 0 && family == 1)
+                    position--;
                 int chordOffset = motif[(i + (family == 2 ? 2 : 0)) % motif.Length];
                 int melodicDegree = degree + chordOffset;
                 if (answer && i == starts.Length - 1) melodicDegree = degree + (family == 3 ? 1 : 0);
@@ -422,6 +474,20 @@ namespace ZPunk.DAW
                 while (pitch > 83) pitch -= 12;
                 while (pitch < 58) pitch += 12;
                 int length = g == 1 && s == 1 ? 4 : g == 0 && s == 1 ? 3 : g == 2 ? 1 : 2;
+                if (sourceChord != null && sourceChord.Length > 0 && (i == 0 || i == starts.Length - 1 || position % 4 == 0))
+                {
+                    // Land on a nearby real chord tone at phrase anchors.
+                    int best = pitch, distance = int.MaxValue;
+                    foreach (int tone in sourceChord)
+                        for (int shift = -12; shift <= 24; shift += 12)
+                        {
+                            int candidate = tone + shift;
+                            if (candidate < 58 || candidate > 84) continue;
+                            int d = Math.Abs(candidate - pitch);
+                            if (d < distance) { best = candidate; distance = d; }
+                        }
+                    pitch = best;
+                }
                 if (answer && i == starts.Length - 1) length = Math.Max(1, length - 1);
                 Note(c, bar, position, length, pitch, i == 0 ? 98 : 79 + (i % 2) * 9, r);
             }
@@ -495,6 +561,11 @@ namespace ZPunk.DAW
             {
                 starts = s == 2 ? new[] { 0, 8 } : s == 1 ? new[] { 0, 3, 7, 11, 14 } : new[] { 0, 7, 11 };
                 lengths = s == 2 ? new[] { 7, 8 } : s == 1 ? new[] { 2, 1, 2, 1, 2 } : new[] { 3, 2, 3 };
+            }
+            else if (g == 5)
+            {
+                starts = s == 0 ? new[] { 2, 6, 10, 14 } : s == 1 ? new[] { 0, 6, 10, 14 } : new[] { 2, 5, 10, 13 };
+                lengths = s == 1 ? new[] { 3, 2, 2, 2 } : new[] { 2, 2, 2, 1 };
             }
             else // Funk chords: tight stabs that sit between the bass notes.
             {
