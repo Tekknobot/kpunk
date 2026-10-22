@@ -937,8 +937,10 @@ namespace ZPunk.DAW
                 generatorGenres.Add(button);
             }
             generatorStyles.Clear();
+            if (generatorGenre == 1 && generatorStyle == 3 && song.tracks[generatorTargetTrack].kind != TrackKind.Synth) generatorStyle = 0;
             for (int st = 0; st < ZPunkGenreGenerator.Styles[generatorGenre].Length; st++)
             {
+                if (generatorGenre == 1 && st == 3 && song.tracks[generatorTargetTrack].kind != TrackKind.Synth) continue;
                 int index = st;
                 var button = Btn(ZPunkGenreGenerator.Styles[generatorGenre][st],() => { generatorStyle = index; RefreshGeneratorPanel(); },91);
                 if (st == generatorStyle) { button.style.backgroundColor = SelectedColor(); button.style.color = Accent; }
@@ -1018,7 +1020,7 @@ namespace ZPunk.DAW
                 row.style.borderBottomLeftRadius = 6;
                 row.style.borderTopRightRadius = 6;
                 row.style.borderBottomRightRadius = 6;
-                string styleName = ZPunkGenreGenerator.Styles[generatorGenre][Mathf.Clamp(entry.style, 0, 2)];
+                string styleName = ZPunkGenreGenerator.Styles[generatorGenre][Mathf.Clamp(entry.style, 0, ZPunkGenreGenerator.Styles[generatorGenre].Length - 1)];
                 var details = Txt(styleName + "  /  " + ZPunkGenreGenerator.Keys[Mathf.Clamp(entry.key, 0, 11)] +
                     (entry.minor ? "m" : "") + "  /  " + entry.bars + " BAR" +
                     (entry.bars == 1 ? "" : "S") + "  /  V" + entry.variation, 12, Ink);

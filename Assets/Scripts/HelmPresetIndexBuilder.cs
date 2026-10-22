@@ -33,6 +33,9 @@ public static class HelmPresetIndexBuilder
             .GetFiles(root, "*.helm", SearchOption.AllDirectories)
             .Select(p => p.Replace("\\", "/"))
             .Select(p => p.Substring(root.Replace("\\", "/").Length).TrimStart('/')) // relative paths
+            .Where(p => !p.StartsWith("SFX/", System.StringComparison.OrdinalIgnoreCase) &&
+                        !p.StartsWith("Percussion/", System.StringComparison.OrdinalIgnoreCase) &&
+                        !p.StartsWith("Harsh/", System.StringComparison.OrdinalIgnoreCase))
             .OrderBy(p => p)
             .ToArray();
 

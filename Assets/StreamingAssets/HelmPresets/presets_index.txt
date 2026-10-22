@@ -61,9 +61,6 @@ Chip/ZOR Coin Slot Dream.helm
 Chip/ZOR Pixel Lantern.helm
 Chip/ZOR Pocket Telemetry.helm
 Chip/ZOR Tiny Satellite.helm
-Harsh/ZOR Carbon Fracture.helm
-Harsh/ZOR Furnace Warning.helm
-Harsh/ZOR Iron Teeth.helm
 Keys/ZOR After Dark Piano.helm
 Keys/ZOR Amber Comp.helm
 Keys/ZOR Amber Rhodes.helm
@@ -205,93 +202,6 @@ Pad/ZOR Warm Cinema.helm
 Pad/ZOR Warm Horizon.helm
 Pad/ZOR Waveform Garden.helm
 Pad/ZOR Wide Atlantic.helm
-Percussion/ZOR Block Echo.helm
-Percussion/ZOR Clap Alley.helm
-Percussion/ZOR Clap Circuit.helm
-Percussion/ZOR Clap Club.helm
-Percussion/ZOR Clap Palm.helm
-Percussion/ZOR Clap Ribbon.helm
-Percussion/ZOR Clap Studio.helm
-Percussion/ZOR Clav Perc.helm
-Percussion/ZOR Click Glass.helm
-Percussion/ZOR Click Rim.helm
-Percussion/ZOR Click Wood.helm
-Percussion/ZOR Crash Signal.helm
-Percussion/ZOR Hat Crisp.helm
-Percussion/ZOR Hat Dry.helm
-Percussion/ZOR Hat Electric.helm
-Percussion/ZOR Hat Needle.helm
-Percussion/ZOR Hat Sand.helm
-Percussion/ZOR Hat Sizzle.helm
-Percussion/ZOR Hat Tape.helm
-Percussion/ZOR Hat Velvet.helm
-Percussion/ZOR Kick Airlock.helm
-Percussion/ZOR Kick Basement.helm
-Percussion/ZOR Kick Concrete.helm
-Percussion/ZOR Kick Disco.helm
-Percussion/ZOR Kick Pressure.helm
-Percussion/ZOR Kick Satin.helm
-Percussion/ZOR Kick Submarine.helm
-Percussion/ZOR Kick Thunder.helm
-Percussion/ZOR Kick Vintage.helm
-Percussion/ZOR Kick Warehouse.helm
-Percussion/ZOR Metal Bell.helm
-Percussion/ZOR Metal Clang.helm
-Percussion/ZOR Metal Rattle.helm
-Percussion/ZOR Metal Spring.helm
-Percussion/ZOR Metal Tick.helm
-Percussion/ZOR Metal Tube.helm
-Percussion/ZOR Open Hat Loft.helm
-Percussion/ZOR Open Hat Silver.helm
-Percussion/ZOR Open Hat Smoke.helm
-Percussion/ZOR Ride Diamond.helm
-Percussion/ZOR Ride Starlight.helm
-Percussion/ZOR Snare Alloy.helm
-Percussion/ZOR Snare Ash.helm
-Percussion/ZOR Snare Chamber.helm
-Percussion/ZOR Snare Dry.helm
-Percussion/ZOR Snare Dust.helm
-Percussion/ZOR Snare Neon.helm
-Percussion/ZOR Snare Ribbon.helm
-Percussion/ZOR Snare Satellite.helm
-Percussion/ZOR Snare Wide.helm
-Percussion/ZOR Snare Wired.helm
-Percussion/ZOR Sync Tap.helm
-Percussion/ZOR Tom High Chrome.helm
-Percussion/ZOR Tom Low Chamber.helm
-Percussion/ZOR Tom Low Orbit.helm
-Percussion/ZOR Tom Mid Metro.helm
-Percussion/ZOR Tom Plastic.helm
-Percussion/ZOR Tom Pulse.helm
-SFX/ZOR Atmos Dark Terminal.helm
-SFX/ZOR Atmos Distant Engines.helm
-SFX/ZOR Atmos Machine Hall.helm
-SFX/ZOR Atmos Radio Ghost.helm
-SFX/ZOR Atmos Space Station.helm
-SFX/ZOR Atmos Underwater.helm
-SFX/ZOR Blip Data.helm
-SFX/ZOR Blip Neon Dot.helm
-SFX/ZOR Blip Radar.helm
-SFX/ZOR Blip Scanner.helm
-SFX/ZOR Blip Tiny Robot.helm
-SFX/ZOR Impact Alloy.helm
-SFX/ZOR Impact Concrete.helm
-SFX/ZOR Impact Deep Field.helm
-SFX/ZOR Impact Metal Room.helm
-SFX/ZOR Impact Reactor.helm
-SFX/ZOR Impact Voltage.helm
-SFX/ZOR Riser Cold Air.helm
-SFX/ZOR Riser Elevator.helm
-SFX/ZOR Riser Ion.helm
-SFX/ZOR Riser Static.helm
-SFX/ZOR Riser Transmission.helm
-SFX/ZOR Riser Vapor.helm
-SFX/ZOR Sweep Heat.helm
-SFX/ZOR Sweep Laser.helm
-SFX/ZOR Sweep Midnight.helm
-SFX/ZOR Sweep Slow Motion.helm
-SFX/ZOR Sweep Tape.helm
-SFX/ZOR Sweep Whiteout.helm
 Bass/ZOR French Filter Bounce.helm
 Bass/ZOR French Disco Roller.helm
 Bass/ZOR French Velvet Bass.helm

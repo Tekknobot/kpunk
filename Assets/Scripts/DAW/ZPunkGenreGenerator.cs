@@ -13,7 +13,7 @@ namespace ZPunk.DAW
         public static readonly string[] Genres = { "BOOM BAP", "HOUSE", "TECHNO", "BREAKS", "FUNK", "FRENCH HOUSE" };
         public static readonly string[][] Styles = {
             new[] { "CLASSIC", "DUSTY", "SYNCOPATED" },
-            new[] { "CLASSIC", "DEEP", "JACKIN" },
+            new[] { "CLASSIC", "DEEP", "JACKIN", "90s" },
             new[] { "DRIVING", "MINIMAL", "INDUSTRIAL" },
             new[] { "AMEN", "JUNGLE", "HALF-TIME" },
             new[] { "DISCO", "POCKET", "ELECTRO" },
@@ -26,7 +26,7 @@ namespace ZPunk.DAW
         public static string Label(int genre, int style, int key, bool minor, bool synthChords = false)
         {
             genre = Clamp(genre, 0, Genres.Length - 1);
-            return Genres[genre] + " / " + Styles[genre][Clamp(style, 0, 2)] +
+            return Genres[genre] + " / " + Styles[genre][Clamp(style, 0, Styles[genre].Length - 1)] +
                    (synthChords ? " / CHORDS" : "") + " / " +
                    Keys[Mod(key, 12)] + (minor ? " MIN" : " MAJ");
         }
@@ -34,37 +34,37 @@ namespace ZPunk.DAW
         {
             string[][] d = {
                 new[] { "Weighted backbeat, broken kick and laid-back hats", "Spacious drums with ghosts and understated swing", "Off-grid-feeling syncopation with answering hits" },
-                new[] { "Four-to-floor, offbeat hats and rolling bass", "Warm, open spaces and restrained chord movement", "Jackin accents, swung-feel hats and chord stabs" },
+                new[] { "Four-to-floor, offbeat hats and rolling bass", "Warm, open spaces and restrained chord movement", "Jackin accents, swung-feel hats and chord stabs", "90s Eurodance/rave hooks with call-and-response, offbeat pickups and bold chord answers" },
                 new[] { "Steady machine pulse with evolving punctuation", "Sparse, hypnotic drums and focused low notes", "Hard syncopated percussion and clipped motifs" },
                 new[] { "Break-style ghost snares and rolling kick variations", "Denser jungle accents with restless hat patterns", "Half-time backbeat with spacious, heavy hits" },
                 new[] { "Disco pulse, tight claps and bright offbeat percussion", "Dry kick/snare pocket, ghost hits and loose syncopation", "Electro-funk accents, crisp hats and syncopated kicks" },
                 new[] { "Four-on-the-floor with clipped filtered disco accents", "Tight disco drums with playful offbeat hats", "Bouncy French-touch percussion and small fills" }
             };
-            return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, 2)];
+            return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, d[Clamp(g, 0, Genres.Length - 1)].Length - 1)];
         }
         public static string BassDescription(int g, int s)
         {
             string[][] d = {
                 new[] { "Lazy low-end pocket with octave replies", "Sparse soulful bass and muted pickups", "Broken sixteenth-note bass with syncopated fifths" },
-                new[] { "Disco-style offbeat bounce and octave movement", "Warm sustained roots with restrained funk accents", "Tight jackin sixteenths and chromatic turnarounds" },
+                new[] { "Disco-style offbeat bounce and octave movement", "Warm sustained roots with restrained funk accents", "Tight jackin sixteenths and chromatic turnarounds", "Classic 90s house bass bounce with octave accents" },
                 new[] { "Hypnotic root pulse with occasional octave jumps", "Minimal long notes with deliberate gaps", "Clipped industrial syncopation and fifths" },
                 new[] { "Broken low-end call and response", "Restless bass movement with octave accents", "Heavy spaced roots with sharp pickups" },
                 new[] { "Disco-funk octave bounce and short plucked notes", "Deep pocket with sparse fifths and rhythmic silence", "Electro-funk sixteenths, octave pops and passing tones" },
                 new[] { "Filtered repetitive octave bass and short pickups", "Disco-root bounce with fifths and sixteenth-note silence", "Rubbery syncopated French-touch bass with turnarounds" }
             };
-            return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, 2)];
+            return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, d[Clamp(g, 0, Genres.Length - 1)].Length - 1)];
         }
         public static string ChordsDescription(int g, int s)
         {
             string[][] d = {
                 new[] { "Soulful seventh/ninth voicings and late chord replies", "Slow-moving warm jazz colors and open space", "Short, syncopated extended chord punches" },
-                new[] { "Seventh chord offbeats with smooth voice leading", "Long deep-house voicings with warm extensions", "Clipped piano-style sevenths and quick answers" },
+                new[] { "Seventh chord offbeats with smooth voice leading", "Long deep-house voicings with warm extensions", "Clipped piano-style sevenths and quick answers", "90s rave piano/organ stabs, syncopated eighth-note punches and anthemic chord changes" },
                 new[] { "Restrained dark triads with machine-like repeats", "Open fifths, suspended intervals and plenty of air", "Short, tense minor-flavored harmonic hits" },
                 new[] { "Tight soulful stabs between snare accents", "Chopped voicings with quick delayed replies", "Sustained seventh colors over a half-time pulse" },
                 new[] { "Short disco sevenths and ninths with rhythmic replies", "Sparse, warm ninth voicings and tightly muted stabs", "Bright clipped sevenths with synth-funk syncopation" },
                 new[] { "Filtered disco sevenths and clipped offbeat stabs", "Classic French-touch piano chords with rhythmic responses", "Short, bright 90s-influenced house chord punches" }
             };
-            return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, 2)];
+            return d[Clamp(g, 0, Genres.Length - 1)][Clamp(s, 0, d[Clamp(g, 0, Genres.Length - 1)].Length - 1)];
         }
 
         public static void Fill(ClipContentData clip, TrackKind kind, int genre, int style,
@@ -74,7 +74,7 @@ namespace ZPunk.DAW
             if (clip == null) throw new ArgumentNullException(nameof(clip));
             if (kind == TrackKind.Chops) return;
             genre = Clamp(genre, 0, Genres.Length - 1);
-            style = Clamp(style, 0, 2);
+            style = Clamp(style, 0, Styles[genre].Length - 1);
             bars = Clamp(bars, 1, 4);
             key = Mod(key, 12);
             clip.kind = kind == TrackKind.Drums ? ClipKind.Drums : ClipKind.Midi;
@@ -448,15 +448,23 @@ namespace ZPunk.DAW
         private static void GenerateMelody(ClipContentData c, int g, int s, int bar, int degree,
                                            int key, bool minor, int variation, Random r, int[] sourceChord = null)
         {
+            // 90s HOUSE: anthemic, memorable call-and-response hooks with intentional
+            // gaps for the vocal or bass. Chord tones anchor the phrase; short scale
+            // passing notes and an end-of-pair pickup provide forward momentum.
+            if (g == 1 && s == 3)
+            {
+                Generate90sHouseHook(c, bar, degree, key, minor, variation, r, sourceChord);
+                return;
+            }
             // Motifs repeat on bar pairs; answer bars vary the end, not every note.
             int family = Mod(variation - 1, 4);
             bool answer = (bar & 1) != 0;
             int[] starts = g == 0 ? (s == 1 ? new[] { 0, 8, 13 } : new[] { 0, 5, 10, 14 }) :
-                           g == 1 ? (s == 1 ? new[] { 2, 10 } : new[] { 2, 6, 10, 14 }) :
+                           g == 1 ? (s == 3 ? new[] { 0, 3, 6, 10, 14 } : s == 1 ? new[] { 2, 10 } : new[] { 2, 6, 10, 14 }) :
                            g == 2 ? (s == 1 ? new[] { 0, 8 } : s == 2 ? new[] { 0, 3, 7, 11, 14 } : new[] { 0, 4, 6, 10, 12, 14 }) :
                            g == 3 ? (s == 2 ? new[] { 0, 8, 13 } : s == 1 ? new[] { 0, 3, 6, 10, 13, 15 } : new[] { 0, 3, 7, 10, 14 }) :
                                     (s == 0 ? new[] { 0, 3, 6, 10, 14 } : s == 1 ? new[] { 0, 7, 10, 14 } : new[] { 0, 2, 6, 9, 12, 15 });
-            int[] motif = { 0, 2, 4, 2, 1, 0 };
+            int[] motif = g == 1 && s == 3 ? new[] { 0, 2, 4, 3, 2, 0 } : new[] { 0, 2, 4, 2, 1, 0 };
             for (int i = 0; i < starts.Length; i++)
             {
                 int position = starts[i];
@@ -473,7 +481,7 @@ namespace ZPunk.DAW
                 // Fold into the same playable 1-2 octave register.
                 while (pitch > 83) pitch -= 12;
                 while (pitch < 58) pitch += 12;
-                int length = g == 1 && s == 1 ? 4 : g == 0 && s == 1 ? 3 : g == 2 ? 1 : 2;
+                int length = g == 1 && s == 3 ? (i == 0 ? 3 : 2) : g == 1 && s == 1 ? 4 : g == 0 && s == 1 ? 3 : g == 2 ? 1 : 2;
                 if (sourceChord != null && sourceChord.Length > 0 && (i == 0 || i == starts.Length - 1 || position % 4 == 0))
                 {
                     // Land on a nearby real chord tone at phrase anchors.
@@ -493,6 +501,52 @@ namespace ZPunk.DAW
             }
         }
 
+        private static void Generate90sHouseHook(ClipContentData c, int bar, int degree,
+                                                  int key, bool minor, int variation, Random r,
+                                                  int[] sourceChord)
+        {
+            int variant = Mod(variation - 1, 4);
+            bool response = (bar % 2) == 1;
+            // Snappy eighth/sixteenth-note phrasing: strong hook, a breath, then an
+            // answering pickup. Each two-bar pair repeats its rhythmic identity.
+            int[][] callSteps = { new[] { 0, 3, 4, 7, 10, 12, 14 },
+                                  new[] { 0, 2, 4, 7, 10, 12, 15 },
+                                  new[] { 0, 3, 6, 8, 11, 12, 14 },
+                                  new[] { 0, 4, 6, 7, 10, 13, 15 } };
+            int[][] replySteps = { new[] { 0, 2, 4, 6, 10, 11, 14 },
+                                   new[] { 0, 3, 4, 8, 10, 13, 15 },
+                                   new[] { 0, 2, 6, 8, 10, 12, 15 },
+                                   new[] { 0, 3, 5, 8, 11, 12, 14 } };
+            int[] starts = response ? replySteps[variant] : callSteps[variant];
+            int[] callShape = { 0, 2, 4, 2, 1, 0, 2 };
+            int[] replyShape = { 4, 2, 1, 0, 2, 1, 0 };
+            for (int i = 0; i < starts.Length; ++i)
+            {
+                int melodicDegree = degree + (response ? replyShape[i] : callShape[i]);
+                int pitch = Pitch(60, key, melodicDegree, minor);
+                while (pitch > 79) pitch -= 12;
+                while (pitch < 60) pitch += 12;
+                // Anchor downbeats and held hook notes to the actual existing chord.
+                // Use any supplied arrangement harmony, not merely the inferred scale.
+                if (sourceChord != null && sourceChord.Length > 0 && (i == 0 || i == 3 || i == 5))
+                {
+                    int best = pitch, bestDistance = int.MaxValue;
+                    foreach (int chordPitch in sourceChord)
+                        for (int octave = -2; octave <= 2; ++octave)
+                        {
+                            int candidate = chordPitch + octave * 12;
+                            if (candidate < 60 || candidate > 81) continue;
+                            int distance = Math.Abs(candidate - pitch);
+                            if (distance < bestDistance) { bestDistance = distance; best = candidate; }
+                        }
+                    pitch = best;
+                }
+                int gate = i == 0 || i == 4 ? 3 : i == 3 ? 2 : 1;
+                int accent = i == 0 || i == 3 || i == 4 ? 104 : (i == 6 ? 90 : 83);
+                Note(c, bar, starts[i], gate, pitch, accent, r);
+            }
+        }
+
         private static int[] VoiceChord(int degree, int key, bool minor, int g, int s,
                                          bool pads, int[] previous)
         {
@@ -503,7 +557,7 @@ namespace ZPunk.DAW
             int ninth = Scale(degree + 8, minor) - Scale(degree, minor);
             int[] intervals = g == 2 ? (s == 1 ? new[] { 0, fifth, ninth } : new[] { 0, third, fifth }) :
                               g == 0 ? (s == 2 ? new[] { third, seventh, ninth } : new[] { 0, third, seventh, ninth }) :
-                              g == 1 ? (s == 1 ? new[] { 0, third, seventh, ninth } : new[] { 0, third, fifth, seventh }) :
+                              g == 1 ? (s == 3 ? new[] { third, fifth, seventh, ninth } : s == 1 ? new[] { 0, third, seventh, ninth } : new[] { 0, third, fifth, seventh }) :
                               g == 3 ? (s == 1 ? new[] { third, fifth, seventh, ninth } : new[] { 0, third, fifth, seventh }) :
                                        (s == 1 ? new[] { third, seventh, ninth } : new[] { 0, third, seventh, ninth });
             int[] voices = new int[intervals.Length];
@@ -549,8 +603,10 @@ namespace ZPunk.DAW
             }
             else if (g == 1)
             {
-                starts = s == 1 ? new[] { 0, 12 } : s == 2 ? new[] { 2, 6, 9, 14 } : new[] { 2, 6, 10, 14 };
-                lengths = s == 1 ? new[] { 12, 4 } : s == 2 ? new[] { 2, 2, 2, 2 } : new[] { 2, 2, 2, 2 };
+                // 90s chords: alternate sustained piano punctuation with compact
+                // rave stabs. Short, rhythmically displaced answers build cadence.
+                starts = s == 3 ? (bar % 2 == 0 ? new[] { 0, 6, 10, 14 } : new[] { 0, 4, 7, 11, 14 }) : s == 1 ? new[] { 0, 12 } : s == 2 ? new[] { 2, 6, 9, 14 } : new[] { 2, 6, 10, 14 };
+                lengths = s == 3 ? (bar % 2 == 0 ? new[] { 4, 2, 3, 2 } : new[] { 3, 2, 2, 2, 2 }) : s == 1 ? new[] { 12, 4 } : s == 2 ? new[] { 2, 2, 2, 2 } : new[] { 2, 2, 2, 2 };
             }
             else if (g == 2)
             {
@@ -585,7 +641,7 @@ namespace ZPunk.DAW
                 int gate = lengths[i];
                 if (!pads && family == 2) gate = Math.Max(1, gate - 1);
                 if (pads && family == 3 && i == 0) gate = Math.Max(6, gate - 3);
-                int vel = pads ? 69 : g == 2 ? 79 : g == 1 ? 84 : 77;
+                int vel = pads ? 69 : g == 2 ? 79 : g == 1 && s == 3 ? (i == 0 || i == 2 ? 103 : 86) : g == 1 ? 84 : 77;
                 for (int voice = 0; voice < voices.Length; voice++)
                     Note(c, bar, step, gate,
                          voices[voice] + (!pads && family == 2 && voice == voices.Length - 1 && i > 0 ? 12 : 0),

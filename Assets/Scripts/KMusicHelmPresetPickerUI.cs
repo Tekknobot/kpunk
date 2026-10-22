@@ -286,6 +286,9 @@ namespace KMusic
                 var clean = relLine.Trim().Replace("\\", "/");
                 if (string.IsNullOrEmpty(clean)) continue;
                 if (!clean.EndsWith(".helm", StringComparison.OrdinalIgnoreCase)) continue;
+                if (clean.StartsWith("SFX/", StringComparison.OrdinalIgnoreCase) ||
+                    clean.StartsWith("Percussion/", StringComparison.OrdinalIgnoreCase) ||
+                    clean.StartsWith("Harsh/", StringComparison.OrdinalIgnoreCase)) continue;
 
                 _all.Add(new PresetEntry
                 {
