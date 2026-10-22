@@ -110,8 +110,12 @@ namespace KMusic.UI
             MarkDirtyRepaint();
         }
 
-        public void ZoomIn() => ZoomAround(ViewStart01 + ViewLen01 * .5f, .5f);
-        public void ZoomOut() => ZoomAround(ViewStart01 + ViewLen01 * .5f, 2f);
+        // The explicit +/- zoom controls follow the sample playhead / HEAD
+        // marker. Pinch-to-zoom and mouse-wheel zoom retain finger/cursor anchors.
+        private float ButtonZoomAnchor => _playhead01 >= 0f
+            ? _playhead01 : ViewStart01 + ViewLen01 * .5f;
+        public void ZoomIn() => ZoomAround(ButtonZoomAnchor, .5f);
+        public void ZoomOut() => ZoomAround(ButtonZoomAnchor, 2f);
         public void RestoreWindow(float start, float length) => SetViewWindow(start, length);
         public float VisibleBars => _rulerSeconds * ViewLen01 * _rulerBpm / 240f;
 

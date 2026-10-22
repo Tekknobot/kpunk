@@ -593,7 +593,11 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private Button AddDestination(string title,Action action)
     {
         var b=Button(title,action);
+        // Each navigation destination owns exactly one fourth of the row.
         b.style.flexGrow=1;
+        b.style.flexShrink=1;
+        b.style.flexBasis=new Length(0,LengthUnit.Pixel);
+        b.style.minWidth=0;
         b.style.height=49;
         b.style.marginRight=3;
         b.style.marginLeft=3;

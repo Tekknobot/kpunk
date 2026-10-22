@@ -156,16 +156,26 @@ namespace ZPunk.DAW
                 button.style.height = 44 * scale;
                 button.style.fontSize = 13 * scale;
                 // Keep touch targets usable even before the first layout pass.
-                button.style.minWidth = Mathf.Max(48f,
-                    (button.text != null ? button.text.Length : 0) * 8.5f + 16f) * scale;
+                // Equal-width command rows must not inherit minimum widths
+                // that push the last button outside the viewport.
+                if (button.ClassListContains("zp-equal-command"))
+                {
+                    button.style.minWidth = 0;
+                    button.style.fontSize = 12 * scale;
+                    button.style.paddingLeft = 3 * scale;
+                    button.style.paddingRight = 3 * scale;
+                }
+                else
+                    button.style.minWidth = Mathf.Max(48f,
+                        (button.text != null ? button.text.Length : 0) * 8.5f + 16f) * scale;
             }
             var songTitle = page.Q<Label>("ZPunkSongTitle");
             if (songTitle != null) songTitle.style.fontSize = 13 * scale;
             if (details != null) details.style.fontSize = 12 * scale;
             if (hint != null) hint.style.fontSize = 11 * scale;
-            var clipActions = page.Q<ScrollView>("ZPunkClipActions");
+            var clipActions = page.Q<VisualElement>("ZPunkClipActions");
             if (clipActions != null) clipActions.style.height = 51 * scale;
-            var songActions = page.Q<ScrollView>("ZPunkSongActions");
+            var songActions = page.Q<VisualElement>("ZPunkSongActions");
             if (songActions != null) songActions.style.height = 51 * scale;
             if (timelineFrame != null)
                 timelineFrame.style.height = RulerHeight + 5 * RowHeight + 2 * scale;
@@ -259,24 +269,21 @@ namespace ZPunk.DAW
             title.style.marginBottom = 5;
             arrangementPageScroll.Add(title);
 
-            // Compact two-row toolbar: no offscreen controls in portrait.
+            // Equal-width, fully visible command rows; no hidden horizontal scrolling.
             var editing = MakeCommandStrip("ZPunkClipActions");
-            editing.Add(Button("+ CLIP", AddClip, 70));
-            editing.Add(Button("EDIT", EditSelected, 63));
-            editing.Add(Button("DUP", DuplicateSelected, 57));
-            editing.Add(Button("DEL", DeleteSelected, 57));
+            editing.Add(CommandButton("+ CLIP", AddClip));
+            editing.Add(CommandButton("EDIT", EditSelected));
+            editing.Add(CommandButton("DUP", DuplicateSelected));
+            editing.Add(CommandButton("DEL", DeleteSelected));
             arrangementPageScroll.Add(editing);
 
             var transportControls = MakeCommandStrip("ZPunkSongActions");
-            transportControls.Add(Button("- ZOOM", () => Zoom(-14), 65));
-            transportControls.Add(Button("+ ZOOM", () => Zoom(14), 65));
-
-            snapButton = Button("SNAP BAR", CycleSnap, 83);
+            transportControls.Add(CommandButton("- ZOOM", () => Zoom(-14)));
+            transportControls.Add(CommandButton("+ ZOOM", () => Zoom(14)));
+            snapButton = CommandButton("SNAP BAR", CycleSnap);
             transportControls.Add(snapButton);
-
-            loopSongButton = Button("LOOP OFF", ToggleSongLoop, 78);
+            loopSongButton = CommandButton("LOOP OFF", ToggleSongLoop);
             transportControls.Add(loopSongButton);
-
             arrangementPageScroll.Add(transportControls);
 
             var tempoRow=new VisualElement { name="ZPunkArrangementTempo" };
@@ -442,16 +449,33 @@ namespace ZPunk.DAW
             arrangementPageScroll.Add(hint);
         }
 
-        private ScrollView MakeCommandStrip(string name)
+        private Button CommandButton(string label, Action action)
         {
-            var row = new ScrollView(ScrollViewMode.Horizontal) { name = name };
+            var button = Button(label, action, 0);
+            button.AddToClassList("zp-equal-command");
+            button.style.minWidth = 0;
+            button.style.flexGrow = 1;
+            button.style.flexShrink = 1;
+            button.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            button.style.marginLeft = 2 * uiScale;
+            button.style.marginRight = 2 * uiScale;
+            button.style.paddingLeft = 3 * uiScale;
+            button.style.paddingRight = 3 * uiScale;
+            button.style.fontSize = 12 * uiScale;
+            button.style.whiteSpace = WhiteSpace.NoWrap;
+            return button;
+        }
+
+        private VisualElement MakeCommandStrip(string name)
+        {
+            var row = new VisualElement { name = name };
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.flexWrap = Wrap.NoWrap;
+            row.style.alignItems = Align.Center;
+            row.style.width = new Length(100, LengthUnit.Percent);
             row.style.height = 51 * uiScale;
             row.style.marginBottom = 3 * uiScale;
             row.style.flexShrink = 0;
-            row.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            row.verticalScrollerVisibility = ScrollerVisibility.Hidden;
-            row.contentContainer.style.flexDirection = FlexDirection.Row;
-            row.contentContainer.style.flexWrap = Wrap.NoWrap;
             return row;
         }
 
@@ -1088,9 +1112,55 @@ namespace ZPunk.DAW
         }
         private void Zoom(float delta)
         {
-            pixelsPerBar = Mathf.Clamp(pixelsPerBar + delta, 42f, 154f);
-            ApplyTimelinePage();
-            Refresh();
+            if (timelineViewport == null || canvas == null || renderedBars <= 0) return;
+            float oldScale = pixelsPerBar;
+            float newScale = Mathf.Clamp(oldScale + delta, 42f, 154f);
+            if (Mathf.Approximately(oldScale, newScale)) return;
+
+            float viewWidth = timelineViewport.contentViewport.resolvedStyle.width;
+            if (float.IsNaN(viewWidth) || viewWidth <= 0f)
+                viewWidth = timelineViewport.resolvedStyle.width;
+            viewWidth = Mathf.Max(1f, viewWidth);
+            float oldOffset = Mathf.Max(0f, timelineViewport.scrollOffset.x);
+
+            // Keep the actual playback head at the same on-screen position when
+            // zooming, rather than preserving its old pixel coordinate or jumping
+            // back to the first bar. When stopped, use the current transport tick
+            // if it is visible, otherwise preserve the visible viewport centre.
+            float anchorBar = (oldOffset + viewWidth * .5f) / oldScale;
+            float anchorScreenX = viewWidth * .5f;
+            if (transport == null) transport = FindObjectOfType<ZPunkSongTransport>();
+            if (transport != null && transport.SongMode)
+            {
+                float headBar = (float)((double)Math.Max(0L, transport.CurrentTick) /
+                    SongData.TicksPerBar4);
+                float headScreenX = headBar * oldScale - oldOffset;
+                if (transport.IsPlaying || (headScreenX >= 0f && headScreenX <= viewWidth))
+                {
+                    anchorBar = headBar;
+                    // Keep it near the centre while playing, so zooming is useful
+                    // even when the head was near the edge of the viewport.
+                    anchorScreenX = viewWidth * .5f;
+                }
+            }
+
+            pixelsPerBar = newScale;
+            Refresh(); // Recreate ruler, grid and clips using the new scale.
+            float maxOffset = Mathf.Max(0f, renderedBars * pixelsPerBar - viewWidth);
+            float desiredOffset = Mathf.Clamp(anchorBar * pixelsPerBar - anchorScreenX,
+                0f, maxOffset);
+            RestoreTimelineOffset(new Vector2(desiredOffset, 0f));
+            // ScrollView may recalculate its content size in the next layout pass.
+            // Restore the anchored offset after geometry has settled, too.
+            var viewport = timelineViewport;
+            viewport.schedule.Execute(() =>
+            {
+                if (viewport != timelineViewport || canvas == null) return;
+                float readyWidth = viewport.contentViewport.resolvedStyle.width;
+                if (float.IsNaN(readyWidth) || readyWidth <= 0f) readyWidth = viewWidth;
+                float max = Mathf.Max(0f, renderedBars * pixelsPerBar - readyWidth);
+                RestoreTimelineOffset(new Vector2(Mathf.Clamp(desiredOffset, 0f, max), 0f));
+            }).ExecuteLater(0);
         }
         private void UpdateAfterChange()
         {

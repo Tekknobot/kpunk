@@ -95,6 +95,10 @@ namespace ZPunk.DAW
             public bool resizing;
             public bool moved;
             public int pointerId;
+            public VisualElement preview;
+            public long candidateTick;
+            public long candidateDuration;
+            public int candidatePitch;
         }
         private Drag drag;
         private sealed class Tap
@@ -170,6 +174,21 @@ namespace ZPunk.DAW
             b.style.unityFontStyleAndWeight = FontStyle.Bold;
             return b;
         }
+        private static Button EqualButton(string label, Action action)
+        {
+            var button = Btn(label, action, 0);
+            button.style.flexGrow = 1;
+            button.style.flexShrink = 1;
+            button.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            button.style.minWidth = 0;
+            button.style.marginLeft = 2;
+            button.style.marginRight = 2;
+            button.style.paddingLeft = 2;
+            button.style.paddingRight = 2;
+            button.style.fontSize = 11;
+            return button;
+        }
+
         private void BuildShell()
         {
             root.Clear();
@@ -209,6 +228,8 @@ namespace ZPunk.DAW
             chips = tracks.contentContainer;
             chips.style.flexDirection = FlexDirection.Row;
             chips.style.flexWrap = Wrap.NoWrap;
+            chips.style.width = new Length(100, LengthUnit.Percent);
+            chips.style.flexGrow = 1;
             root.Add(tracks);
 
             // Reserve this one toolbar row for every track: switching Drums/Bass/etc
@@ -235,25 +256,23 @@ namespace ZPunk.DAW
             kitSelector.Add(Btn(">", () => StepDrumKit(1), 40));
             root.Add(kitSelector);
 
-            var row = new VisualElement();
-            row.style.flexDirection = FlexDirection.Row;
-            row.style.alignItems = Align.Center;
-            row.style.marginTop = 2;
-            row.style.flexShrink = 0;
-            row.style.flexWrap = Wrap.NoWrap;
-            row.Add(Btn("OCT -", () => { octave = Mathf.Max(-1,octave-1); ScrollToOctave(); }, 56));
-            row.Add(Btn("OCT +", () => { octave = Mathf.Min(9,octave+1); ScrollToOctave(); }, 56));
-            row.Add(Btn("LEN -", () => ChangeLength(-1), 56));
-            row.Add(Btn("LEN +", () => ChangeLength(1), 56));
-            row.Add(Btn("NOTE DEL", DeleteSelectedNote, 77));
-            generatorQuickButton = Btn("GEN", () => OpenGenerator(trackIndex), 58);
-            row.Add(generatorQuickButton);
-            var controls = new ScrollView(ScrollViewMode.Horizontal);
+            // Six equally sized controls fit a portrait phone on ONE row.
+            // Never make the last buttons inaccessible through a hidden scroller.
+            var controls = new VisualElement { name = "ZPunkNoteCommands" };
+            controls.style.flexDirection = FlexDirection.Row;
+            controls.style.flexWrap = Wrap.NoWrap;
+            controls.style.alignItems = Align.Center;
+            controls.style.width = new Length(100, LengthUnit.Percent);
             controls.style.height = 54;
             controls.style.flexShrink = 0;
-            controls.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            controls.verticalScrollerVisibility = ScrollerVisibility.Hidden;
-            controls.Add(row);
+            controls.style.marginTop = 2;
+            controls.Add(EqualButton("OCT -", () => { octave = Mathf.Max(-1,octave-1); ScrollToOctave(); }));
+            controls.Add(EqualButton("OCT +", () => { octave = Mathf.Min(9,octave+1); ScrollToOctave(); }));
+            controls.Add(EqualButton("LEN -", () => ChangeLength(-1)));
+            controls.Add(EqualButton("LEN +", () => ChangeLength(1)));
+            controls.Add(EqualButton("DEL", DeleteSelectedNote));
+            generatorQuickButton = EqualButton("GEN", () => OpenGenerator(trackIndex));
+            controls.Add(generatorQuickButton);
             root.Add(controls);
 
             info = Txt("Choose a track, then create or select a clip.",11,Muted);
@@ -614,6 +633,9 @@ namespace ZPunk.DAW
             add.style.flexGrow = 1;
             del.style.flexGrow = 1;
             apply.style.flexGrow = 1;
+            add.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            del.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            apply.style.flexBasis = new Length(0, LengthUnit.Pixel);
             add.style.minWidth = 0;
             del.style.minWidth = 0;
             apply.style.minWidth = 0;
@@ -639,7 +661,10 @@ namespace ZPunk.DAW
             foreach (var button in new[] { prev, next, nudgeL, nudgeR })
             {
                 button.style.flexGrow = 1;
+                button.style.flexBasis = new Length(0, LengthUnit.Pixel);
                 button.style.minWidth = 0;
+                button.style.paddingLeft = 3;
+                button.style.paddingRight = 3;
                 button.style.fontSize = 11;
                 markerRow.Add(button);
             }
@@ -1951,6 +1976,43 @@ namespace ZPunk.DAW
             Changed();
         }
 
+        // Move and resize notes with a live, snapped preview. The visual
+        // rectangle is updated without rebuilding the ScrollView or losing touch
+        // capture. SongData is committed exactly once, on finger release.
+        private void UpdateMidiDragPreview(Drag d, Vector2 localPosition)
+        {
+            if (d == null || d.preview == null) return;
+            int stepDelta = Mathf.RoundToInt((localPosition.x - d.start.x) / StepW);
+            long endOfGrid = Math.Max(quantum, (long)steps * quantum);
+            long newStart = d.startTick;
+            long newDuration = d.duration;
+            int newPitch = d.pitch;
+            if (d.resizing)
+                newDuration = Math.Max(quantum, Math.Min(endOfGrid - d.startTick,
+                    d.duration + stepDelta * quantum));
+            else
+            {
+                newStart = Math.Max(0L, Math.Min(endOfGrid - d.duration,
+                    d.startTick + stepDelta * quantum));
+                newPitch = Mathf.Clamp(d.pitch -
+                    Mathf.RoundToInt((localPosition.y - d.start.y) / RowH), 0, 127);
+            }
+            d.candidateTick = newStart;
+            d.candidateDuration = newDuration;
+            d.candidatePitch = newPitch;
+            d.preview.style.left = (float)newStart / quantum * StepW + 1f;
+            d.preview.style.top = RowForPitch(newPitch) * RowH + 4f;
+            d.preview.style.width = Mathf.Max(13f, (float)newDuration / quantum * StepW - 2f);
+        }
+
+        private void RestoreMidiDragPreview(Drag d)
+        {
+            if (d == null || d.preview == null) return;
+            d.preview.style.left = (float)d.startTick / quantum * StepW + 1f;
+            d.preview.style.top = RowForPitch(d.pitch) * RowH + 4f;
+            d.preview.style.width = Mathf.Max(13f, (float)d.duration / quantum * StepW - 2f);
+        }
+
         private void Redraw(bool preserveViewport=true)
         {
             if (!ready || root == null || chips == null || gridScrollContainer == null) return;
@@ -1961,6 +2023,7 @@ namespace ZPunk.DAW
                 pendingTap.hold?.Pause();
                 pendingTap = null;
             }
+            drag = null;
             // Refreshing note rectangles must not throw the user back to MIDI 127.
             // OCT +/- and initial track selection can still reposition afterwards.
             Vector2 previousOffset = scroller != null ? scroller.scrollOffset : Vector2.zero;
@@ -1977,10 +2040,10 @@ namespace ZPunk.DAW
                 bool moved = false;
                 Vector2 down = Vector2.zero;
                 IVisualElementScheduledItem hold = null;
-                var item=Btn(song.tracks[i].name.ToUpperInvariant(),()=> {
+                var item=EqualButton(song.tracks[i].name.ToUpperInvariant(),()=> {
                     if (suppressNextClick) { suppressNextClick = false; return; }
                     SelectTrack(index);
-                },83);
+                });
                 if (isGeneratable)
                 {
                     item.RegisterCallback<PointerDownEvent>(evt => {
@@ -2014,7 +2077,7 @@ namespace ZPunk.DAW
                 item.style.color=i==trackIndex ? new Color(.03f,.07f,.10f) : Ink;
                 chips.Add(item);
             }
-            chips.Add(Btn("SAMPLER", OpenSampler, 91));
+            chips.Add(EqualButton("SAMPLE", OpenSampler));
             if (trackScroller != null)
                 trackScroller.schedule.Execute(() => { if (trackScroller != null) trackScroller.scrollOffset = new Vector2(chipX, 0); }).ExecuteLater(0);
             RefreshKitSelector();
@@ -2223,8 +2286,14 @@ namespace ZPunk.DAW
                         SelectNoteVelocity(index);
                         var n = content.notes[index];
                         float right = (float)(n.startTick + n.durationTicks) / quantum * StepW;
+                        float grip = Mathf.Clamp((float)n.durationTicks / quantum * StepW * .35f, 10f, 18f);
+                        VisualElement preview = null;
+                        foreach (var drawn in velocityDisplays)
+                            if (drawn.noteIndex == index) { preview = drawn.cell; break; }
                         drag = new Drag { index=index, start=p, startTick=n.startTick, duration=n.durationTicks,
-                            pitch=n.pitch, resizing=(right-p.x)<10f, pointerId=evt.pointerId };
+                            pitch=n.pitch, resizing=(p.x >= right-grip && p.x <= right+3f),
+                            pointerId=evt.pointerId, preview=preview, candidateTick=n.startTick,
+                            candidateDuration=n.durationTicks, candidatePitch=n.pitch };
                         plane.CapturePointer(evt.pointerId);
                         evt.StopPropagation();
                         return;
@@ -2262,7 +2331,8 @@ namespace ZPunk.DAW
                 }
                 if (drag == null || drag.pointerId != evt.pointerId) return;
                 Vector2 p = plane.WorldToLocal(evt.position);
-                if ((p-drag.start).sqrMagnitude>16) drag.moved=true;
+                if ((p-drag.start).sqrMagnitude>16f) drag.moved=true;
+                if (drag.moved) UpdateMidiDragPreview(drag, p);
                 evt.StopPropagation();
             });
             plane.RegisterCallback<PointerUpEvent>(evt=>
@@ -2281,20 +2351,29 @@ namespace ZPunk.DAW
                 if (drag == null || drag.pointerId != evt.pointerId) return;
                 var d = drag; drag = null;
                 if (plane.HasPointerCapture(evt.pointerId)) plane.ReleasePointer(evt.pointerId);
-                if (d.moved && Writable() && d.index >= 0 && d.index < content.notes.Count)
+                if (d.moved)
                 {
-                    Vector2 p = plane.WorldToLocal(evt.position);
-                    int tickChange = Mathf.RoundToInt((p.x-d.start.x)/StepW);
-                    var n = content.notes[d.index];
-                    if (d.resizing) n.durationTicks = Math.Max(quantum, d.duration+tickChange*quantum);
-                    else
+                    UpdateMidiDragPreview(d, plane.WorldToLocal(evt.position));
+                    // No-op gestures should not write project data.
+                    bool modified = d.candidateTick != d.startTick ||
+                        d.candidateDuration != d.duration || d.candidatePitch != d.pitch;
+                    if (modified && Writable() && content != null && content.notes != null &&
+                        d.index >= 0 && d.index < content.notes.Count)
                     {
-                        n.startTick = Math.Max(0, d.startTick+tickChange*quantum);
-                        n.pitch = Mathf.Clamp(d.pitch-Mathf.RoundToInt((p.y-d.start.y)/RowH),0,127);
+                        var note = content.notes[d.index];
+                        if (note != null)
+                        {
+                            note.startTick = d.candidateTick;
+                            note.durationTicks = d.candidateDuration;
+                            note.pitch = d.candidatePitch;
+                            content.lengthTicks = Math.Max(content.lengthTicks,
+                                note.startTick + note.durationTicks);
+                            selectedNote = d.index;
+                            Changed();
+                        }
                     }
-                    content.lengthTicks = Math.Max(content.lengthTicks,n.startTick+n.durationTicks);
+                    else RestoreMidiDragPreview(d);
                 }
-                Changed();
                 evt.StopPropagation();
             });
             plane.RegisterCallback<PointerCancelEvent>(evt =>
@@ -2304,7 +2383,11 @@ namespace ZPunk.DAW
                     pendingTap.hold?.Pause();
                     pendingTap = null;
                 }
-                if (drag != null && drag.pointerId == evt.pointerId) drag = null;
+                if (drag != null && drag.pointerId == evt.pointerId)
+                {
+                    RestoreMidiDragPreview(drag);
+                    drag = null;
+                }
                 if (plane.HasPointerCapture(evt.pointerId)) plane.ReleasePointer(evt.pointerId);
             });
             plane.RegisterCallback<PointerCaptureOutEvent>(evt =>
@@ -2314,7 +2397,11 @@ namespace ZPunk.DAW
                     pendingTap.hold?.Pause();
                     pendingTap = null;
                 }
-                if (drag != null && drag.pointerId == evt.pointerId) drag = null;
+                if (drag != null && drag.pointerId == evt.pointerId)
+                {
+                    RestoreMidiDragPreview(drag);
+                    drag = null;
+                }
             });
             if (scroller != null)
                 scroller.schedule.Execute(() =>

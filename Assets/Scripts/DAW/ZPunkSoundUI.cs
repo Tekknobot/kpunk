@@ -192,8 +192,10 @@ namespace ZPunk.DAW
                 var button = Action(kind.ToString().ToUpperInvariant(), () => Select(chosen));
                 button.style.flexGrow = 1;
                 button.style.flexShrink = 1;
+                button.style.flexBasis = new Length(0, LengthUnit.Pixel);
                 button.style.minWidth = 0;
-                button.style.marginRight = 5;
+                button.style.marginLeft = 2;
+                button.style.marginRight = 2;
                 selectors[kind] = button;
                 trackBar.Add(button);
             }
