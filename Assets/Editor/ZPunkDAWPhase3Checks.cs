@@ -30,7 +30,9 @@ public static class ZPunkDAWPhase3Checks
             Assert(ArrangementEditing.SnapDelta(-1900, 1920) == -1920, "Dragging left must produce a negative offset");
             Assert(ArrangementEditing.Move(song, second, 3 * SongData.TicksPerBar4), "Move failed");
             Assert(ArrangementEditing.Resize(song, second, 2 * SongData.TicksPerBar4), "Resize failed");
-            Assert(second.loopEnabled, "Extending beyond one-bar content should enable looping");
+            Assert(!second.loopEnabled, "Extended steps should be explicit, without a second playback loop");
+            Assert(ArrangementEditing.FindContent(song, second.contentId).drums.Count == 2,
+                "Resizing must repeat the original hits into editable step content");
             Assert(song.lengthTicks >= 5 * SongData.TicksPerBar4, "Song length did not extend");
             var plan = SongEventPlanner.Build(song);
             Assert(plan.samples.Count == 3, "Expected one original hit and two repeated duplicate hits");

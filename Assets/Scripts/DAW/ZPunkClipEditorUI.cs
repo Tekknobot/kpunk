@@ -2041,7 +2041,7 @@ namespace ZPunk.DAW
             lastPlayheadX = -1f;
             if (clip==null || content==null) return;
             long editLength=Math.Max(clip.lengthTicks,content.lengthTicks);
-            steps=Mathf.Clamp(Mathf.CeilToInt((float)editLength/quantum),16,128);
+            steps=Mathf.Clamp(Mathf.CeilToInt((float)editLength/quantum),16,4096);
             var names=Box(new Color(.095f,.13f,.18f));
             names.style.width=IsMidi ? 57f : 83f;
             names.style.position=Position.Absolute;

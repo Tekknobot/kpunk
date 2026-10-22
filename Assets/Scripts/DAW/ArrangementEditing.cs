@@ -134,16 +134,88 @@ namespace ZPunk.DAW
             return true;
         }
 
+        /// <summary>
+        /// Extending an arrangement clip also materializes repeated steps in the
+        /// editable content. The editor, MIDI export and playback then see the
+        /// same full-length pattern rather than an invisible playback-only loop.
+        /// </summary>
         public static bool Resize(SongData song, ClipData clip, long newLength)
         {
             if (song == null || clip == null) return false;
             newLength = Math.Max(SongData.TicksPerSixteenth,
                 Math.Min(MaxSongTicks - clip.startTick, newLength));
             if (newLength == clip.lengthTicks) return false;
-            clip.lengthTicks = newLength;
+
+            long previousLength = clip.lengthTicks;
             var content = FindContent(song, clip.contentId);
-            if (content != null && clip.sourceOffsetTick + newLength > content.lengthTicks)
-                clip.loopEnabled = true;
+            if (newLength > previousLength && content != null)
+            {
+                // Shared source content must not grow in other linked clips.
+                bool shared = false;
+                foreach (var track in song.tracks)
+                {
+                    if (track == null || track.clips == null) continue;
+                    foreach (var other in track.clips)
+                        if (other != null && other != clip && other.contentId == clip.contentId)
+                            { shared = true; break; }
+                    if (shared) break;
+                }
+                if (shared)
+                {
+                    var independent = JsonUtility.FromJson<ClipContentData>(JsonUtility.ToJson(content));
+                    independent.id = Id("content");
+                    song.contents.Add(independent);
+                    clip.contentId = independent.id;
+                    content = independent;
+                }
+
+                // Content is typically one or more bars long. Repeat its actual
+                // stored pattern into the extra bars so every step is editable.
+                long period = Math.Max(SongData.TicksPerSixteenth, content.lengthTicks);
+                if (newLength > period)
+                {
+                    if (content.notes != null)
+                    {
+                        var source = new List<NoteEvent>(content.notes);
+                        for (long offset = period; offset < newLength; offset += period)
+                            foreach (var note in source)
+                                if (note != null && note.startTick >= 0 && note.startTick < period &&
+                                    offset + note.startTick < newLength)
+                                    content.notes.Add(new NoteEvent {
+                                        pitch = note.pitch, velocity = note.velocity,
+                                        startTick = offset + note.startTick,
+                                        durationTicks = Math.Max(1L, Math.Min(note.durationTicks,
+                                            newLength - offset - note.startTick)) });
+                    }
+                    if (content.drums != null)
+                    {
+                        var source = new List<DrumEvent>(content.drums);
+                        for (long offset = period; offset < newLength; offset += period)
+                            foreach (var hit in source)
+                                if (hit != null && hit.startTick >= 0 && hit.startTick < period &&
+                                    offset + hit.startTick < newLength)
+                                    content.drums.Add(new DrumEvent {
+                                        lane = hit.lane, velocity = hit.velocity,
+                                        legacyVelocityTier = hit.legacyVelocityTier,
+                                        startTick = offset + hit.startTick });
+                    }
+                    if (content.chops != null)
+                    {
+                        var source = new List<ChopEvent>(content.chops);
+                        for (long offset = period; offset < newLength; offset += period)
+                            foreach (var hit in source)
+                                if (hit != null && hit.startTick >= 0 && hit.startTick < period &&
+                                    offset + hit.startTick < newLength)
+                                    content.chops.Add(new ChopEvent {
+                                        sliceId = hit.sliceId, velocity = hit.velocity,
+                                        startTick = offset + hit.startTick });
+                    }
+                }
+                content.lengthTicks = Math.Max(content.lengthTicks, newLength);
+                // Repeated events are now explicit; avoid a second playback loop.
+                clip.loopEnabled = false;
+            }
+            clip.lengthTicks = newLength;
             ExtendSong(song, clip.startTick + newLength);
             return true;
         }
