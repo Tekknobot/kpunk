@@ -1733,10 +1733,22 @@ namespace ZPunk.DAW
         }
         private void DeleteSelectedNote()
         {
-            if(content==null || content.kind!=ClipKind.Midi || selectedNote<0 ||
-                content.notes==null || selectedNote>=content.notes.Count || !Writable())return;
-            content.notes.RemoveAt(selectedNote);
-            selectedNote=-1;
+            if (content == null || content.kind != ClipKind.Midi || selectedNote < 0 ||
+                content.notes == null || selectedNote >= content.notes.Count || !Writable()) return;
+            var selected = content.notes[selectedNote];
+            if (selected == null) return;
+            // An earlier version could stack a manual note directly over a humanized
+            // generated note. Delete the complete same-pitch, same-step stack, rather
+            // than leaving an inaccessible note underneath the visible one.
+            int pitch = selected.pitch;
+            int step = GridStepForTick(selected.startTick);
+            for (int i = content.notes.Count - 1; i >= 0; i--)
+            {
+                var note = content.notes[i];
+                if (note != null && note.pitch == pitch && GridStepForTick(note.startTick) == step)
+                    content.notes.RemoveAt(i);
+            }
+            selectedNote = -1;
             Changed();
         }
         // The slider edits the selected event, or acts as the brush velocity when
@@ -1762,28 +1774,37 @@ namespace ZPunk.DAW
         private bool HasStepEvent(int row, long tick)
         {
             if (content == null) return false;
-            if (content.kind == ClipKind.Drums)
-                return content.drums != null && content.drums.Exists(d => d != null && d.lane == row && d.startTick == tick);
-            if (content.kind == ClipKind.Chops)
-                return content.chops != null && content.chops.Exists(d => d != null && d.sliceId == row + 1 && d.startTick == tick);
+            int step = GridStepForTick(tick);
+            if (content.kind == ClipKind.Drums) return FindDrumStepIndex(row, step) >= 0;
+            if (content.kind == ClipKind.Chops) return FindChopStepIndex(row, step) >= 0;
             return false;
         }
         private void SelectStepVelocity(int row, long tick)
         {
-            if (!HasStepEvent(row, tick)) return;
-            selectedNote = -1;
-            selectedEventRow = row;
-            selectedEventTick = tick;
+            if (content == null) return;
+            int step = GridStepForTick(tick);
+            int index = content.kind == ClipKind.Drums ? FindDrumStepIndex(row, step) :
+                        content.kind == ClipKind.Chops ? FindChopStepIndex(row, step) : -1;
+            if (index < 0) return;
+            // Keep the REAL (humanized) tick for subsequent velocity updates.
+            // Replacing it with the grid tick would make the selected event
+            // inaccessible to ChangeVelocity().
+            long actualTick;
             if (content.kind == ClipKind.Drums)
             {
-                var hit = content.drums.Find(d => d != null && d.lane == row && d.startTick == tick);
+                var hit = content.drums[index];
+                actualTick = hit.startTick;
                 velocity = Mathf.Clamp(hit.velocity, 1, 127);
             }
             else
             {
-                var hit = content.chops.Find(d => d != null && d.sliceId == row + 1 && d.startTick == tick);
+                var hit = content.chops[index];
+                actualTick = hit.startTick;
                 velocity = Mathf.Clamp(hit.velocity, 1, 127);
             }
+            selectedNote = -1;
+            selectedEventRow = row;
+            selectedEventTick = actualTick;
             RefreshVelocityRail();
             RefreshVelocityDisplays();
         }
@@ -2011,17 +2032,128 @@ namespace ZPunk.DAW
         private int QuantizedStep(float x) => Mathf.Clamp(Mathf.FloorToInt(Mathf.Max(0,x)/StepW),0,steps-1);
         private long TickAt(float x) => QuantizedStep(x)*quantum;
         private int RowAt(float y) => Mathf.Clamp(Mathf.FloorToInt(y/RowH),0,RowCount-1);
-        private int FindNote(int pitch,long tick)
+        // Generator humanization deliberately offsets notes slightly from each
+        // sixteenth-note boundary. The editor must identify events by their musical
+        // cell, not by exact tick equality, or tapping an existing event creates a
+        // second one on top of it. No event timing is changed by these lookups.
+        private int GridStepForTick(long tick)
         {
-            if (content == null || content.notes == null) return -1;
-            for (int i=content.notes.Count-1;i>=0;i--)
+            return (int)Math.Max(0L, (Math.Max(0L, tick) + quantum / 2) / quantum);
+        }
+
+        private int FindDrumStepIndex(int row, int step)
+        {
+            if (content?.drums == null) return -1;
+            int best = -1;
+            long distance = long.MaxValue;
+            long gridTick = (long)step * quantum;
+            for (int i = 0; i < content.drums.Count; i++)
             {
-                var n=content.notes[i];
-                if(n != null && n.pitch == pitch && tick >= n.startTick && tick < n.startTick+n.durationTicks)
+                var hit = content.drums[i];
+                if (hit == null || hit.lane != row || GridStepForTick(hit.startTick) != step) continue;
+                long delta = Math.Abs(hit.startTick - gridTick);
+                if (delta < distance) { best = i; distance = delta; }
+            }
+            return best;
+        }
+
+        private int FindChopStepIndex(int row, int step)
+        {
+            if (content?.chops == null) return -1;
+            int best = -1;
+            long distance = long.MaxValue;
+            long gridTick = (long)step * quantum;
+            for (int i = 0; i < content.chops.Count; i++)
+            {
+                var hit = content.chops[i];
+                if (hit == null || hit.sliceId != row + 1 || GridStepForTick(hit.startTick) != step) continue;
+                long delta = Math.Abs(hit.startTick - gridTick);
+                if (delta < distance) { best = i; distance = delta; }
+            }
+            return best;
+        }
+
+        private int FindNote(int pitch, long tick)
+        {
+            if (content?.notes == null) return -1;
+            int step = GridStepForTick(tick);
+            // Prefer a note starting in this step over a note sustained from an
+            // earlier one. Scan in reverse to handle legacy duplicate stacks.
+            for (int i = content.notes.Count - 1; i >= 0; i--)
+            {
+                var n = content.notes[i];
+                if (n != null && n.pitch == pitch && GridStepForTick(n.startTick) == step)
+                    return i;
+            }
+            // A longer generated MIDI note also occupies subsequent grid cells.
+            // Check intersection with the cell, including microtimed attacks.
+            long cellEnd = tick + quantum;
+            for (int i = content.notes.Count - 1; i >= 0; i--)
+            {
+                var n = content.notes[i];
+                if (n != null && n.pitch == pitch &&
+                    n.startTick < cellEnd && n.startTick + n.durationTicks > tick)
                     return i;
             }
             return -1;
         }
+
+        // Resolve taps against the *drawn* rectangle before falling back to a
+        // quantized grid step. Humanized hits can straddle the next cell by a
+        // couple of pixels; selecting from the artwork prevents a second note
+        // being inserted when the user taps that visible trailing edge.
+        private int HitStepAtVisualPosition(int row, int defaultStep, float x)
+        {
+            if (content == null) return defaultStep;
+            const float hitSlop = 1.5f;
+            float nearest = float.MaxValue;
+            int foundStep = -1;
+            if (content.kind == ClipKind.Drums && content.drums != null)
+            {
+                foreach (var hit in content.drums)
+                {
+                    if (hit == null || hit.lane != row) continue;
+                    float left = (float)hit.startTick / quantum * StepW + 1f;
+                    float width = Mathf.Max(13f, StepW - 2f);
+                    if (x < left - hitSlop || x > left + width + hitSlop) continue;
+                    float distance = Mathf.Abs(x - (left + width * .5f));
+                    if (distance >= nearest) continue;
+                    nearest = distance;
+                    foundStep = GridStepForTick(hit.startTick);
+                }
+            }
+            else if (content.kind == ClipKind.Chops && content.chops != null)
+            {
+                foreach (var hit in content.chops)
+                {
+                    if (hit == null || hit.sliceId != row + 1) continue;
+                    float left = (float)hit.startTick / quantum * StepW + 1f;
+                    float width = Mathf.Max(13f, StepW - 2f);
+                    if (x < left - hitSlop || x > left + width + hitSlop) continue;
+                    float distance = Mathf.Abs(x - (left + width * .5f));
+                    if (distance >= nearest) continue;
+                    nearest = distance;
+                    foundStep = GridStepForTick(hit.startTick);
+                }
+            }
+            else if (content.kind == ClipKind.Midi && content.notes != null)
+            {
+                int pitch = PitchForRow(row);
+                foreach (var note in content.notes)
+                {
+                    if (note == null || note.pitch != pitch) continue;
+                    float left = (float)note.startTick / quantum * StepW + 1f;
+                    float width = Mathf.Max(13f, (float)note.durationTicks / quantum * StepW - 2f);
+                    if (x < left - hitSlop || x > left + width + hitSlop) continue;
+                    float distance = Mathf.Abs(x - (left + width * .5f));
+                    if (distance >= nearest) continue;
+                    nearest = distance;
+                    foundStep = GridStepForTick(note.startTick);
+                }
+            }
+            return foundStep >= 0 ? foundStep : defaultStep;
+        }
+
         private void ToggleGrid(int row,int step)
         {
             if (content == null || !Writable()) return;
@@ -2029,11 +2161,18 @@ namespace ZPunk.DAW
             if (content.kind == ClipKind.Drums)
             {
                 if (content.drums == null) content.drums = new List<DrumEvent>();
-                int i = content.drums.FindIndex(d => d != null && d.lane == row && d.startTick == tick);
+                int i = FindDrumStepIndex(row, step);
                 if (i >= 0)
                 {
-                    content.drums.RemoveAt(i);
-                    if (selectedEventRow == row && selectedEventTick == tick) selectedEventRow = -1;
+                    // Clear any pre-existing duplicate stack in this musical cell.
+                    for (int j = content.drums.Count - 1; j >= 0; j--)
+                    {
+                        var hit = content.drums[j];
+                        if (hit != null && hit.lane == row && GridStepForTick(hit.startTick) == step)
+                            content.drums.RemoveAt(j);
+                    }
+                    if (selectedEventRow == row && GridStepForTick(selectedEventTick) == step)
+                    { selectedEventRow = -1; selectedEventTick = -1; }
                 }
                 else
                 {
@@ -2046,11 +2185,17 @@ namespace ZPunk.DAW
             else if (content.kind == ClipKind.Chops)
             {
                 if (content.chops == null) content.chops = new List<ChopEvent>();
-                int i = content.chops.FindIndex(d => d != null && d.sliceId == row + 1 && d.startTick == tick);
+                int i = FindChopStepIndex(row, step);
                 if (i >= 0)
                 {
-                    content.chops.RemoveAt(i);
-                    if (selectedEventRow == row && selectedEventTick == tick) selectedEventRow = -1;
+                    for (int j = content.chops.Count - 1; j >= 0; j--)
+                    {
+                        var hit = content.chops[j];
+                        if (hit != null && hit.sliceId == row + 1 && GridStepForTick(hit.startTick) == step)
+                            content.chops.RemoveAt(j);
+                    }
+                    if (selectedEventRow == row && GridStepForTick(selectedEventTick) == step)
+                    { selectedEventRow = -1; selectedEventTick = -1; }
                 }
                 else
                 {
@@ -2065,7 +2210,20 @@ namespace ZPunk.DAW
                 if (content.notes == null) content.notes = new List<NoteEvent>();
                 int pitch = PitchForRow(row);
                 int existing = FindNote(pitch, tick);
-                if (existing >= 0) { content.notes.RemoveAt(existing); selectedNote = -1; }
+                if (existing >= 0)
+                {
+                    var hit = content.notes[existing];
+                    int startingStep = GridStepForTick(hit.startTick);
+                    // Remove a legacy pile of same-pitch notes that start on the
+                    // same step; tapping must not reveal another hidden copy.
+                    for (int i = content.notes.Count - 1; i >= 0; i--)
+                    {
+                        var n = content.notes[i];
+                        if (n != null && n.pitch == pitch && GridStepForTick(n.startTick) == startingStep)
+                            content.notes.RemoveAt(i);
+                    }
+                    selectedNote = -1;
+                }
                 else
                 {
                     content.notes.Add(new NoteEvent { pitch = pitch, startTick = tick, durationTicks = quantum, velocity = velocity });
@@ -2668,6 +2826,7 @@ namespace ZPunk.DAW
                 if (evt.button != 0) return;
                 Vector2 p = plane.WorldToLocal(evt.position);
                 int row = RowAt(p.y), step = QuantizedStep(p.x);
+                step = HitStepAtVisualPosition(row, step, p.x);
                 // Existing MIDI notes are picked by the overlay, not this
                 // ScrollView child. Empty cells remain regular grid touches.
                 // A finger may be scrolling the piano roll. Defer creating a new
