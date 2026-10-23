@@ -30,6 +30,7 @@ public class KMusicPlayerUI : MonoBehaviour
     [SerializeField] private int deviceTrackLimit = 250;
 
     private VisualElement _root;
+    private IVisualElementScheduledItem _playheadUiJob;
 
     private Button _btnPlay, _btnStop, _btnPrev, _btnNext, _btnLoad, _btnChop, _btnApply;
     private Label _timeLabel, _durLabel, _trackNameLabel;
@@ -68,11 +69,20 @@ public class KMusicPlayerUI : MonoBehaviour
     // Hints are ephemeral: never write noisy, machine-detected candidates into
     // saved chop marker lists until the user explicitly adds/snaps a marker.
     private readonly List<ZPunkSampleWarp.TransientHint> _transientHints = new();
+    // The canonical hit-guide analysis is ALWAYS of the unwarped AudioClip.
+    // This survives BPM changes and non-destructive warps in the same session.
+    private readonly List<ZPunkSampleWarp.TransientHint> _originalTransientHints = new();
+    private AudioClip _originalTransientSource;
+    private bool _originalTransientReady;
+    private AudioClip _transientAnalysisSource;
+    // Exact mapping returned by the warp renderer (not an approximation).
+    private List<ZPunkSampleWarp.TimeMapPoint> _activeWarpTimeMap;
     private Coroutine _transientJob;
     private bool _hitAnalysisBusy;
     private float _hitAnalysisStartedAt;
     private float _hitAnalysisProgress;
     private float _hitAnalysisCompletedSeconds;
+    private bool _hitAnalysisFromCache;
     public bool DawHitAnalysisRunning => _hitAnalysisBusy;
     public float DawHitAnalysisProgress => _hitAnalysisProgress;
     public float DawHitAnalysisSeconds => DawHitAnalysisRunning
@@ -115,7 +125,8 @@ public class KMusicPlayerUI : MonoBehaviour
         !string.IsNullOrEmpty(_sliceHitsFeedback) ? _sliceHitsFeedback :
         _clip == null ? "LOAD A SAMPLE" : _transientHints.Count == 0 ?
         "NO HITS DETECTED" : "READY / " + _transientHints.Count + " HIT GUIDES / " +
-        _hitAnalysisCompletedSeconds.ToString("0.0") + "s ANALYSIS";
+        (_hitAnalysisFromCache ? "CACHED" :
+            _hitAnalysisCompletedSeconds.ToString("0.0") + "s ANALYSIS");
 
     private void UpdateBeatGrid()
     {
@@ -167,66 +178,128 @@ public class KMusicPlayerUI : MonoBehaviour
         _beatPhaseFound = true;
     }
 
-    private void ResetTransientAnalysis()
+    private void ResetTransientAnalysis(bool forgetOriginal = false)
     {
         _transientRevision++;
         if (_transientJob != null) StopCoroutine(_transientJob);
         _transientJob = null;
+        _transientAnalysisSource = null;
         _hitAnalysisBusy = false;
         _transientHints.Clear();
+        _analysisCompleted = false;
         _beatPhaseSeconds = 0f;
         _beatPhaseFound = false;
         _sliceHitsPending = false;
         _sliceHitsFeedback = "";
         _hitAnalysisProgress = 0f;
         _hitAnalysisCompletedSeconds = 0f;
+        _hitAnalysisFromCache = false;
+        if (forgetOriginal)
+        {
+            _originalTransientHints.Clear();
+            _originalTransientSource = null;
+            _originalTransientReady = false;
+            _activeWarpTimeMap = null;
+        }
         _wave?.SetTransientGuides(null);
         UpdateBeatGrid();
     }
 
+    private bool _analysisCompleted;
+
+    // The source is decoded/analyzed at most once per load. Subsequent warps
+    // remap the original hit positions using the exact rendered timing curve;
+    // neither tempo nor project BPM is part of the disk-cache key.
+    private void RefreshGuidesFromOriginal(bool reused)
+    {
+        if (_clip == null || !_originalTransientReady || _originalTransientSource != _clip)
+            return;
+        _transientHints.Clear();
+        if (_warpedClip != null && _activeWarpTimeMap != null)
+            _transientHints.AddRange(ZPunkSampleWarp.RemapTransientHints(
+                _originalTransientHints, _activeWarpTimeMap));
+        else
+            _transientHints.AddRange(_originalTransientHints);
+        _analysisCompleted = true;
+        DetectBeatPhase(_transientHints);
+        if (_beatAlignFromHead && _warpedClip != null)
+        {
+            float beatSeconds = 60f / Mathf.Max(1f, CurrentSongTempo());
+            _beatPhaseSeconds = Mathf.Repeat(_beatAlignStart01 * DawSampleDuration, beatSeconds);
+            _beatPhaseFound = true;
+        }
+        _wave?.SetTransientGuides(_transientHints);
+        UpdateBeatGrid();
+        _hitAnalysisProgress = 1f;
+        _hitAnalysisBusy = false;
+        _hitAnalysisFromCache = reused;
+        if (reused) _hitAnalysisCompletedSeconds = 0f;
+        ZPunkSampleAnalysisCache.Trace((_warpedClip != null && _activeWarpTimeMap != null
+            ? "REMAP exact warp positions" : "REUSE original positions") +
+            " / guides=" + _transientHints.Count);
+        if (_sliceHitsPending && !_warpProcessing)
+        {
+            float start = _pendingSliceStart01;
+            _sliceHitsPending = false;
+            SliceAtDetectedHits(start);
+        }
+    }
+
+    private void ApplyOriginalHits(AudioClip source, int revision,
+        List<ZPunkSampleWarp.TransientHint> hits, bool fromCache)
+    {
+        if (this == null || revision != _transientRevision || source != _clip)
+            return;
+        _originalTransientHints.Clear();
+        if (hits != null) _originalTransientHints.AddRange(hits);
+        _originalTransientSource = source;
+        _originalTransientReady = true;
+        _transientJob = null;
+        _transientAnalysisSource = null;
+        _hitAnalysisCompletedSeconds = fromCache ? 0f :
+            Mathf.Max(0f, Time.unscaledTime - _hitAnalysisStartedAt);
+        RefreshGuidesFromOriginal(fromCache);
+        // Tempo detection uses the original coordinates even after warp switches.
+        if (!_sourceBpmManual)
+            StartCoroutine(EstimateLoadedSourceTempo(source, revision));
+    }
+
     private void BeginTransientAnalysis()
     {
+        if (_clip == null) { ResetTransientAnalysis(true); return; }
+        if (_originalTransientReady && _originalTransientSource == _clip)
+        {
+            // Warp changes and panel re-enables reuse the same in-memory hits.
+            RefreshGuidesFromOriginal(true);
+            return;
+        }
+        // Do not cancel and restart source analysis when warp completes while
+        // the initial scan is still running.
+        if (_hitAnalysisBusy && _transientJob != null && _transientAnalysisSource == _clip)
+        {
+            ZPunkSampleAnalysisCache.Trace("IN-FLIGHT original scan reused");
+            return;
+        }
         ResetTransientAnalysis();
-        if (_clip == null) return;
-        int revision = _transientRevision;
         AudioClip source = _clip;
-        AudioClip analyzed = _warpedClip != null ? _warpedClip : _clip;
+        int revision = _transientRevision;
+        if (ZPunkSampleAnalysisCache.TryLoad(_clipResourcesPath, source, source,
+            "original", out List<ZPunkSampleWarp.TransientHint> stored))
+        {
+            ApplyOriginalHits(source, revision, stored, true);
+            return;
+        }
         _hitAnalysisStartedAt = Time.unscaledTime;
         _hitAnalysisBusy = true;
-        _transientJob = StartCoroutine(ZPunkSampleWarp.AnalyzeTransientHints(analyzed, hits =>
+        _transientAnalysisSource = source;
+        ZPunkSampleAnalysisCache.Trace("ANALYZE original audio / once per source");
+        _transientJob = StartCoroutine(ZPunkSampleWarp.AnalyzeTransientHints(source, hits =>
         {
-            if (_transientRevision != revision || source != _clip ||
-                analyzed != (_warpedClip != null ? _warpedClip : _clip)) return;
-            _transientHints.AddRange(hits);
-            DetectBeatPhase(_transientHints);
-            // Keep the visual 1/2/3/4 ruler pinned to the same user-selected
-            // beat 1 when showing beat-aligned audio, not a new noisy guess.
-            if (_beatAlignFromHead && _warpedClip != null)
-            {
-                float beatSeconds = 60f / Mathf.Max(1f, CurrentSongTempo());
-                _beatPhaseSeconds = Mathf.Repeat(_beatAlignStart01 * DawSampleDuration,
-                    beatSeconds);
-                _beatPhaseFound = true;
-            }
-            _wave?.SetTransientGuides(_transientHints);
-            UpdateBeatGrid();
-            _hitAnalysisProgress = 1f;
-            _hitAnalysisBusy = false;
-            _hitAnalysisCompletedSeconds = Mathf.Max(0f, Time.unscaledTime - _hitAnalysisStartedAt);
-            _transientJob = null;
-            // Use rhythmic evidence from the *original* recording to estimate
-            // its tempo. Never overwrite a value deliberately set by the user.
-            if (analyzed == _clip && !_sourceBpmManual)
-                StartCoroutine(EstimateLoadedSourceTempo(_clip, revision));
-            if (_sliceHitsPending)
-            {
-                float requestedStart = _pendingSliceStart01;
-                _sliceHitsPending = false;
-                SliceAtDetectedHits(requestedStart);
-            }
-        }, () => _transientRevision != revision || _clip != source ||
-            analyzed != (_warpedClip != null ? _warpedClip : _clip) || this == null,
-            progress => { if (_transientRevision == revision) _hitAnalysisProgress = Mathf.Clamp01(progress); }));
+            if (this == null || revision != _transientRevision || _clip != source) return;
+            ZPunkSampleAnalysisCache.Save(_clipResourcesPath, source, source, "original", hits);
+            ApplyOriginalHits(source, revision, hits, false);
+        }, () => revision != _transientRevision || _clip != source || this == null,
+            progress => { if (revision == _transientRevision) _hitAnalysisProgress = Mathf.Clamp01(progress); }));
     }
 
     private IEnumerator EstimateLoadedSourceTempo(AudioClip source, int revision)
@@ -236,7 +309,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (source == null || _clip != source || _transientRevision != revision || _sourceBpmManual)
             yield break;
         float confidence;
-        float estimate = ZPunkSampleWarp.EstimateRhythmicBpm(_transientHints,
+        float estimate = ZPunkSampleWarp.EstimateRhythmicBpm(_originalTransientHints,
             source.length, CurrentSongTempo(), out confidence);
         if (source != _clip || _transientRevision != revision || _sourceBpmManual)
             yield break;
@@ -648,9 +721,28 @@ public class KMusicPlayerUI : MonoBehaviour
     private IEnumerator DetectSourceTempoAsync(AudioClip source, int revision)
     {
         List<ZPunkSampleWarp.TransientHint> found = null;
-        yield return StartCoroutine(ZPunkSampleWarp.AnalyzeTransientHints(source,
-            hits => { found = hits; },
-            () => revision != _tempoDetectionRevision || _clip != source || this == null));
+        // Never take display-warp coordinates for source BPM estimation.
+        if (_originalTransientReady && _originalTransientSource == source)
+            found = new List<ZPunkSampleWarp.TransientHint>(_originalTransientHints);
+        else
+        {
+            // The UI may already be computing these exact original positions.
+            // Wait for its result instead of starting a duplicate PCM scan.
+            while (_hitAnalysisBusy && _transientAnalysisSource == source &&
+                   revision == _tempoDetectionRevision && _clip == source && this != null)
+                yield return null;
+            if (_originalTransientReady && _originalTransientSource == source)
+                found = new List<ZPunkSampleWarp.TransientHint>(_originalTransientHints);
+            if (found == null && !ZPunkSampleAnalysisCache.TryLoad(
+                _clipResourcesPath, source, source, "original", out found))
+            {
+                yield return StartCoroutine(ZPunkSampleWarp.AnalyzeTransientHints(source,
+                    hits => { found = hits; },
+                    () => revision != _tempoDetectionRevision || _clip != source || this == null));
+                if (revision == _tempoDetectionRevision && _clip == source && found != null)
+                    ZPunkSampleAnalysisCache.Save(_clipResourcesPath, source, source, "original", found);
+            }
+        }
         if (revision != _tempoDetectionRevision || _clip != source || this == null)
             yield break;
         _tempoDetectionRunning = false;
@@ -787,24 +879,67 @@ public class KMusicPlayerUI : MonoBehaviour
         SampleRestoreError?.Invoke(message);
     }
 
-    // Explicitly empty selection: never retain another project's cached sample.
+    // A UnityWebRequest-decoded clip is native PCM memory, not managed GC memory.
+    // Release it ONLY after all AudioSources and the CHOPS voice pool detach.
+    private bool _ownsSourceClip;
+    private Coroutine _importedLoadJob;
+    private void ReleaseCurrentAudioForReplacement()
+    {
+        AudioClip oldSource = _clip;
+        AudioClip oldWarp = _warpedClip;
+        bool ownSource = _ownsSourceClip;
+        _warpGeneration++;
+        _appliedWarpSignature = null;
+        _warpJob = null; // cancelled worker finishes its next chunk and frees its target
+        _warpPendingAt = -1f;
+        _warpProcessing = false;
+        _warpProgress = 0f;
+        _tempoDetectionRevision++;
+        _tempoDetectionRunning = false;
+        ResetSampleKey();
+        ResetTransientAnalysis(true);
+        if (_markerPreviewCoroutine != null)
+        {
+            StopCoroutine(_markerPreviewCoroutine);
+            _markerPreviewCoroutine = null;
+        }
+        if (audioSource != null) { audioSource.Stop(); audioSource.clip = null; }
+        // Stop and detach every CHOPS voice before destroying native clip memory.
+        // Changing only the single cached reference still leaves 8+ AudioSources
+        // referring to the previous sample, often across several project loads.
+        KMusicChopState.SetCachedClip(null, null);
+        var drums = FindObjectOfType<KMusicDrumSequencer>();
+        if (drums != null) drums.ReleaseRuntimeSampleReferences();
+        if (_wave != null) { _wave.SetClip(null); _wave.SetPlayhead01(0f); }
+        _clip = null;
+        _warpedClip = null;
+        _ownsSourceClip = false;
+        _clipResourcesPath = null;
+        if (oldWarp != null && oldWarp != oldSource) Destroy(oldWarp);
+        if (ownSource && oldSource != null) Destroy(oldSource);
+    }
+
     public void ClearSampleSelection()
     {
         _sampleRequestSerial++;
         _pendingProjectId = null;
+        if (_importedLoadJob != null)
+        {
+            StopCoroutine(_importedLoadJob);
+            _importedLoadJob = null;
+        }
 #if UNITY_ANDROID && !UNITY_EDITOR
-        if (_loadDeviceCoroutine != null) { StopCoroutine(_loadDeviceCoroutine); _loadDeviceCoroutine = null; }
+        if (_loadDeviceCoroutine != null)
+        {
+            StopCoroutine(_loadDeviceCoroutine);
+            _loadDeviceCoroutine = null;
+        }
 #endif
-        ResetSampleKey();
-        ResetTransientAnalysis();
-        _clip = null;
-        _warpedClip = null;
-        _clipResourcesPath = null;
+        ReleaseCurrentAudioForReplacement();
         _clipIndex = -1;
         _chops01.Clear();
-        if (audioSource != null) { audioSource.Stop(); audioSource.clip = null; }
-        if (_wave != null) { _wave.SetClip(null); _wave.SetPlayhead01(0); }
-        KMusicChopState.SetCachedClip(null, null);
+        _closingHitMarker = false;
+        SyncMarkersToWave();
         UpdateTrackTitle("NO SAMPLE");
     }
 
@@ -887,6 +1022,15 @@ public class KMusicPlayerUI : MonoBehaviour
 
     public void SetLastTrackId(string id)
     {
+        // Reusing the same source across projects must not reload PCM or redo markers.
+        id = CanonicalSampleId(id);
+        if (!string.IsNullOrEmpty(id) && _clip != null &&
+            string.Equals(id, CanonicalSampleId(_clipResourcesPath), StringComparison.Ordinal))
+        {
+            SaveLastTrackId(id);
+            RestoreMarkersFromAppliedState();
+            return;
+        }
         // Project loader calls this with null for projects that never selected a sample.
         ClearSampleSelection();
         ClearLastTrackId();
@@ -918,6 +1062,14 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (string.IsNullOrEmpty(id)) return true;
         if (audioSource == null || _wave == null) return false;
+        // BootAudioSources can run each time the player UI is re-enabled.
+        // Never decode the identical sample a second time just to redraw it.
+        if (_clip != null && string.Equals(CanonicalSampleId(id),
+            CanonicalSampleId(_clipResourcesPath), StringComparison.Ordinal))
+        {
+            RestoreMarkersFromAppliedState();
+            return true;
+        }
 #if UNITY_ANDROID && !UNITY_EDITOR
         if (id.StartsWith("uri:", StringComparison.Ordinal))
         {
@@ -972,7 +1124,7 @@ public class KMusicPlayerUI : MonoBehaviour
             if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
             {
                 int serial = ++_sampleRequestSerial;
-                StartCoroutine(CoLoadImportedTrackByPath(filePath, true, serial));
+                StartImportedLoad(filePath, serial);
                 return true;
             }
             MissingProjectSample(id);
@@ -1021,7 +1173,13 @@ public class KMusicPlayerUI : MonoBehaviour
 
         index = Mathf.Clamp(index, 0, _importedTracks.Count - 1);
         int serial = ++_sampleRequestSerial;
-        StartCoroutine(CoLoadImportedTrackByPath(_importedTracks[index].absolutePath, true, serial));
+        StartImportedLoad(_importedTracks[index].absolutePath, serial);
+    }
+
+    private void StartImportedLoad(string path, int serial)
+    {
+        if (_importedLoadJob != null) StopCoroutine(_importedLoadJob);
+        _importedLoadJob = StartCoroutine(CoLoadImportedTrackByPath(path, true, serial));
     }
 
     private IEnumerator CoLoadImportedTrackByPath(string absolutePath, bool persistAsLastTrack, int requestSerial)
@@ -1060,7 +1218,9 @@ public class KMusicPlayerUI : MonoBehaviour
             yield break;
         }
 
+        ReleaseCurrentAudioForReplacement();
         _clip = loaded;
+        _ownsSourceClip = true;
         _pendingProjectId = null;
         _clipResourcesPath = SampleIdForFile(absolutePath);
         _clipIndex = -1;
@@ -1083,6 +1243,7 @@ public class KMusicPlayerUI : MonoBehaviour
         UpdateTrackTitle(Path.GetFileNameWithoutExtension(absolutePath));
         OnSourceSampleReady();
         RefreshTrackBrowserList();
+        _importedLoadJob = null;
     }
 
     private static AudioType GuessAudioTypeFromPath(string path)
@@ -1145,7 +1306,7 @@ public class KMusicPlayerUI : MonoBehaviour
         // remains selected. Restart the cancelled key analysis in that case.
         if (_clip != null && !_keyAnalysisRunning && !_sampleKey.found)
             BeginSampleKeyAnalysis();
-        if (_clip != null && _transientHints.Count == 0 && _transientJob == null)
+        if (_clip != null && !_analysisCompleted && _transientJob == null)
             BeginTransientAnalysis();
         // UI initialization and automatic project restore must be silent.
         if (audioSource != null) audioSource.Stop();
@@ -1221,6 +1382,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _wave.PlayheadSnapsToGuides = _transientSnapEnabled;
         _wave.MarkersDraggable = _chopArmed;
 
+        UnwirePlayerButtons();
         if (_btnPlay != null) _btnPlay.clicked += OnPlayClicked;
         if (_btnStop != null) _btnStop.clicked += OnStopClicked;
         if (_btnPrev != null) _btnPrev.clicked += CyclePrevTrack;
@@ -1241,14 +1403,14 @@ public class KMusicPlayerUI : MonoBehaviour
 
         if (_btnDelMode != null) _btnDelMode.clicked += OnDeleteMarkerButton;
 
-        if (_btnSnap != null) _btnSnap.clicked += () => ToggleSnap();
+        if (_btnSnap != null) _btnSnap.clicked += ToggleSnap;
         if (_btnReset != null) _btnReset.clicked += ResetAllMarkers;
         if (_btnMarkerPrev != null) _btnMarkerPrev.clicked += SelectPreviousMarker;
         if (_btnMarkerNext != null) _btnMarkerNext.clicked += SelectNextMarker;
-        if (_btnNudgeNeg10 != null) _btnNudgeNeg10.clicked += () => NudgeSelectedMarkerSeconds(-0.10f);
-        if (_btnNudgeNeg01 != null) _btnNudgeNeg01.clicked += () => NudgeSelectedMarkerSeconds(-0.01f);
-        if (_btnNudgePos01 != null) _btnNudgePos01.clicked += () => NudgeSelectedMarkerSeconds(0.01f);
-        if (_btnNudgePos10 != null) _btnNudgePos10.clicked += () => NudgeSelectedMarkerSeconds(0.10f);
+        if (_btnNudgeNeg10 != null) _btnNudgeNeg10.clicked += NudgeNegativeTen;
+        if (_btnNudgeNeg01 != null) _btnNudgeNeg01.clicked += NudgeNegativeOne;
+        if (_btnNudgePos01 != null) _btnNudgePos01.clicked += NudgePositiveOne;
+        if (_btnNudgePos10 != null) _btnNudgePos10.clicked += NudgePositiveTen;
 
         SetMarkerMode(true);
         SetSnapState(_snapEnabled);
@@ -1257,9 +1419,36 @@ public class KMusicPlayerUI : MonoBehaviour
         BuildTrackBrowserOverlay(page);
         RefreshTrackBrowserList();
 
-        _root.schedule.Execute(UpdatePlayheadUI).Every(33);
+        if (_playheadUiJob != null) _playheadUiJob.Pause();
+        _playheadUiJob = _root.schedule.Execute(UpdatePlayheadUI).Every(33);
 
         BootAudioSources();
+    }
+
+    private void NudgeNegativeTen() => NudgeSelectedMarkerSeconds(-.10f);
+    private void NudgeNegativeOne() => NudgeSelectedMarkerSeconds(-.01f);
+    private void NudgePositiveOne() => NudgeSelectedMarkerSeconds(.01f);
+    private void NudgePositiveTen() => NudgeSelectedMarkerSeconds(.10f);
+
+    private void UnwirePlayerButtons()
+    {
+        if (_btnPlay != null) _btnPlay.clicked -= OnPlayClicked;
+        if (_btnStop != null) _btnStop.clicked -= OnStopClicked;
+        if (_btnPrev != null) _btnPrev.clicked -= CyclePrevTrack;
+        if (_btnNext != null) _btnNext.clicked -= CycleNextTrack;
+        if (_btnLoad != null) _btnLoad.clicked -= OpenTrackBrowser;
+        if (_btnChop != null) _btnChop.clicked -= ToggleChop;
+        if (_btnApply != null) _btnApply.clicked -= ApplyChops;
+        if (_btnSend != null) _btnSend.clicked -= SendChops;
+        if (_btnDelMode != null) _btnDelMode.clicked -= OnDeleteMarkerButton;
+        if (_btnSnap != null) _btnSnap.clicked -= ToggleSnap;
+        if (_btnReset != null) _btnReset.clicked -= ResetAllMarkers;
+        if (_btnMarkerPrev != null) _btnMarkerPrev.clicked -= SelectPreviousMarker;
+        if (_btnMarkerNext != null) _btnMarkerNext.clicked -= SelectNextMarker;
+        if (_btnNudgeNeg10 != null) _btnNudgeNeg10.clicked -= NudgeNegativeTen;
+        if (_btnNudgeNeg01 != null) _btnNudgeNeg01.clicked -= NudgeNegativeOne;
+        if (_btnNudgePos01 != null) _btnNudgePos01.clicked -= NudgePositiveOne;
+        if (_btnNudgePos10 != null) _btnNudgePos10.clicked -= NudgePositiveTen;
     }
 
     private void BootAudioSources()
@@ -1411,8 +1600,13 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private void OnDisable()
     {
+        UnwirePlayerButtons();
+        if (_playheadUiJob != null) { _playheadUiJob.Pause(); _playheadUiJob = null; }
         ResetSampleKey();
-        ResetTransientAnalysis();
+        // Do not cancel the original-audio scan just because the sampler panel
+        // is hidden. It can finish and SAVE while another tab is visible;
+        // OnEnable reuses the finished result or the existing job.
+        // Source replacement still calls ResetTransientAnalysis(true).
         if (_pitchBus != null && _onPitchBusChanged != null)
             _pitchBus.OnChanged -= _onPitchBusChanged;
         _pitchBus = null;
@@ -1440,6 +1634,13 @@ public class KMusicPlayerUI : MonoBehaviour
             _loadDeviceCoroutine = null;
         }
 #endif
+    }
+
+    private void OnDestroy()
+    {
+        // Unity component teardown otherwise retains imported native clips until
+        // process exit. Invalidated coroutines observe the generation change.
+        ClearSampleSelection();
     }
 
     private void RefreshClipList()
@@ -1496,8 +1697,10 @@ public class KMusicPlayerUI : MonoBehaviour
         _closingHitMarker = false;
         SyncMarkersToWave();
 
+        ReleaseCurrentAudioForReplacement();
         _clipIndex = index;
         _clip = _clips[_clipIndex];
+        _ownsSourceClip = false;
         _clipResourcesPath = _clip != null ? ($"{resourcesFolder}/" + _clip.name) : null;
 
         if (!string.IsNullOrEmpty(_clipResourcesPath))
@@ -1566,14 +1769,20 @@ public class KMusicPlayerUI : MonoBehaviour
         });
 
         while (!done) yield return null;
-        if (requestSerial != _sampleRequestSerial) yield break;
+        if (requestSerial != _sampleRequestSerial)
+        {
+            if (loaded != null) Destroy(loaded);
+            yield break;
+        }
         if (loaded == null)
         {
             MissingProjectSample("uri:" + t.uri);
             yield break;
         }
 
+        ReleaseCurrentAudioForReplacement();
         _clip = loaded;
+        _ownsSourceClip = true;
         _clipResourcesPath = !string.IsNullOrEmpty(t.uri) ? ("uri:" + t.uri) : null;
 
         if (!string.IsNullOrEmpty(_clipResourcesPath))
@@ -1672,7 +1881,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _sourceBpm = Mathf.Clamp((_sourceBpm > 0 ? _sourceBpm : CurrentSongTempo()) + delta, 40f, 240f);
         _sourceBpmManual = true;
         _sourceBpm = Mathf.Round(_sourceBpm * 10f) / 10f;
-        QueueWarp(true);
+        QueueWarp(); // debounce repeated +/- taps; only render final tempo
     }
     public void DawScaleSourceBpm(float scale)
     {
@@ -1681,7 +1890,7 @@ public class KMusicPlayerUI : MonoBehaviour
             40f, 240f) * 10f) / 10f;
         _sourceBpmManual = true;
         _tempoDetectionStatus = "SOURCE BPM ADJUSTED / CHECK BY EAR";
-        QueueWarp(true);
+        QueueWarp();
     }
     private float CurrentSongTempo()
     {
@@ -1711,8 +1920,17 @@ public class KMusicPlayerUI : MonoBehaviour
         // in-progress AudioClip. StopCoroutine bypasses its cleanup and leaked
         // megabytes of native audio memory when tempo/source changed repeatedly.
         _warpJob = null;
-        if (_warpedClip != null && _warpedClip != _clip) Destroy(_warpedClip, 5f);
+        if (_warpedClip != null && _warpedClip != _clip)
+        {
+            AudioClip old = _warpedClip;
+            KMusicChopState.SetCachedClip(_clipResourcesPath, _clip);
+            var drum = FindObjectOfType<KMusicDrumSequencer>();
+            if (drum != null) drum.ReleaseRuntimeSampleReferences();
+            if (audioSource != null && audioSource.clip == old) audioSource.clip = _clip;
+            Destroy(old);
+        }
         _warpedClip = null;
+        _activeWarpTimeMap = null;
         _tempoDetectionRevision++;
         _tempoDetectionRunning = false;
         _tempoDetectionStatus = "";
@@ -1760,10 +1978,26 @@ public class KMusicPlayerUI : MonoBehaviour
     }
     private Coroutine _warpJob;
     private int _warpGeneration;
+    private string _appliedWarpSignature;
+
+    private string WarpSignature()
+    {
+        return (_autoWarpEnabled ? "1" : "0") + ":" +
+            _sourceBpm.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + ":" +
+            CurrentSongTempo().ToString("R", System.Globalization.CultureInfo.InvariantCulture) + ":" +
+            (_sourceBpmManual ? "M" : _sourceBpmRhythmic ? "R" : "?") + ":" +
+            (_beatAlignFromHead ? _beatAlignStart01.ToString("R", System.Globalization.CultureInfo.InvariantCulture) : "-");
+    }
 
     private void ApplyWarp()
     {
         if (_clip == null) return;
+        string signature = WarpSignature();
+        if (signature == _appliedWarpSignature)
+        {
+            _warpProcessing = false;
+            return;
+        }
         int generation = ++_warpGeneration;
         _warpProcessing = _autoWarpEnabled;
         _warpProgress = 0f;
@@ -1775,6 +2009,7 @@ public class KMusicPlayerUI : MonoBehaviour
     private IEnumerator RunWarp(int generation)
     {
         AudioClip next = null;
+        List<ZPunkSampleWarp.TimeMapPoint> nextTimeMap = null;
         string result = "OFF / ORIGINAL AUDIO";
         if (_autoWarpEnabled && !_sourceBpmRhythmic && !_sourceBpmManual)
         {
@@ -1796,7 +2031,8 @@ public class KMusicPlayerUI : MonoBehaviour
                     if (generation != _warpGeneration) return;
                     _warpProgress = Mathf.Clamp01(value);
                     _warpStage = stage;
-                }, _beatAlignFromHead ? _beatAlignStart01 : -1f));
+                }, _beatAlignFromHead ? _beatAlignStart01 : -1f,
+                map => { nextTimeMap = map; }));
             if (generation != _warpGeneration)
             {
                 if (next != null && next != _clip) Destroy(next);
@@ -1804,8 +2040,15 @@ public class KMusicPlayerUI : MonoBehaviour
             }
             if (next == null) result = "ORIGINAL / " + result;
         }
+        if (generation != _warpGeneration)
+        {
+            if (next != null && next != _clip) Destroy(next);
+            yield break;
+        }
         AudioClip oldWarp = _warpedClip;
         _warpedClip = next != _clip ? next : null;
+        _activeWarpTimeMap = _warpedClip != null ? nextTimeMap : null;
+        _appliedWarpSignature = WarpSignature();
         _warpStatus = result;
         _warpProcessing = false;
         _warpProgress = _autoWarpEnabled && next != null ? 1f : 0f;
@@ -1835,11 +2078,15 @@ public class KMusicPlayerUI : MonoBehaviour
             _wave.SetTransientGuides(_transientHints);
             HighlightSelectedSlice();
         }
-        // The displayed PCM changed: re-detect against the waveform's real
-        // audio timeline so ghost guides and preview chop boundaries agree.
+        // NEVER rescan a rendered warp. The source's disk/memory-cached guides
+        // are mapped through the same curve used to render this waveform.
         if (oldWarp != _warpedClip) BeginTransientAnalysis();
         if (oldWarp != null && oldWarp != _clip && oldWarp != active)
-            Destroy(oldWarp, 5f);
+        {
+            var drum = FindObjectOfType<KMusicDrumSequencer>();
+            if (drum != null) drum.ReleaseRuntimeSampleReferences();
+            Destroy(oldWarp);
+        }
         if (generation == _warpGeneration) _warpJob = null;
     }
 
@@ -2268,7 +2515,7 @@ public class KMusicPlayerUI : MonoBehaviour
         RefreshImportedTrackList();
         RefreshTrackBrowserList();
         int serial = ++_sampleRequestSerial;
-        StartCoroutine(CoLoadImportedTrackByPath(importedAbsolutePath, true, serial));
+        StartImportedLoad(importedAbsolutePath, serial);
         UpdateTrackTitle("IMPORTED SAMPLE");
     }
 

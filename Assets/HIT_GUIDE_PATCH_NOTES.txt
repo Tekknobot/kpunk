@@ -1,0 +1,56 @@
+ZPUNK - Persistent Original-Sample Amber Guide Patch
+----------------------------------------------------
+Patched code:
+  Scripts/KMusicPlayerUI.cs
+  Scripts/DAW/ZPunkSampleAnalysisCache.cs
+  Scripts/DAW/ZPunkSampleWarp.cs
+Added optional Editor-only diagnostic:
+  Scripts/Editor/ZPunkHitCacheSelfTest.cs
+
+CHANGES
+- Original (unwarped) sample is the only source for transient detection and
+  the only persistent guide cache. No separate scans for tempo/BPM/warp variants.
+- The warp renderer reports its exact normalized source-to-output time map.
+  Cached original guides are remapped using this map, including HEAD alignment.
+- Project reloads use the bounded disk cache, and BPM changes reuse in-memory
+  original guides. Overlapping analysis jobs for the same active source aren't
+  restarted because a warp completes.
+- Hiding the player panel does not cancel an in-flight analysis, allowing
+  completed results to be cached while another tab is visible.
+- File-backed audio is invalidated by file length and last-write timestamp.
+  URI and bundled sources use short PCM probes to detect most content changes
+  even when they have the same duration. This is a sampled fingerprint rather
+  than a cryptographic hash of the entire audio file.
+- CHOPS manual slice marker project data is unchanged and separate from the
+  automatic amber guide cache.
+- Cache format bumped to 3; the first load after this patch is a one-time MISS.
+
+DIAGNOSTICS
+In Unity Editor Console or a Development Build player log, search:
+  [ZPUNK/HitCache] MISS    : first load / changed source / expired entry
+  [ZPUNK/HitCache] ANALYZE : original source scan started
+  [ZPUNK/HitCache] SAVE    : initial original guide result saved to disk
+  [ZPUNK/HitCache] HIT     : reopened source loaded guides from disk
+  [ZPUNK/HitCache] REUSE   : guides reused in memory
+  [ZPUNK/HitCache] REMAP   : cached guides moved through exact warp mapping
+  [ZPUNK/HitCache] IN-FLIGHT : existing source analysis kept running
+Logs are compiled out for non-development mobile builds.
+
+EDITOR TEST
+  Unity menu -> ZPUNK -> Diagnostics -> Test Amber Marker Cache
+  Expected result: [ZPUNK/HitCache] SELF TEST PASS
+
+DEVICE TEST
+1. Load a sample and allow amber analysis to finish: MISS / ANALYZE / SAVE.
+2. Change BPM or warp on/off: REUSE / REMAP, and NO new ANALYZE.
+3. Switch to another project/sample, then reopen first: HIT, no ANALYZE.
+4. Restart app and reopen the same sample: HIT.
+5. Replace the imported source file: MISS / ANALYZE / SAVE.
+6. Verify guide positions visually, especially with HEAD beat-alignment.
+
+LIMITATIONS
+Unity/device runtime compilation and profiling cannot be verified here.
+Sampled PCM signatures for MediaStore/resource sources may miss an edit in
+unsampled regions if audio duration and format are unchanged. For local file
+sources, file metadata invalidation is used. A full hash of a large sample is
+intentionally avoided to keep loading lightweight.

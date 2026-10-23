@@ -37,6 +37,48 @@ namespace ZPunk.DAW
         // These are *suggested* attack locations, not stem separation. Classification
         // is based on low-frequency versus broadband onset energy and is intentionally
         // displayed as an estimate, not a guaranteed kick/snare identification.
+        /// <summary>
+        /// Original-to-output sample positions produced by the actual warp curve.
+        /// Normalized coordinates let amber guides follow beat alignment without
+        /// scanning the rendered audio a second time.
+        /// </summary>
+        public struct TimeMapPoint
+        {
+            public float source01;
+            public float destination01;
+            public TimeMapPoint(float source, float destination)
+            {
+                source01 = source;
+                destination01 = destination;
+            }
+        }
+
+        /// <summary>
+        /// Warp already computed the exact piecewise-linear timing map: reuse it
+        /// to move cached source hit guides onto the displayed sample timeline.
+        /// The original guide coordinates are never mutated.
+        /// </summary>
+        public static List<TransientHint> RemapTransientHints(
+            List<TransientHint> original, List<TimeMapPoint> map)
+        {
+            if (original == null) return new List<TransientHint>();
+            if (map == null || map.Count < 2) return new List<TransientHint>(original);
+            var remapped = new List<TransientHint>(original.Count);
+            int segment = 0;
+            foreach (var hit in original)
+            {
+                float source = Mathf.Clamp01(hit.position01);
+                while (segment + 2 < map.Count && source > map[segment + 1].source01)
+                    segment++;
+                TimeMapPoint left = map[segment], right = map[segment + 1];
+                float fraction = Mathf.Clamp01((source - left.source01) /
+                    Mathf.Max(.0000001f, right.source01 - left.source01));
+                float destination = Mathf.Lerp(left.destination01, right.destination01, fraction);
+                remapped.Add(new TransientHint(Mathf.Clamp01(destination), hit.kick, hit.strength));
+            }
+            return remapped;
+        }
+
         public struct TransientHint
         {
             public float position01;
@@ -303,7 +345,8 @@ namespace ZPunk.DAW
         public static IEnumerator StretchAsync(AudioClip original, float sourceBpm,
             float targetBpm, Action<AudioClip, string> complete,
             Func<bool> cancelled = null, Action<float, string> progress = null,
-            float beatAnchor01 = -1f)
+            float beatAnchor01 = -1f,
+            Action<List<TimeMapPoint>> timeMapReady = null)
         {
             if (original == null) { complete?.Invoke(null, "NO SAMPLE"); yield break; }
             if (sourceBpm <= 0f || targetBpm <= 0f)
@@ -313,10 +356,30 @@ namespace ZPunk.DAW
             if (channels < 1 || channels > 2 || original.samples < 1024 || sampleRate < 1)
             { complete?.Invoke(null, "UNSUPPORTED AUDIO FORMAT"); yield break; }
             float ratio = Mathf.Clamp(sourceBpm / targetBpm, .25f, 4f);
+            // Don't resynthesize minutes of PCM when the tempo already matches.
+            // Explicit HEAD alignment still needs the full beat-grid algorithm.
+            if (beatAnchor01 < 0f && Mathf.Abs(ratio - 1f) < .0005f)
+            {
+                progress?.Invoke(1f, "TEMPO ALREADY MATCHED");
+                complete?.Invoke(original, "ORIGINAL / TEMPO MATCHED");
+                yield break;
+            }
             long longCount = (long)Math.Round(original.samples * (double)ratio);
             if (longCount > int.MaxValue - 4096 || longCount < 1024)
             { complete?.Invoke(null, "EXCEEDS UNITY AUDIOCLIP LIMIT"); yield break; }
             int outputCount = (int)longCount;
+            // Native AudioClip memory is additive: the source, destination and
+            // CHOPS voices may coexist during rendering. On low-RAM phones,
+            // preserving the original is safer than an oversized allocation.
+            long inputBytes = (long)original.samples * channels * sizeof(float);
+            long outputBytes = (long)outputCount * channels * sizeof(float);
+            long budget = SystemInfo.systemMemorySize > 0 && SystemInfo.systemMemorySize <= 3072
+                ? 160L * 1024L * 1024L : 320L * 1024L * 1024L;
+            if (inputBytes + outputBytes > budget)
+            {
+                complete?.Invoke(null, "WARP SKIPPED / AUDIO MEMORY LIMIT");
+                yield break;
+            }
 
             // Spectral-band energy onsets, analyzed in bounded buffers. No large
             // full-song PCM arrays or allocations on the audio callback thread.
@@ -662,6 +725,16 @@ namespace ZPunk.DAW
                 complete?.Invoke(null, "PCM READ/WRITE FAILED");
                 yield break;
             }
+            // The map is delivered only for a successfully rendered warp. A
+            // cancelled/failed stretch must never replace the prior map.
+            if (timeMapReady != null)
+            {
+                var map = new List<TimeMapPoint>(points.Count);
+                for (int i = 0; i < points.Count; i++)
+                    map.Add(new TimeMapPoint(points[i].source / (float)original.samples,
+                        points[i].destination / (float)outputCount));
+                timeMapReady(map);
+            }
             progress?.Invoke(1f, anchoredBeats ? "BEAT ALIGN COMPLETE" : "GRID WARP COMPLETE");
             if (anchoredBeats)
             {
@@ -739,7 +812,7 @@ namespace ZPunk.DAW
             List<WarpPoint> points, float[] result, float[] weights,
             Func<bool> cancelled)
         {
-            const int radius = 128;
+            const int radius = 96;
             int available = Math.Max(0, inputFrames - WindowSize);
             for (int outPos = 0; outPos < outFrames; outPos += SynthesisHop)
             {

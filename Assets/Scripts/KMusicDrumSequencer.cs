@@ -307,6 +307,26 @@ public class KMusicDrumSequencer : MonoBehaviour
         src.SetScheduledEndTime(dspTime + duration);
     }
 
+    /// <summary>
+    /// Detach imported/warped samples before their native PCM allocations are
+    /// destroyed. CHOPS can still have pooled sources holding previous projects.
+    /// The next sample request reloads the matching new revision normally.
+    /// </summary>
+    public void ReleaseRuntimeSampleReferences()
+    {
+        foreach (var source in _sampleVoicePool)
+        {
+            if (source == null) continue;
+            source.Stop();
+            source.clip = null;
+        }
+        _appliedClip = null;
+        _appliedResourcesPath = null;
+        _appliedRevisionSeen = -1;
+        _didLoadAppliedChops = false;
+        _dawChopVoiceCursor = 0;
+    }
+
     /// <summary>Cancel any scheduled DAW voices on stop, seek or load.</summary>
     public void StopDAWVoices()
     {

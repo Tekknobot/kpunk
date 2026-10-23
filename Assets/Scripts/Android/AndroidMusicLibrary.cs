@@ -230,28 +230,30 @@ namespace KMusic.Android
             string url = "file://" + path.Replace("\\", "/");
             AudioType type = GuessAudioTypeFromPath(path);
 
-            using UnityWebRequest req = UnityWebRequestMultimedia.GetAudioClip(url, type);
-
-            // ✅ Critical for chopping/slicing:
-            // We need a fully-decompressed PCM clip so timeSamples seeking and slicing behaves.
-            // UnityWebRequest audio clips can default to streaming/compressed on some platforms.
-            if (req.downloadHandler is DownloadHandlerAudioClip dh)
+            // Android's content:// bridge creates a temporary copy for decoding.
+            // Delete it even if the UnityWebRequest fails or load is cancelled.
+            try
             {
-                dh.streamAudio = false;
-                dh.compressed = false;
+                using UnityWebRequest req = UnityWebRequestMultimedia.GetAudioClip(url, type);
+                if (req.downloadHandler is DownloadHandlerAudioClip dh)
+                {
+                    dh.streamAudio = false;
+                    dh.compressed = false;
+                }
+                yield return req.SendWebRequest();
+                if (req.result != UnityWebRequest.Result.Success)
+                {
+                    Debug.LogWarning("[AndroidMusicLibrary] LoadAudioClip failed: " + req.error + " url=" + url);
+                    onLoaded?.Invoke(null);
+                    yield break;
+                }
+                onLoaded?.Invoke(DownloadHandlerAudioClip.GetContent(req));
             }
-
-            yield return req.SendWebRequest();
-
-            if (req.result != UnityWebRequest.Result.Success)
+            finally
             {
-                Debug.LogWarning("[AndroidMusicLibrary] LoadAudioClip failed: " + req.error + " url=" + url);
-                onLoaded?.Invoke(null);
-                yield break;
+                try { if (File.Exists(path)) File.Delete(path); }
+                catch (Exception e) { Debug.LogWarning("[AndroidMusicLibrary] Temporary audio cleanup failed: " + e.Message); }
             }
-
-            var clip = DownloadHandlerAudioClip.GetContent(req);
-            onLoaded?.Invoke(clip);
         }
 
         private static AudioType GuessAudioTypeFromPath(string path)
