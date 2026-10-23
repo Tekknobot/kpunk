@@ -114,7 +114,8 @@ namespace ZPunk.DAW
         }
 
         public static IEnumerator AnalyzeTransientHints(AudioClip clip,
-            Action<List<TransientHint>> complete, Func<bool> cancelled = null)
+            Action<List<TransientHint>> complete, Func<bool> cancelled = null,
+            Action<float> progress = null)
         {
             var hints = new List<TransientHint>();
             if (clip == null || clip.samples < 1024 || clip.frequency <= 0 ||
@@ -131,6 +132,7 @@ namespace ZPunk.DAW
             float lowAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * 190f / rate);
             float presenceAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * 1800f / rate);
             var candidates = new List<AttackCandidate>();
+            progress?.Invoke(0f);
             for (int offset = 0; offset < clip.samples; offset += chunkFrames)
             {
                 if (cancelled != null && cancelled()) yield break;
@@ -163,6 +165,7 @@ namespace ZPunk.DAW
                     lowEnergy = highEnergy = 0f;
                     accumulator = 0;
                 }
+                progress?.Invoke(.84f * Mathf.Clamp01((offset + length) / (float)clip.samples));
                 yield return null; // bounded PCM work on the main thread
             }
             float threshold = Mathf.Max(.0015f, sumStrength /
@@ -189,6 +192,7 @@ namespace ZPunk.DAW
                 picked.RemoveRange(maxHints, picked.Count - maxHints);
                 picked.Sort((a, b) => a.frame.CompareTo(b.frame));
             }
+            progress?.Invoke(.86f);
             float[] detailPcm = null, detailEnvelope = null;
             int lastFrame = -minimumSpacing;
             for (int i = 0; i < picked.Count; i++)
@@ -201,8 +205,13 @@ namespace ZPunk.DAW
                 hints.Add(new TransientHint(Mathf.Clamp01(attackFrame / (float)clip.samples),
                     hit.kick, Mathf.Clamp(hit.strength / Mathf.Max(.001f, threshold * 2f), .1f, 2f)));
                 lastFrame = attackFrame;
-                if ((i & 31) == 31) yield return null;
+                if ((i & 31) == 31 || i == picked.Count - 1)
+                {
+                    progress?.Invoke(.86f + .14f * (i + 1) / Mathf.Max(1f, picked.Count));
+                    if ((i & 31) == 31) yield return null;
+                }
             }
+            progress?.Invoke(1f);
             complete?.Invoke(hints);
         }
 
@@ -384,7 +393,7 @@ namespace ZPunk.DAW
                 float targetAnchor = sourceAnchor * ratio;
                 int firstBeat = Mathf.CeilToInt((0f - sourceAnchor) / sourceBeat);
                 int lastBeat = Mathf.FloorToInt((original.samples - 1f - sourceAnchor) / sourceBeat);
-                int beatWindow = Mathf.RoundToInt(Mathf.Min(sampleRate * .105f, sourceBeat * .19f));
+                int beatWindow = Mathf.RoundToInt(Mathf.Min(sampleRate * .055f, sourceBeat * .12f));
                 int searchBins = Mathf.Max(1, beatWindow / AnalysisHop + 2);
                 int edgeGuard = Mathf.RoundToInt(sampleRate * .060f);
                 var proposed = new List<WarpPoint>();
@@ -449,8 +458,8 @@ namespace ZPunk.DAW
                         Mathf.Max(1f, proposedPoint.source - previous.source);
                     float endRatio = (outputCount - proposedPoint.destination) /
                         Mathf.Max(1f, original.samples - proposedPoint.source);
-                    if (localRatio < ratio * .66f || localRatio > ratio * 1.52f ||
-                        endRatio < ratio * .66f || endRatio > ratio * 1.52f) continue;
+                    if (localRatio < ratio * .82f || localRatio > ratio * 1.22f ||
+                        endRatio < ratio * .82f || endRatio > ratio * 1.22f) continue;
                     points.Add(proposedPoint);
                     anchoredAlignedCount++;
                 }
@@ -500,7 +509,7 @@ namespace ZPunk.DAW
             // Low-confidence audio is left on the normal zero-based beat grid.
             if (phaseTotal <= .0001f || peakPhaseScore / phaseTotal < .16f)
                 phaseFrames = 0f;
-            float maxSnapFrames = sampleRate * Mathf.Min(.075f, 9.6f / targetBpm);
+            float maxSnapFrames = sampleRate * Mathf.Min(.032f, 4.6f / targetBpm);
             int inputGuard = Mathf.RoundToInt(sampleRate * .1f);
             int lastDest = 0;
             for (int i = 2; i + 2 < strengths.Count; i++)
@@ -531,10 +540,10 @@ namespace ZPunk.DAW
                 float destinationDelta = snapped - previous.destination;
                 float localRatio = destinationDelta / Mathf.Max(1f, sourceDelta);
                 // Enforce monotonic, moderate stretch between neighboring hits.
-                if (localRatio < ratio * .67f || localRatio > ratio * 1.5f) continue;
+                if (localRatio < ratio * .85f || localRatio > ratio * 1.18f) continue;
                 float remainingRatio = (outputCount - snapped) /
                     Mathf.Max(1f, original.samples - sourceAt);
-                if (remainingRatio < ratio * .67f || remainingRatio > ratio * 1.5f) continue;
+                if (remainingRatio < ratio * .85f || remainingRatio > ratio * 1.18f) continue;
                 points.Add(new WarpPoint(sourceAt, snapped));
                 lastAccepted = sourceAt;
                 lastDest = snapped;
@@ -685,9 +694,9 @@ namespace ZPunk.DAW
             int outputStart, int outputFrames, int channels, int rate,
             List<WarpPoint> points, List<int> attacks, float[] output)
         {
-            int pre = Mathf.Max(32, Mathf.RoundToInt(.010f * rate));
-            int post = Mathf.Max(64, Mathf.RoundToInt(.045f * rate));
-            int fade = Mathf.Max(16, Mathf.RoundToInt(.008f * rate));
+            int pre = Mathf.Max(32, Mathf.RoundToInt(.014f * rate));
+            int post = Mathf.Max(64, Mathf.RoundToInt(.060f * rate));
+            int fade = Mathf.Max(16, Mathf.RoundToInt(.012f * rate));
             foreach (int attack in attacks)
             {
                 int center = Mathf.RoundToInt(MapSourceToOutput(points, attack));
@@ -748,12 +757,20 @@ namespace ZPunk.DAW
                         for (int j = 0; j < 256 && outPos + j < outFrames; j += 2)
                         {
                             int frame = outPos + j;
-                            float previous = result[frame * channels] /
-                                Mathf.Max(.00001f, weights[frame]);
-                            float incoming = input[Math.Min(inputFrames - 1, offset + j) * channels];
-                            dot += previous * incoming;
-                            energyA += previous * previous;
-                            energyB += incoming * incoming;
+                            int previousAt = frame * channels;
+                            int incomingAt = Math.Min(inputFrames - 1, offset + j) * channels;
+                            // Match the same source offset for both channels.
+                            // Avoid aligning stereo material from only the left
+                            // channel, which can smear hard-panned transients.
+                            for (int c = 0; c < channels; c++)
+                            {
+                                float previous = result[previousAt + c] /
+                                    Mathf.Max(.00001f, weights[frame]);
+                                float incoming = input[incomingAt + c];
+                                dot += previous * incoming;
+                                energyA += previous * previous;
+                                energyB += incoming * incoming;
+                            }
                         }
                         float score = dot / Mathf.Sqrt(Mathf.Max(.0000001f, energyA * energyB));
                         if (score > best) { best = score; position = offset; }

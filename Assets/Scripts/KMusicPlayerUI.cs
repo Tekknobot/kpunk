@@ -69,6 +69,37 @@ public class KMusicPlayerUI : MonoBehaviour
     // saved chop marker lists until the user explicitly adds/snaps a marker.
     private readonly List<ZPunkSampleWarp.TransientHint> _transientHints = new();
     private Coroutine _transientJob;
+    private bool _hitAnalysisBusy;
+    private float _hitAnalysisStartedAt;
+    private float _hitAnalysisProgress;
+    private float _hitAnalysisCompletedSeconds;
+    public bool DawHitAnalysisRunning => _hitAnalysisBusy;
+    public float DawHitAnalysisProgress => _hitAnalysisProgress;
+    public float DawHitAnalysisSeconds => DawHitAnalysisRunning
+        ? Mathf.Max(0f, Time.unscaledTime - _hitAnalysisStartedAt)
+        : _hitAnalysisCompletedSeconds;
+    public float DawHitAnalysisEta => _hitAnalysisProgress > .04f && DawHitAnalysisRunning
+        ? Mathf.Max(0f, DawHitAnalysisSeconds / _hitAnalysisProgress * (1f - _hitAnalysisProgress))
+        : -1f;
+    private bool _sourceBpmRhythmic;
+    private bool _sourceBpmManual;
+    private float _sourceBpmConfidence;
+    public string DawTrackBpmLabel => _clip == null ? "TRACK BPM / NO SAMPLE" :
+        _sourceBpm <= 0f ? "TRACK BPM / UNKNOWN" :
+        "TRACK " + _sourceBpm.ToString("0.#") + " BPM / " +
+        (_sourceBpmManual ? "MANUAL" : _sourceBpmRhythmic ?
+            "DETECTED " + Mathf.RoundToInt(_sourceBpmConfidence * 100f) + "% EST." :
+            "DURATION GUESS");
+    public string DawTrackBpmCompact => _clip == null ? "BPM --" :
+        _sourceBpm <= 0f ? "BPM ?" :
+        _sourceBpm.ToString("0.#") + " BPM" +
+        (_sourceBpmManual ? "" : _sourceBpmRhythmic ? " EST." : " ?");
+    public bool DawShowWaveGrid => _wave != null && _wave.ShowMusicalGrid;
+    public void DawToggleWaveGrid()
+    {
+        if (_wave == null) return;
+        _wave.ShowMusicalGrid = !_wave.ShowMusicalGrid;
+    }
     private int _transientRevision;
     private bool _transientSnapEnabled = true;
     // Stable beat-grid phase measured from the displayed audio. Retained for
@@ -78,12 +109,13 @@ public class KMusicPlayerUI : MonoBehaviour
     private bool _sliceHitsPending;
     private float _pendingSliceStart01;
     private string _sliceHitsFeedback = "";
-    public string DawHitSliceStatus => _warpProcessing ? "WAIT FOR WARP TO FINISH" :
-        _sliceHitsPending ? "WAITING FOR HIT ANALYSIS" :
-        _transientJob != null ? "ANALYZING HITS" :
+    public string DawHitSliceStatus => _sliceHitsPending ? "WAITING FOR HIT ANALYSIS" :
+        _warpProcessing ? "WAIT FOR WARP TO FINISH" :
+        _hitAnalysisBusy ? "ANALYZING HITS" :
         !string.IsNullOrEmpty(_sliceHitsFeedback) ? _sliceHitsFeedback :
         _clip == null ? "LOAD A SAMPLE" : _transientHints.Count == 0 ?
-        "NO HITS DETECTED" : "READY / " + _transientHints.Count + " HIT GUIDES";
+        "NO HITS DETECTED" : "READY / " + _transientHints.Count + " HIT GUIDES / " +
+        _hitAnalysisCompletedSeconds.ToString("0.0") + "s ANALYSIS";
 
     private void UpdateBeatGrid()
     {
@@ -140,11 +172,14 @@ public class KMusicPlayerUI : MonoBehaviour
         _transientRevision++;
         if (_transientJob != null) StopCoroutine(_transientJob);
         _transientJob = null;
+        _hitAnalysisBusy = false;
         _transientHints.Clear();
         _beatPhaseSeconds = 0f;
         _beatPhaseFound = false;
         _sliceHitsPending = false;
         _sliceHitsFeedback = "";
+        _hitAnalysisProgress = 0f;
+        _hitAnalysisCompletedSeconds = 0f;
         _wave?.SetTransientGuides(null);
         UpdateBeatGrid();
     }
@@ -156,6 +191,8 @@ public class KMusicPlayerUI : MonoBehaviour
         int revision = _transientRevision;
         AudioClip source = _clip;
         AudioClip analyzed = _warpedClip != null ? _warpedClip : _clip;
+        _hitAnalysisStartedAt = Time.unscaledTime;
+        _hitAnalysisBusy = true;
         _transientJob = StartCoroutine(ZPunkSampleWarp.AnalyzeTransientHints(analyzed, hits =>
         {
             if (_transientRevision != revision || source != _clip ||
@@ -173,7 +210,14 @@ public class KMusicPlayerUI : MonoBehaviour
             }
             _wave?.SetTransientGuides(_transientHints);
             UpdateBeatGrid();
+            _hitAnalysisProgress = 1f;
+            _hitAnalysisBusy = false;
+            _hitAnalysisCompletedSeconds = Mathf.Max(0f, Time.unscaledTime - _hitAnalysisStartedAt);
             _transientJob = null;
+            // Use rhythmic evidence from the *original* recording to estimate
+            // its tempo. Never overwrite a value deliberately set by the user.
+            if (analyzed == _clip && !_sourceBpmManual)
+                StartCoroutine(EstimateLoadedSourceTempo(_clip, revision));
             if (_sliceHitsPending)
             {
                 float requestedStart = _pendingSliceStart01;
@@ -181,7 +225,26 @@ public class KMusicPlayerUI : MonoBehaviour
                 SliceAtDetectedHits(requestedStart);
             }
         }, () => _transientRevision != revision || _clip != source ||
-            analyzed != (_warpedClip != null ? _warpedClip : _clip) || this == null));
+            analyzed != (_warpedClip != null ? _warpedClip : _clip) || this == null,
+            progress => { if (_transientRevision == revision) _hitAnalysisProgress = Mathf.Clamp01(progress); }));
+    }
+
+    private IEnumerator EstimateLoadedSourceTempo(AudioClip source, int revision)
+    {
+        // Leave a frame for the hit-guide completion UI before heavier analysis.
+        yield return null;
+        if (source == null || _clip != source || _transientRevision != revision || _sourceBpmManual)
+            yield break;
+        float confidence;
+        float estimate = ZPunkSampleWarp.EstimateRhythmicBpm(_transientHints,
+            source.length, CurrentSongTempo(), out confidence);
+        if (source != _clip || _transientRevision != revision || _sourceBpmManual)
+            yield break;
+        if (estimate <= 0f) yield break;
+        _sourceBpm = estimate;
+        _sourceBpmRhythmic = true;
+        _sourceBpmConfidence = confidence;
+        if (_autoWarpEnabled) QueueWarp(true);
     }
 
     // Beat-grid snapping remains available for manually moved markers.
@@ -381,7 +444,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_warpProcessing)
         { _sliceHitsFeedback = "WAIT FOR WARP TO FINISH"; return; }
         float start01 = Mathf.Clamp01(_scrub01);
-        if (_transientJob != null)
+        if (_hitAnalysisBusy)
         {
             // Capture the exact playhead at button press; a song can take time
             // to analyze on phones. The action runs when current PCM finishes.
@@ -600,6 +663,8 @@ public class KMusicPlayerUI : MonoBehaviour
             yield break;
         }
         _sourceBpm = bpm;
+        _sourceBpmRhythmic = true;
+        _sourceBpmConfidence = confidence;
         _tempoDetectionStatus = "AUTO BPM " + bpm.ToString("0.0") +
             " / " + Mathf.RoundToInt(confidence * 100f) + "% RHYTHMIC MATCH";
         QueueWarp(true);
@@ -1605,6 +1670,7 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (_clip == null) return;
         _sourceBpm = Mathf.Clamp((_sourceBpm > 0 ? _sourceBpm : CurrentSongTempo()) + delta, 40f, 240f);
+        _sourceBpmManual = true;
         _sourceBpm = Mathf.Round(_sourceBpm * 10f) / 10f;
         QueueWarp(true);
     }
@@ -1613,6 +1679,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null) return;
         _sourceBpm = Mathf.Round(Mathf.Clamp(_sourceBpm * scale,
             40f, 240f) * 10f) / 10f;
+        _sourceBpmManual = true;
         _tempoDetectionStatus = "SOURCE BPM ADJUSTED / CHECK BY EAR";
         QueueWarp(true);
     }
@@ -1650,6 +1717,9 @@ public class KMusicPlayerUI : MonoBehaviour
         _tempoDetectionRunning = false;
         _tempoDetectionStatus = "";
         _sourceBpm = ZPunkSampleWarp.EstimateLoopBpm(_clip, CurrentSongTempo());
+        _sourceBpmRhythmic = false;
+        _sourceBpmManual = false;
+        _sourceBpmConfidence = 0f;
         _beatAlignFromHead = false; // a new sample needs a new first-beat anchor
         _beatAlignStart01 = 0f;
         UpdateBeatGrid();
@@ -1706,7 +1776,13 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         AudioClip next = null;
         string result = "OFF / ORIGINAL AUDIO";
-        if (_autoWarpEnabled)
+        if (_autoWarpEnabled && !_sourceBpmRhythmic && !_sourceBpmManual)
+        {
+            // The previous source BPM came from assumed loop length, not
+            // rhythmic evidence. Preserve PCM while hit/BPM analysis runs.
+            result = "ORIGINAL / BPM UNCONFIRMED";
+        }
+        else if (_autoWarpEnabled)
         {
             _warpStatus = "WARPING";
             yield return StartCoroutine(ZPunkSampleWarp.StretchAsync(_clip,

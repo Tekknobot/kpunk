@@ -21,6 +21,10 @@ namespace ZPunk.DAW
             new Color(.35f,.60f,.98f), new Color(.66f,.45f,.94f), new Color(.24f,.82f,.69f)
         };
         private VisualElement root, canvas, gridScrollContainer, chips, labelViewport, labelColumn;
+        // Note hit targets sit ABOVE (not inside) the ScrollView. This prevents
+        // ScrollView's touch pan manipulator from taking ownership of note drags.
+        private VisualElement noteTouchLayer;
+        private readonly List<MidiNoteTouchTarget> midiNoteTouchTargets = new List<MidiNoteTouchTarget>();
         // This ruler is outside the note ScrollView, so vertical swipes never hide the bar positions.
         private VisualElement rulerGutter, rulerContent, rulerPlayhead;
         private readonly List<VisualElement> pitchRowBackgrounds = new List<VisualElement>();
@@ -41,7 +45,9 @@ namespace ZPunk.DAW
         private VisualElement editorPlayhead;
         private VisualElement samplerPage, samplerWave;
         private ScrollView samplerScroll;
-        private Label samplerSelectedMarker, samplerHitSliceStatus;
+        private Label samplerSelectedMarker, samplerHitSliceStatus, samplerBpmLabel, samplerHitProgressLabel;
+        private VisualElement samplerHitProgressTrack, samplerHitProgressFill;
+        private Button samplerGridButton;
         private Button samplerSnapButton;
         private readonly List<Button> samplerChopPads = new List<Button>();
         private readonly List<VisualElement> samplerChopRangeBars = new List<VisualElement>();
@@ -85,22 +91,39 @@ namespace ZPunk.DAW
         private float nextPlayheadPaint;
         private float lastPlayheadX = -1f;
 
+        // MIDI notes use two unambiguous gestures: drag the note body to move
+        // its position (snapped in time and pitch); drag ONLY the trailing/right
+        // handle to resize its duration. There is no leading/left-edge resize.
+        // Empty piano-roll space remains scrollable.
+        private enum MidiDragMode { Move, ResizeEnd }
+        private const float MidiGestureThreshold = 5f;
+        private const float MidiEdgeScrollZone = 34f;
+        private const float MidiMaxEdgeScrollPerTick = 11f; // 16 ms scheduler tick
         private sealed class Drag
         {
             public int index;
             public Vector2 start;
+            public Vector2 latestWorldPosition;
+            public Vector2 allowedScrollOffset;
             public long startTick;
             public long duration;
             public int pitch;
-            public bool resizing;
+            public MidiDragMode mode;
             public bool moved;
             public int pointerId;
             public VisualElement preview;
+            public VelocityDisplay display;
+            public IVisualElementScheduledItem edgeScroll;
             public long candidateTick;
             public long candidateDuration;
             public int candidatePitch;
         }
         private Drag drag;
+        private sealed class MidiNoteTouchTarget
+        {
+            public VisualElement body;
+            public int noteIndex;
+        }
         private sealed class Tap
         {
             public int pointerId;
@@ -315,8 +338,8 @@ namespace ZPunk.DAW
             gridScrollContainer = new VisualElement();
             gridScrollContainer.style.flexDirection = FlexDirection.Row;
             scroller.Add(gridScrollContainer);
-            scroller.verticalScroller.valueChanged += _ => SyncPianoRollLabels();
-            scroller.horizontalScroller.valueChanged += _ => SyncFixedRuler();
+            scroller.verticalScroller.valueChanged += _ => { SyncPianoRollLabels(); SyncMidiNoteTouchTargets(); };
+            scroller.horizontalScroller.valueChanged += _ => { SyncFixedRuler(); SyncMidiNoteTouchTargets(); };
             editorViewport.Add(scroller);
 
             // Fixed top ruler: identical on DRUMS, CHOPS and the 128-note piano roll.
@@ -351,6 +374,20 @@ namespace ZPunk.DAW
             rulerViewport.Add(rulerContent);
             fixedRuler.Add(rulerViewport);
             editorViewport.Add(fixedRuler);
+
+            // This transparent sibling of the ScrollView is only pickable at
+            // existing MIDI notes. Empty spaces still reach the ScrollView for
+            // normal scrolling and tap-to-add editing.
+            noteTouchLayer = new VisualElement { name = "ZPunkMidiNoteTouchOverlay" };
+            noteTouchLayer.style.position = Position.Absolute;
+            noteTouchLayer.style.left = 57;
+            noteTouchLayer.style.right = 0;
+            noteTouchLayer.style.top = 25;
+            noteTouchLayer.style.bottom = 0;
+            noteTouchLayer.style.overflow = Overflow.Hidden;
+            noteTouchLayer.pickingMode = PickingMode.Ignore;
+            noteTouchLayer.style.display = DisplayStyle.None;
+            editorViewport.Add(noteTouchLayer);
             root.Add(editorViewport);
 
             var velocityRow = new VisualElement();
@@ -422,7 +459,7 @@ namespace ZPunk.DAW
             selectedInfo.style.unityTextAlign = TextAnchor.MiddleRight;
             velocityRow.Add(selectedInfo);
             root.Add(velocityRow);
-            var footer = Txt("TAP: add/remove step  |  HOLD active step: edit velocity  |  DRAG notes: move/resize",10,Muted);
+            var footer = Txt("TAP: add/remove  |  DRAG NOTE: move steps / pitch  |  RIGHT END: resize  |  EDGE: scroll",10,Muted);
             footer.style.whiteSpace = WhiteSpace.Normal;
             footer.style.marginTop = 5;
             footer.style.marginBottom = 8;
@@ -457,17 +494,22 @@ namespace ZPunk.DAW
             heading.style.unityFontStyleAndWeight = FontStyle.Bold;
             heading.style.flexShrink = 1;
             headingRow.Add(heading);
-            // An explicit exit remains available even without the obsolete
-            // BACK / previous / next sample toolbar.
-            var done = Btn("DONE", () => ShowSampler(false), 62);
-            done.style.height = 35;
-            headingRow.Add(done);
+            heading.style.flexGrow = 1;
+            heading.style.minWidth = 0;
+            var back = Btn("BACK", () => ShowSampler(false), 62);
+            back.style.height = 38;
+            back.style.marginRight = 6;
+            headingRow.Add(back);
+            var browse = Btn("BROWSE", () => { FindSampler(); samplePlayer?.DawOpenBrowser(); }, 78);
+            browse.style.height = 38;
+            browse.style.marginRight = 0;
+            headingRow.Add(browse);
             samplerPage.Add(headingRow);
 
             var sampleRow = new VisualElement();
             sampleRow.style.flexDirection = FlexDirection.Row;
             sampleRow.style.alignItems = Align.Center;
-            sampleRow.style.height = 45;
+            sampleRow.style.height = 36;
             sampleRow.style.marginBottom = 6;
             samplerTitle = Txt("NO SAMPLE", 12, Accent);
             samplerTitle.style.flexGrow = 1;
@@ -477,9 +519,11 @@ namespace ZPunk.DAW
             samplerTitle.style.overflow = Overflow.Hidden;
             samplerTitle.style.textOverflow = TextOverflow.Ellipsis;
             sampleRow.Add(samplerTitle);
-            var browse = Btn("BROWSE", () => { FindSampler(); samplePlayer?.DawOpenBrowser(); }, 83);
-            browse.style.marginRight = 0;
-            sampleRow.Add(browse);
+            samplerBpmLabel = Txt("TRACK BPM / UNKNOWN", 10, Muted);
+            samplerBpmLabel.style.flexShrink = 0;
+            samplerBpmLabel.style.marginLeft = 8;
+            samplerBpmLabel.style.unityTextAlign = TextAnchor.MiddleRight;
+            sampleRow.Add(samplerBpmLabel);
             samplerPage.Add(sampleRow);
 
             var primaryRow = new VisualElement();
@@ -494,6 +538,7 @@ namespace ZPunk.DAW
                 RefreshSampler();
             }, 110);
             sliceHits.style.flexGrow = 1;
+            sliceHits.style.flexBasis = new Length(0, LengthUnit.Pixel);
             sliceHits.style.minWidth = 0;
             sliceHits.style.height = 50;
             sliceHits.style.backgroundColor = Accent;
@@ -507,6 +552,9 @@ namespace ZPunk.DAW
                 RefreshSampler();
             }, 105);
             samplerWarpButton.style.height = 50;
+            samplerWarpButton.style.flexGrow = 1;
+            samplerWarpButton.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            samplerWarpButton.style.minWidth = 0;
             samplerWarpButton.style.marginRight = 0;
             samplerWarpButton.style.fontSize = 11;
             primaryRow.Add(samplerWarpButton);
@@ -514,8 +562,23 @@ namespace ZPunk.DAW
 
             samplerHitSliceStatus = Txt("SET HEAD ON A MAIN HIT, THEN SLICE HITS", 10, Muted);
             samplerHitSliceStatus.style.whiteSpace = WhiteSpace.Normal;
-            samplerHitSliceStatus.style.marginBottom = 5;
+            samplerHitSliceStatus.style.marginBottom = 3;
             samplerPage.Add(samplerHitSliceStatus);
+            // Amber guide detection runs asynchronously. Show real elapsed time
+            // and measured progress; ETA is explicitly approximate.
+            samplerHitProgressLabel = Txt("", 10, new Color(.98f, .7f, .37f));
+            samplerHitProgressLabel.style.display = DisplayStyle.None;
+            samplerPage.Add(samplerHitProgressLabel);
+            samplerHitProgressTrack = Box(new Color(.06f, .08f, .12f), 3);
+            samplerHitProgressTrack.style.height = 4;
+            samplerHitProgressTrack.style.marginBottom = 4;
+            samplerHitProgressTrack.style.display = DisplayStyle.None;
+            samplerHitProgressFill = new VisualElement();
+            samplerHitProgressFill.style.height = Length.Percent(100);
+            samplerHitProgressFill.style.backgroundColor = new Color(.98f, .67f, .28f);
+            samplerHitProgressFill.style.width = Length.Percent(0);
+            samplerHitProgressTrack.Add(samplerHitProgressFill);
+            samplerPage.Add(samplerHitProgressTrack);
 
             // Transport belongs to the waveform being auditioned; the main
             // application play/stop controls above remain unchanged.
@@ -526,8 +589,10 @@ namespace ZPunk.DAW
             var samplePlay = Btn("PLAY", () => { FindSampler(); samplePlayer?.DawPlaySample(); }, 58);
             var sampleStop = Btn("STOP", () => { FindSampler(); samplePlayer?.DawStopSample(); }, 60);
             samplePlay.style.flexGrow = 1;
+            samplePlay.style.flexBasis = new Length(0, LengthUnit.Pixel);
             samplePlay.style.minWidth = 0;
             sampleStop.style.flexGrow = 1;
+            sampleStop.style.flexBasis = new Length(0, LengthUnit.Pixel);
             sampleStop.style.minWidth = 0;
             samplePlay.style.backgroundColor = new Color(.12f, .33f, .31f);
             transport.Add(samplePlay);
@@ -539,11 +604,14 @@ namespace ZPunk.DAW
                 RefreshSampler();
             }, 85);
             samplerSnapButton.style.flexGrow = 1;
+            samplerSnapButton.style.flexBasis = new Length(0, LengthUnit.Pixel);
             samplerSnapButton.style.minWidth = 0;
             samplerSnapButton.style.fontSize = 11;
             transport.Add(samplerSnapButton);
             var full = Btn("FULL", () => { FindSampler(); samplePlayer?.DawShowFullSample(); RefreshSampler(); }, 53);
-            full.style.minWidth = 53;
+            full.style.flexGrow = 1;
+            full.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            full.style.minWidth = 0;
             full.style.marginRight = 0;
             transport.Add(full);
             samplerPage.Add(transport);
@@ -614,13 +682,19 @@ namespace ZPunk.DAW
             var zoomRow = new VisualElement();
             zoomRow.style.flexDirection = FlexDirection.Row;
             zoomRow.style.alignItems = Align.Center;
-            zoomRow.style.height = 40;
-            zoomRow.Add(Btn("- ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(false); }, 77));
-            zoomRow.Add(Btn("+ ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(true); }, 77));
-            var zoomHint = Txt("DRAG HEAD TO A HIT", 10, Muted);
-            zoomHint.style.flexGrow = 1;
-            zoomHint.style.unityTextAlign = TextAnchor.MiddleRight;
-            zoomRow.Add(zoomHint);
+            zoomRow.style.height = 45;
+            var zoomOut = Btn("- ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(false); }, 77);
+            var zoomIn = Btn("+ ZOOM", () => { FindSampler(); samplePlayer?.DawZoomSample(true); }, 77);
+            samplerGridButton = Btn("GRID ON", () => { FindSampler(); samplePlayer?.DawToggleWaveGrid(); RefreshSampler(); }, 77);
+            foreach (var button in new[] { zoomOut, zoomIn, samplerGridButton })
+            {
+                button.style.flexGrow = 1;
+                button.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                button.style.minWidth = 0;
+                button.style.marginRight = 5;
+                zoomRow.Add(button);
+            }
+            samplerGridButton.style.marginRight = 0;
             samplerPage.Add(zoomRow);
 
             var editRow = new VisualElement();
@@ -1256,12 +1330,14 @@ namespace ZPunk.DAW
             FindSampler();
             if (samplerTitle != null)
                 samplerTitle.text = samplePlayer != null ? samplePlayer.DawSampleName : "SAMPLER UNAVAILABLE";
+            if (samplerBpmLabel != null)
+                samplerBpmLabel.text = samplePlayer != null ? samplePlayer.DawTrackBpmCompact : "BPM --";
             if (samplerWarpButton != null)
                 samplerWarpButton.text = samplePlayer != null && samplePlayer.DawAutoWarp ? "WARP ON" : "WARP OFF";
             if (samplerWarpLabel != null)
                 samplerWarpLabel.text = samplePlayer != null ?
                     (samplePlayer.DawAutoWarp ?
-                        "WARP / SOURCE " + samplePlayer.DawSourceBpm.ToString("0.#") + " BPM / " + samplePlayer.DawWarpStatus :
+                        "WARP / " + samplePlayer.DawTrackBpmLabel + " / " + samplePlayer.DawWarpStatus :
                         "ORIGINAL AUDIO / NO TIME STRETCH") :
                     "NO SAMPLE";
             bool warpBusy = samplePlayer != null && samplePlayer.DawWarpProcessing;
@@ -1296,7 +1372,32 @@ namespace ZPunk.DAW
                 samplerSelectedMarker.text = samplePlayer != null ? samplePlayer.DawSelectedMarkerLabel : "NO MARKER SELECTED";
             if (samplerHitSliceStatus != null)
                 samplerHitSliceStatus.text = samplePlayer != null ?
-                    samplePlayer.DawHitSliceStatus + "  /  UP TO 16 PADS  /  FROM HEAD" : "NO SAMPLE";
+                    samplePlayer.DawHitSliceStatus + " / UP TO 16 PADS" : "NO SAMPLE";
+            bool hitsBusy = samplePlayer != null && samplePlayer.DawHitAnalysisRunning;
+            if (samplerHitProgressLabel != null)
+            {
+                samplerHitProgressLabel.style.display = hitsBusy ? DisplayStyle.Flex : DisplayStyle.None;
+                if (hitsBusy)
+                {
+                    float eta = samplePlayer.DawHitAnalysisEta;
+                    samplerHitProgressLabel.text = "AMBER HIT GUIDES / " +
+                        Mathf.RoundToInt(samplePlayer.DawHitAnalysisProgress * 100f) + "% / " +
+                        samplePlayer.DawHitAnalysisSeconds.ToString("0.0") + "s ELAPSED" +
+                        (eta >= 0f ? " / ~" + eta.ToString("0") + "s LEFT" : "");
+                }
+            }
+            if (samplerHitProgressTrack != null)
+                samplerHitProgressTrack.style.display = hitsBusy ? DisplayStyle.Flex : DisplayStyle.None;
+            if (samplerHitProgressFill != null)
+                samplerHitProgressFill.style.width = Length.Percent(hitsBusy ?
+                    samplePlayer.DawHitAnalysisProgress * 100f : 0f);
+            if (samplerGridButton != null)
+            {
+                bool enabled = samplePlayer != null && samplePlayer.DawShowWaveGrid;
+                samplerGridButton.text = enabled ? "GRID ON" : "GRID OFF";
+                samplerGridButton.style.backgroundColor = enabled ? new Color(.12f, .31f, .29f) : Raised;
+                samplerGridButton.style.color = enabled ? Accent : Ink;
+            }
             if (samplerSnapButton != null)
                 samplerSnapButton.text = samplePlayer != null && samplePlayer.DawTransientSnapEnabled
                     ? "HIT SNAP" : "SNAP OFF";
@@ -1976,41 +2077,320 @@ namespace ZPunk.DAW
             Changed();
         }
 
-        // Move and resize notes with a live, snapped preview. The visual
-        // rectangle is updated without rebuilding the ScrollView or losing touch
-        // capture. SongData is committed exactly once, on finger release.
+        // Use the grid's local coordinates, which continue advancing correctly
+        // while edge auto-scroll shifts the viewport beneath a stationary finger.
+        // The starting drag mode is fixed on pointer-down: body=move, end=resize.
         private void UpdateMidiDragPreview(Drag d, Vector2 localPosition)
         {
-            if (d == null || d.preview == null) return;
-            int stepDelta = Mathf.RoundToInt((localPosition.x - d.start.x) / StepW);
-            long endOfGrid = Math.Max(quantum, (long)steps * quantum);
+            if (d == null) return;
+            float dx = localPosition.x - d.start.x;
+            float dy = localPosition.y - d.start.y;
+            int stepDelta = Mathf.RoundToInt(dx / StepW);
+            long gridEnd = Math.Max(quantum, (long)steps * quantum);
             long newStart = d.startTick;
             long newDuration = d.duration;
             int newPitch = d.pitch;
-            if (d.resizing)
-                newDuration = Math.Max(quantum, Math.Min(endOfGrid - d.startTick,
-                    d.duration + stepDelta * quantum));
-            else
+
+            if (d.mode == MidiDragMode.ResizeEnd)
             {
-                newStart = Math.Max(0L, Math.Min(endOfGrid - d.duration,
-                    d.startTick + stepDelta * quantum));
-                newPitch = Mathf.Clamp(d.pitch -
-                    Mathf.RoundToInt((localPosition.y - d.start.y) / RowH), 0, 127);
+                // Only the right end moves. The start and pitch stay anchored.
+                newDuration = Math.Max(quantum, Math.Min(gridEnd - d.startTick,
+                    d.duration + stepDelta * quantum));
             }
+            else // MidiDragMode.Move
+            {
+                // Move the WHOLE note by sixteenth-note steps; length stays fixed.
+                // The same gesture can also shift pitch without moving the viewport.
+                long maxStart = Math.Max(0L, gridEnd - d.duration);
+                newStart = Math.Max(0L, Math.Min(maxStart,
+                    d.startTick + stepDelta * quantum));
+                newPitch = Mathf.Clamp(d.pitch - Mathf.RoundToInt(dy / RowH), 0, 127);
+            }
+
             d.candidateTick = newStart;
             d.candidateDuration = newDuration;
             d.candidatePitch = newPitch;
+            if (d.preview == null) return;
+            float width = Mathf.Max(13f, (float)newDuration / quantum * StepW - 2f);
             d.preview.style.left = (float)newStart / quantum * StepW + 1f;
             d.preview.style.top = RowForPitch(newPitch) * RowH + 4f;
-            d.preview.style.width = Mathf.Max(13f, (float)newDuration / quantum * StepW - 2f);
+            d.preview.style.width = width;
+            SyncMidiNoteTouchTargets();
+            // Keep the velocity meter and number visually coherent as the note changes width.
+            if (d.display != null)
+            {
+                d.display.meter.style.width = Mathf.Max(1f, (width - 6f) *
+                    Mathf.Clamp(d.display.velocity, 1, 127) / 127f);
+                if (d.display.number != null)
+                    d.display.number.style.display = width >= 28f ? DisplayStyle.Flex : DisplayStyle.None;
+            }
         }
 
         private void RestoreMidiDragPreview(Drag d)
         {
             if (d == null || d.preview == null) return;
+            float width = Mathf.Max(13f, (float)d.duration / quantum * StepW - 2f);
             d.preview.style.left = (float)d.startTick / quantum * StepW + 1f;
             d.preview.style.top = RowForPitch(d.pitch) * RowH + 4f;
-            d.preview.style.width = Mathf.Max(13f, (float)d.duration / quantum * StepW - 2f);
+            d.preview.style.width = width;
+            if (d.display != null)
+            {
+                d.display.meter.style.width = Mathf.Max(1f, (width - 6f) *
+                    Mathf.Clamp(d.display.velocity, 1, 127) / 127f);
+                if (d.display.number != null)
+                    d.display.number.style.display = width >= 28f ? DisplayStyle.Flex : DisplayStyle.None;
+            }
+        }
+
+        // UI Toolkit's ScrollView has its own touch pan manipulator. Capture on
+        // the note plane and reassert only this intentional offset while editing,
+        // so vertical note dragging never scrolls the entire 128-key keyboard.
+        private void KeepMidiDragViewportLocked()
+        {
+            if (drag == null || scroller == null) return;
+            if ((scroller.scrollOffset - drag.allowedScrollOffset).sqrMagnitude > .1f)
+                scroller.scrollOffset = drag.allowedScrollOffset;
+        }
+
+        private static float MidiEdgeScrollVelocity(float pos, float min, float max)
+        {
+            if (pos < min + MidiEdgeScrollZone)
+                return -Mathf.Clamp01((min + MidiEdgeScrollZone - pos) / MidiEdgeScrollZone) *
+                    MidiMaxEdgeScrollPerTick;
+            if (pos > max - MidiEdgeScrollZone)
+                return Mathf.Clamp01((pos - (max - MidiEdgeScrollZone)) / MidiEdgeScrollZone) *
+                    MidiMaxEdgeScrollPerTick;
+            return 0f;
+        }
+
+        // Runs during an active gesture even when the finger is held stationary
+        // at the viewport's edge (there may be no further PointerMoveEvents).
+        private void AutoScrollMidiDrag(Drag d, VisualElement plane)
+        {
+            if (!ReferenceEquals(drag, d) || !d.moved || scroller == null ||
+                scroller.contentViewport == null || plane == null) return;
+            var bounds = scroller.contentViewport.worldBound;
+            if (bounds.width <= 1f || bounds.height <= 1f) return;
+            float sx = 0f, sy = 0f;
+            // Body drags can cross both time and pitch boundaries. Resize handles
+            // only need horizontal edge scrolling; never pan vertically while resizing.
+            sx = MidiEdgeScrollVelocity(d.latestWorldPosition.x, bounds.xMin, bounds.xMax);
+            if (d.mode == MidiDragMode.Move)
+                sy = MidiEdgeScrollVelocity(d.latestWorldPosition.y, bounds.yMin, bounds.yMax);
+            if (Mathf.Abs(sx) < .01f && Mathf.Abs(sy) < .01f) return;
+            float maxX = Mathf.Max(0f, steps * StepW - bounds.width);
+            float maxY = Mathf.Max(0f, 25f + EditorHeight - bounds.height);
+            Vector2 desired = new Vector2(
+                Mathf.Clamp(d.allowedScrollOffset.x + sx, 0f, maxX),
+                Mathf.Clamp(d.allowedScrollOffset.y + sy, 0f, maxY));
+            if ((desired - d.allowedScrollOffset).sqrMagnitude <= .01f) return;
+            d.allowedScrollOffset = desired;
+            scroller.scrollOffset = desired;
+            SyncPianoRollLabels();
+            SyncFixedRuler();
+            UpdateMidiDragPreview(d, MidiWorldToPlane(d.latestWorldPosition));
+            SyncMidiNoteTouchTargets();
+        }
+
+        // Coordinates are measured in the moving grid's own space. Using the
+        // transparent overlay coordinates plus the ScrollView offset keeps note
+        // movement accurate even while the viewport follows the finger.
+        private Vector2 MidiWorldToPlane(Vector2 worldPosition)
+        {
+            if (noteTouchLayer == null || scroller == null) return worldPosition;
+            Vector2 position = noteTouchLayer.WorldToLocal(worldPosition);
+            return position + scroller.scrollOffset;
+        }
+
+        // Frame a tapped MIDI note when it sits partly outside the viewport.
+        // While the user drags, the edge-scroll scheduler follows as needed.
+        private void FocusSelectedMidiNote(int index)
+        {
+            if (scroller == null || scroller.contentViewport == null || !IsMidi ||
+                content?.notes == null || index < 0 || index >= content.notes.Count) return;
+            var note = content.notes[index];
+            if (note == null) return;
+            float vw = scroller.contentViewport.resolvedStyle.width;
+            float vh = scroller.contentViewport.resolvedStyle.height;
+            if (vw < StepW || vh < RowH) return;
+            float nx = (float)note.startTick / quantum * StepW;
+            float ny = 25f + RowForPitch(note.pitch) * RowH;
+            var offset = scroller.scrollOffset;
+            const float xMargin = 20f;
+            const float yMargin = 18f;
+            float x = offset.x, y = offset.y;
+            if (nx < x + xMargin) x = nx - xMargin;
+            else if (nx > x + vw - xMargin - StepW) x = nx - vw + xMargin + StepW;
+            // For a long note, favour its beginning rather than scrolling
+            // to its right edge and losing the selected pitch on-screen.
+            if (ny < y + yMargin) y = ny - yMargin;
+            else if (ny + RowH > y + vh - yMargin) y = ny + RowH - vh + yMargin;
+            float maxX = Mathf.Max(0f, steps * StepW - vw);
+            float maxY = Mathf.Max(0f, 25f + EditorHeight - vh);
+            var desired = new Vector2(Mathf.Clamp(x, 0f, maxX), Mathf.Clamp(y, 0f, maxY));
+            if ((desired - offset).sqrMagnitude > 0.25f)
+            {
+                scroller.scrollOffset = desired;
+                SyncPianoRollLabels();
+                SyncFixedRuler();
+                SyncMidiNoteTouchTargets();
+            }
+        }
+
+        // Create one transparent, independent touch target for each MIDI note.
+        // The rightmost portion is the resize anchor; the body moves the note.
+        private void AddMidiNoteTouchTarget(int index)
+        {
+            if (noteTouchLayer == null || content?.notes == null ||
+                index < 0 || index >= content.notes.Count || content.notes[index] == null) return;
+            var hit = new VisualElement { name = "ZPunkMidiNoteHit_" + index };
+            hit.style.position = Position.Absolute;
+            hit.pickingMode = PickingMode.Position;
+            var rightEnd = new VisualElement { name = "ZPunkMidiNoteRightEnd_" + index };
+            rightEnd.style.position = Position.Absolute;
+            rightEnd.style.right = 0;
+            rightEnd.style.top = 0;
+            rightEnd.style.bottom = 0;
+            rightEnd.style.width = 12;
+            rightEnd.pickingMode = PickingMode.Position;
+            hit.Add(rightEnd);
+            noteTouchLayer.Add(hit);
+            midiNoteTouchTargets.Add(new MidiNoteTouchTarget { body = hit, noteIndex = index });
+
+            hit.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0 || !IsMidi || drag != null ||
+                    content?.notes == null || index >= content.notes.Count) return;
+                var note = content.notes[index];
+                if (note == null) return;
+                SelectNoteVelocity(index);
+                FocusSelectedMidiNote(index);
+                var display = velocityDisplays.Find(v => v.noteIndex == index);
+                Vector2 startPosition = MidiWorldToPlane(evt.position);
+                drag = new Drag {
+                    index = index, pointerId = evt.pointerId,
+                    start = startPosition, startTick = note.startTick,
+                    duration = note.durationTicks, pitch = note.pitch,
+                    mode = ReferenceEquals(evt.target, rightEnd) ? MidiDragMode.ResizeEnd : MidiDragMode.Move,
+                    preview = display != null ? display.cell : null, display = display,
+                    latestWorldPosition = evt.position,
+                    allowedScrollOffset = scroller.scrollOffset,
+                    candidateTick = note.startTick, candidateDuration = note.durationTicks,
+                    candidatePitch = note.pitch
+                };
+                var active = drag;
+                // Scheduled scrolling also works if the finger is held motionless
+                // at an edge of the viewport.
+                active.edgeScroll = hit.schedule.Execute(() =>
+                    AutoScrollMidiDrag(active, hit)).Every(16);
+                hit.CapturePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            hit.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (drag == null || drag.pointerId != evt.pointerId ||
+                    !hit.HasPointerCapture(evt.pointerId)) return;
+                drag.latestWorldPosition = evt.position;
+                KeepMidiDragViewportLocked();
+                Vector2 position = MidiWorldToPlane(evt.position);
+                if ((position - drag.start).sqrMagnitude > MidiGestureThreshold * MidiGestureThreshold)
+                    drag.moved = true;
+                if (drag.moved) UpdateMidiDragPreview(drag, position);
+                evt.StopPropagation();
+            });
+            hit.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (drag == null || drag.pointerId != evt.pointerId ||
+                    !hit.HasPointerCapture(evt.pointerId)) return;
+                var d = drag;
+                KeepMidiDragViewportLocked();
+                if (d.moved) UpdateMidiDragPreview(d, MidiWorldToPlane(evt.position));
+                // Release capture first: Changed() rebuilds the overlay and
+                // must not trigger cancellation of an already committed drag.
+                EndMidiDragGesture(d);
+                if (hit.HasPointerCapture(evt.pointerId)) hit.ReleasePointer(evt.pointerId);
+                if (d.moved) CommitMidiDragGesture(d);
+                evt.StopPropagation();
+            });
+            hit.RegisterCallback<PointerCancelEvent>(evt =>
+            {
+                if (drag == null || drag.pointerId != evt.pointerId) return;
+                RestoreMidiDragPreview(drag);
+                EndMidiDragGesture(drag);
+                if (hit.HasPointerCapture(evt.pointerId)) hit.ReleasePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            hit.RegisterCallback<PointerCaptureOutEvent>(evt =>
+            {
+                if (drag == null || drag.pointerId != evt.pointerId) return;
+                RestoreMidiDragPreview(drag);
+                EndMidiDragGesture(drag);
+            });
+        }
+
+        // Move the invisible targets together with their notes when the user
+        // pans the piano roll. Only the note rectangles, not the empty overlay,
+        // intercept pointer events.
+        private void SyncMidiNoteTouchTargets()
+        {
+            if (noteTouchLayer == null || scroller == null || !IsMidi || content?.notes == null) return;
+            Vector2 offset = scroller.scrollOffset;
+            foreach (var target in midiNoteTouchTargets)
+            {
+                if (target.noteIndex < 0 || target.noteIndex >= content.notes.Count) continue;
+                var note = content.notes[target.noteIndex];
+                if (note == null) continue;
+                var active = drag != null && drag.index == target.noteIndex ? drag : null;
+                long tick = active != null ? active.candidateTick : note.startTick;
+                long duration = active != null ? active.candidateDuration : note.durationTicks;
+                int pitch = active != null ? active.candidatePitch : note.pitch;
+                target.body.style.left = (float)tick / quantum * StepW + 1f - offset.x;
+                target.body.style.top = RowForPitch(pitch) * RowH + 4f - offset.y;
+                target.body.style.width = Mathf.Max(13f, (float)duration / quantum * StepW - 2f);
+                target.body.style.height = RowH - 7f;
+            }
+        }
+
+        private void CommitMidiDragGesture(Drag d)
+        {
+            if (d == null) return;
+            bool modified = d.candidateTick != d.startTick ||
+                d.candidateDuration != d.duration || d.candidatePitch != d.pitch;
+            if (!modified) { RestoreMidiDragPreview(d); return; }
+            if (!Writable() || content?.notes == null || d.index < 0 || d.index >= content.notes.Count)
+            {
+                RestoreMidiDragPreview(d);
+                return;
+            }
+            var note = content.notes[d.index];
+            if (note == null) { RestoreMidiDragPreview(d); return; }
+            note.startTick = d.candidateTick;
+            note.durationTicks = d.candidateDuration;
+            note.pitch = d.candidatePitch;
+            content.lengthTicks = Math.Max(content.lengthTicks, note.startTick + note.durationTicks);
+            selectedNote = d.index;
+            // Selected note remains visible after a commit, including when the
+            // viewport has followed the drag to a new pitch or beat.
+            Changed();
+            // Redraw restores the previous scroll offset on its next layout pass.
+            // Focus the moved note AFTER that restoration so the viewport follows
+            // its new location instead of jumping back to its original position.
+            var focusedScroller = scroller;
+            var focusedClipId = clipId;
+            int focusedIndex = d.index;
+            focusedScroller?.schedule.Execute(() =>
+            {
+                if (scroller == focusedScroller && clipId == focusedClipId &&
+                    selectedNote == focusedIndex && IsMidi)
+                    FocusSelectedMidiNote(focusedIndex);
+            }).ExecuteLater(20);
+        }
+
+        private void EndMidiDragGesture(Drag d)
+        {
+            if (d == null) return;
+            d.edgeScroll?.Pause();
+            if (ReferenceEquals(drag, d)) drag = null;
         }
 
         private void Redraw(bool preserveViewport=true)
@@ -2023,7 +2403,7 @@ namespace ZPunk.DAW
                 pendingTap.hold?.Pause();
                 pendingTap = null;
             }
-            drag = null;
+            EndMidiDragGesture(drag);
             // Refreshing note rectangles must not throw the user back to MIDI 127.
             // OCT +/- and initial track selection can still reposition afterwards.
             Vector2 previousOffset = scroller != null ? scroller.scrollOffset : Vector2.zero;
@@ -2090,6 +2470,14 @@ namespace ZPunk.DAW
                 (IsMidi ? "PIANO ROLL" : content != null && content.kind==ClipKind.Drums ? "DRUM STEP EDITOR" : "SAMPLE STEP EDITOR") +
                 "  /  Bar " + (clip.startTick / SongData.TicksPerBar4 + 1)) + "  /  HOLD TRACK TO GEN";
             gridScrollContainer.Clear();
+            noteTouchLayer?.Clear();
+            midiNoteTouchTargets.Clear();
+            if (noteTouchLayer != null)
+            {
+                noteTouchLayer.style.display = IsMidi && clip != null && content != null ?
+                    DisplayStyle.Flex : DisplayStyle.None;
+                noteTouchLayer.style.left = IsMidi ? 57f : 83f;
+            }
             rulerContent?.Clear();
             rulerPlayhead = null;
             pitchRowBackgrounds.Clear();
@@ -2220,6 +2608,7 @@ namespace ZPunk.DAW
                     int row=RowForPitch(n.pitch);
                     if(row<0 || row>=RowCount) continue;
                     DrawEvent(plane,n.startTick,n.durationTicks,row,i,n.velocity);
+                    AddMidiNoteTouchTarget(i);
                 }
             }
             else if (content.kind == ClipKind.Drums && content.drums != null)
@@ -2239,6 +2628,7 @@ namespace ZPunk.DAW
                 }
             }
             RefreshVelocityDisplays();
+            SyncMidiNoteTouchTargets();
             // Shared transport playhead for all clip editors.
             // Covers both the timeline ruler and the note grid.
             editorPlayhead = new VisualElement
@@ -2278,27 +2668,8 @@ namespace ZPunk.DAW
                 if (evt.button != 0) return;
                 Vector2 p = plane.WorldToLocal(evt.position);
                 int row = RowAt(p.y), step = QuantizedStep(p.x);
-                if (IsMidi)
-                {
-                    int index = FindNote(PitchForRow(row), step * quantum);
-                    if (index >= 0)
-                    {
-                        SelectNoteVelocity(index);
-                        var n = content.notes[index];
-                        float right = (float)(n.startTick + n.durationTicks) / quantum * StepW;
-                        float grip = Mathf.Clamp((float)n.durationTicks / quantum * StepW * .35f, 10f, 18f);
-                        VisualElement preview = null;
-                        foreach (var drawn in velocityDisplays)
-                            if (drawn.noteIndex == index) { preview = drawn.cell; break; }
-                        drag = new Drag { index=index, start=p, startTick=n.startTick, duration=n.durationTicks,
-                            pitch=n.pitch, resizing=(p.x >= right-grip && p.x <= right+3f),
-                            pointerId=evt.pointerId, preview=preview, candidateTick=n.startTick,
-                            candidateDuration=n.durationTicks, candidatePitch=n.pitch };
-                        plane.CapturePointer(evt.pointerId);
-                        evt.StopPropagation();
-                        return;
-                    }
-                }
+                // Existing MIDI notes are picked by the overlay, not this
+                // ScrollView child. Empty cells remain regular grid touches.
                 // A finger may be scrolling the piano roll. Defer creating a new
                 // note/step until pointer up, and never create one during a swipe.
                 var tap = new Tap { pointerId = evt.pointerId, start = evt.position, row = row, step = step };
@@ -2330,8 +2701,11 @@ namespace ZPunk.DAW
                     pendingTap = null;
                 }
                 if (drag == null || drag.pointerId != evt.pointerId) return;
+                drag.latestWorldPosition = evt.position;
+                KeepMidiDragViewportLocked();
                 Vector2 p = plane.WorldToLocal(evt.position);
-                if ((p-drag.start).sqrMagnitude>16f) drag.moved=true;
+                if ((p-drag.start).sqrMagnitude > MidiGestureThreshold * MidiGestureThreshold)
+                    drag.moved = true;
                 if (drag.moved) UpdateMidiDragPreview(drag, p);
                 evt.StopPropagation();
             });
@@ -2349,31 +2723,17 @@ namespace ZPunk.DAW
                     return;
                 }
                 if (drag == null || drag.pointerId != evt.pointerId) return;
-                var d = drag; drag = null;
-                if (plane.HasPointerCapture(evt.pointerId)) plane.ReleasePointer(evt.pointerId);
+                var d = drag;
+                KeepMidiDragViewportLocked();
+                // Finish the preview before releasing capture; otherwise the
+                // scroll view may interpret the release as a pan or fling.
                 if (d.moved)
                 {
-                    UpdateMidiDragPreview(d, plane.WorldToLocal(evt.position));
-                    // No-op gestures should not write project data.
-                    bool modified = d.candidateTick != d.startTick ||
-                        d.candidateDuration != d.duration || d.candidatePitch != d.pitch;
-                    if (modified && Writable() && content != null && content.notes != null &&
-                        d.index >= 0 && d.index < content.notes.Count)
-                    {
-                        var note = content.notes[d.index];
-                        if (note != null)
-                        {
-                            note.startTick = d.candidateTick;
-                            note.durationTicks = d.candidateDuration;
-                            note.pitch = d.candidatePitch;
-                            content.lengthTicks = Math.Max(content.lengthTicks,
-                                note.startTick + note.durationTicks);
-                            selectedNote = d.index;
-                            Changed();
-                        }
-                    }
-                    else RestoreMidiDragPreview(d);
+                    UpdateMidiDragPreview(d, MidiWorldToPlane(evt.position));
+                    CommitMidiDragGesture(d);
                 }
+                EndMidiDragGesture(d);
+                if (plane.HasPointerCapture(evt.pointerId)) plane.ReleasePointer(evt.pointerId);
                 evt.StopPropagation();
             });
             plane.RegisterCallback<PointerCancelEvent>(evt =>
@@ -2386,7 +2746,7 @@ namespace ZPunk.DAW
                 if (drag != null && drag.pointerId == evt.pointerId)
                 {
                     RestoreMidiDragPreview(drag);
-                    drag = null;
+                    EndMidiDragGesture(drag);
                 }
                 if (plane.HasPointerCapture(evt.pointerId)) plane.ReleasePointer(evt.pointerId);
             });
@@ -2400,7 +2760,7 @@ namespace ZPunk.DAW
                 if (drag != null && drag.pointerId == evt.pointerId)
                 {
                     RestoreMidiDragPreview(drag);
-                    drag = null;
+                    EndMidiDragGesture(drag);
                 }
             });
             if (scroller != null)
@@ -2414,6 +2774,7 @@ namespace ZPunk.DAW
                         else if (!IsMidi) scroller.scrollOffset = Vector2.zero;
                         SyncPianoRollLabels();
                         SyncFixedRuler();
+                        SyncMidiNoteTouchTargets();
                     }
                 }).ExecuteLater(0);
         }
@@ -2427,6 +2788,7 @@ namespace ZPunk.DAW
 
         private void Update()
         {
+            KeepMidiDragViewportLocked();
             // Sample-key guidance must continue updating when the transport is stopped.
             FollowPitchedSampleKey();
             if (!ready || editorPlayhead == null) return;

@@ -61,7 +61,7 @@ namespace KMusic.UI
         {
             if (end01 <= start01) return;
             // Frame the complete segment with enough surrounding audio to grab
-            // both boundaries. Zoom never exceeds the waveform's own 32x limit.
+            // both boundaries. The visible window is bounded by the 256x limit.
             float padding = Mathf.Max(.002f, (end01 - start01) * .12f);
             RestoreWindow(start01 - padding, end01 - start01 + padding * 2f);
         }
@@ -98,6 +98,18 @@ namespace KMusic.UI
         private float _rulerBpm = 120f;
         private float _rulerSeconds;
         private float _beatPhaseSeconds;
+        private bool _showMusicalGrid = true;
+        public bool ShowMusicalGrid
+        {
+            get => _showMusicalGrid;
+            set
+            {
+                if (_showMusicalGrid == value) return;
+                _showMusicalGrid = value;
+                UpdateRulerLabels();
+                MarkDirtyRepaint();
+            }
+        }
 
         // Waveform ruler uses true musical beats at the active tempo. The viewport
         // clips bars naturally when zooming and panning; slices remain normalized.
@@ -149,7 +161,7 @@ namespace KMusic.UI
         public float ViewLen01 { get; private set; } = 1f;
 
         // Limit zoom (smaller = more zoom-in)
-        private const float MinViewLen01 = 1f / 32f;   // max zoom-in ~32x
+        private const float MinViewLen01 = 1f / 256f;  // max zoom-in ~256x
         private const float MaxViewLen01 = 1f;         // zoomed out = full track
 
         // --- Pinch/pan (2 pointers) ---
@@ -547,7 +559,7 @@ namespace KMusic.UI
             DrawWaveform(painter, r, v0, vLen);
 
             // Subtle bar/beat grid shares the waveform's viewport transform.
-            if (_rulerSeconds > 0f && _rulerBpm > 0f)
+            if (_showMusicalGrid && _rulerSeconds > 0f && _rulerBpm > 0f)
             {
                 float totalBeats = _rulerSeconds * _rulerBpm / 60f;
                 float phaseBeats = _beatPhaseSeconds * _rulerBpm / 60f;
@@ -1009,7 +1021,7 @@ namespace KMusic.UI
             if (_rulerLabelLayer == null) return;
             for (int i = 0; i < _rulerLabels.Count; ++i)
                 _rulerLabels[i].style.display = DisplayStyle.None;
-            if (_rulerSeconds <= 0f || _rulerBpm <= 0f || contentRect.width < 10f) return;
+            if (!_showMusicalGrid || _rulerSeconds <= 0f || _rulerBpm <= 0f || contentRect.width < 10f) return;
 
             float totalBeats = _rulerSeconds * _rulerBpm / 60f;
             float phaseBeats = _beatPhaseSeconds * _rulerBpm / 60f;
