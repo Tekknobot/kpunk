@@ -69,7 +69,8 @@ namespace ZPunk.DAW
 
         public static void Fill(ClipContentData clip, TrackKind kind, int genre, int style,
                                 int bars, int key, bool minor, int variation, bool synthChords = false,
-                                int[] harmonyDegrees = null, int[][] harmonyVoices = null)
+                                int[] harmonyDegrees = null, int[][] harmonyVoices = null,
+                                int progressionChoice = 0, int progressionBarOffset = 0)
         {
             if (clip == null) throw new ArgumentNullException(nameof(clip));
             if (kind == TrackKind.Chops) return;
@@ -77,9 +78,12 @@ namespace ZPunk.DAW
             style = Clamp(style, 0, Styles[genre].Length - 1);
             bars = Clamp(bars, 1, 4);
             key = Mod(key, 12);
+            progressionChoice = Clamp(progressionChoice, 0, ProgressionChoiceCount - 1);
             clip.kind = kind == TrackKind.Drums ? ClipKind.Drums : ClipKind.Midi;
             clip.lengthTicks = bars * SongData.TicksPerBar4;
-            clip.generatedTag = Label(genre, style, key, minor, synthChords && kind == TrackKind.Synth) + " / V" + variation;
+            clip.generatedTag = Label(genre, style, key, minor, synthChords && kind == TrackKind.Synth) +
+                (kind != TrackKind.Drums && progressionChoice > 0 ? " / PROG#" + progressionChoice : "") +
+                " / V" + variation;
             if (clip.drums == null) clip.drums = new List<DrumEvent>();
             if (clip.notes == null) clip.notes = new List<NoteEvent>();
             clip.drums.Clear();
@@ -88,13 +92,21 @@ namespace ZPunk.DAW
             int seed = unchecked(variation * 104729 + genre * 3659 + style * 1619 + (int)kind * 307 + key * 47 + (minor ? 173 : 97));
             var rng = new Random(seed);
             int[][] chordVoices = new int[bars][];
+            int[] chosenDegrees = ProgressionFor(genre, minor, progressionChoice);
             for (int bar = 0; bar < bars; bar++)
             {
                 if (kind == TrackKind.Drums) { GenerateDrums(clip, genre, style, bar, bars, variation, rng); continue; }
-                int degree = harmonyDegrees != null && bar < harmonyDegrees.Length && harmonyDegrees[bar] >= 0
-                    ? harmonyDegrees[bar] : Progression(genre, minor)[bar % 4];
+                int progressionBar = Mod(bar + progressionBarOffset, chosenDegrees.Length);
+                int degree = progressionChoice > 0
+                    ? chosenDegrees[progressionBar]
+                    : harmonyDegrees != null && bar < harmonyDegrees.Length && harmonyDegrees[bar] >= 0
+                        ? harmonyDegrees[bar] : chosenDegrees[bar % chosenDegrees.Length];
+                int nextDegree = progressionChoice > 0
+                    ? chosenDegrees[Mod(bar + progressionBarOffset + 1, chosenDegrees.Length)]
+                    : harmonyDegrees != null && (bar + 1) % bars < harmonyDegrees.Length && harmonyDegrees[(bar + 1) % bars] >= 0
+                        ? harmonyDegrees[(bar + 1) % bars] : chosenDegrees[((bar + 1) % bars) % chosenDegrees.Length];
                 if (kind == TrackKind.Bass) GenerateBass(clip, genre, style, bar, bars, degree, key, minor, variation, rng,
-                    harmonyDegrees != null && (bar + 1) % bars < harmonyDegrees.Length ? harmonyDegrees[(bar + 1) % bars] : -1);
+                    nextDegree);
                 else if (kind == TrackKind.Pads || (kind == TrackKind.Synth && synthChords))
                 {
                     // Use actual semitones of the current chord, not the tonic triad transposed
@@ -148,6 +160,84 @@ namespace ZPunk.DAW
                 foreach (var note in clip.notes)
                     if (note != null) note.startTick -= earliest;
             }
+        }
+
+        // 0 = original genre-specific harmony for backwards compatibility.
+        // 1..8 = shared, explicitly selected progressions across BASS/SYNTH/PADS.
+        // All are diatonic to the current major or natural-minor key; array values
+        // are ZERO-BASED scale degrees, not MIDI semitones.
+        public const int ProgressionChoiceCount = 9;
+        private static readonly int[][] MinorProgressions = {
+            new[] { 0, 5, 2, 6 }, // i - VI - III - VII, classic 90s eurodance
+            new[] { 0, 6, 5, 6 }, // i - VII - VI - VII, anthemic turnaround
+            new[] { 0, 3, 5, 4 }, // i - iv - VI - v
+            new[] { 0, 2, 6, 5 }, // i - III - VII - VI
+            new[] { 0, 5, 3, 6 }, // i - VI - iv - VII
+            new[] { 0, 4, 5, 3 }, // i - v - VI - iv
+            new[] { 0, 3, 6, 2 }, // i - iv - VII - III
+            new[] { 5, 6, 0, 0 }  // VI - VII - i - i, tension / release
+        };
+        private static readonly int[][] MajorProgressions = {
+            new[] { 0, 4, 5, 3 }, // I - V - vi - IV
+            new[] { 0, 5, 3, 4 }, // I - vi - IV - V
+            new[] { 0, 3, 4, 3 }, // I - IV - V - IV
+            new[] { 5, 3, 0, 4 }, // vi - IV - I - V
+            new[] { 0, 2, 3, 4 }, // I - iii - IV - V
+            new[] { 0, 1, 3, 4 }, // I - ii - IV - V
+            new[] { 0, 3, 1, 4 }, // I - IV - ii - V
+            new[] { 3, 4, 0, 5 }  // IV - V - I - vi
+        };
+        private static readonly string[] MinorProgressionLabels = {
+            "i - VI - III - VII", "i - VII - VI - VII", "i - iv - VI - v", "i - III - VII - VI",
+            "i - VI - iv - VII", "i - v - VI - iv", "i - iv - VII - III", "VI - VII - i - i"
+        };
+        private static readonly string[] MajorProgressionLabels = {
+            "I - V - vi - IV", "I - vi - IV - V", "I - IV - V - IV", "vi - IV - I - V",
+            "I - iii - IV - V", "I - ii - IV - V", "I - IV - ii - V", "IV - V - I - vi"
+        };
+
+        public static int[] ProgressionFor(int genre, bool minor, int choice)
+        {
+            if (choice < 1 || choice >= ProgressionChoiceCount) return Progression(genre, minor);
+            return minor ? MinorProgressions[choice - 1] : MajorProgressions[choice - 1];
+        }
+
+        public static string ProgressionLabel(int genre, bool minor, int choice)
+        {
+            if (choice < 1 || choice >= ProgressionChoiceCount) return "GENRE DEFAULT";
+            return choice.ToString("00") + "  " +
+                (minor ? MinorProgressionLabels[choice - 1] : MajorProgressionLabels[choice - 1]);
+        }
+
+        // Musical names for the CURRENT key, e.g., A minor: Am - F - C - G.
+        public static string ProgressionChordNames(int genre, int key, bool minor, int choice)
+        {
+            int[] degrees = ProgressionFor(genre, minor, choice);
+            string[] names = new string[degrees.Length];
+            for (int i = 0; i < degrees.Length; i++)
+            {
+                int degree = degrees[i];
+                int tonic = Mod(key + Scale(degree, minor), 12);
+                int third = Scale(degree + 2, minor) - Scale(degree, minor);
+                int fifth = Scale(degree + 4, minor) - Scale(degree, minor);
+                string quality = third == 3 && fifth == 6 ? "dim" : third == 3 ? "m" : "";
+                names[i] = Keys[tonic] + quality;
+            }
+            return string.Join(" - ", names);
+        }
+
+        public static int ProgressionFromTag(string generatedTag)
+        {
+            if (string.IsNullOrEmpty(generatedTag)) return 0;
+            const string marker = " / PROG#";
+            int start = generatedTag.IndexOf(marker, StringComparison.Ordinal);
+            if (start < 0) return 0;
+            start += marker.Length;
+            int end = start;
+            while (end < generatedTag.Length && char.IsDigit(generatedTag[end])) end++;
+            int parsed;
+            return int.TryParse(generatedTag.Substring(start, end - start), out parsed)
+                ? Clamp(parsed, 0, ProgressionChoiceCount - 1) : 0;
         }
 
         // Scale degrees allow major and natural-minor progressions to share a tonic.
@@ -360,13 +450,15 @@ namespace ZPunk.DAW
             }
             else if (g == 1) // HOUSE: tight disco-funk bounce between the kicks.
             {
-                int[] steps = s == 1 ? new[] { 0, 3, 7, 10, 14 } :
+                int[] steps = s == 3 ? (answer ? new[] { 0, 3, 6, 10, 12, 15 } : new[] { 0, 3, 7, 10, 14 }) :
+                               s == 1 ? new[] { 0, 3, 7, 10, 14 } :
                               s == 2 ? new[] { 0, 2, 5, 7, 10, 13, 15 } :
                                        new[] { 0, 3, 6, 10, 14 };
                 for (int i = 0; i < steps.Length; i++)
                 {
                     int step = steps[i];
                     int pitch = step == 15 ? ApproachBass(nextRoot, root) :
+                                 s == 3 && step == 12 ? root + 12 :
                                 step == 7 && family != 0 ? root + 12 :
                                 step == 10 && (family == 1 || s == 2) ? root + fifth :
                                 step == 14 && family == 3 ? root + 12 : root;
@@ -599,9 +691,11 @@ namespace ZPunk.DAW
             int[] lengths;
             if (pads)
             {
-                starts = g == 0 ? new[] { 2 } : g == 3 && s != 2 ? new[] { 0, 10 } :
+                starts = g == 1 && s == 3 ? new[] { 0, 8 } :
+                         g == 0 ? new[] { 2 } : g == 3 && s != 2 ? new[] { 0, 10 } :
                          g == 4 && s == 2 ? new[] { 0, 10 } : new[] { 0 };
-                lengths = starts.Length == 2 ? new[] { 9, 6 } : new[] { g == 0 ? 12 : 16 };
+                lengths = g == 1 && s == 3 ? new[] { 7, 8 } :
+                          starts.Length == 2 ? new[] { 9, 6 } : new[] { g == 0 ? 12 : 16 };
                 if (g == 2 && s == 2) { starts = new[] { 0, 8 }; lengths = new[] { 7, 8 }; }
             }
             else if (g == 0)

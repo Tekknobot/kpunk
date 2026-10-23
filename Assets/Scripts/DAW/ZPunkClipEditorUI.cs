@@ -39,6 +39,8 @@ namespace ZPunk.DAW
         private Label generatorHistoryLabel;
         private Button generatorQuickButton, generatorMelodyButton, generatorChordsButton;
         private Label generatorHeading, generatorSummary, generatorHint, generatorKeyLabel, generatorVariationLabel;
+        private Label generatorProgressionLabel, generatorProgressionChords;
+        private VisualElement generatorProgressionSection;
         private int generatorGenre = 1, generatorStyle, generatorBars = 2, generatorKey = 9, generatorVariation;
         private bool generatorMinor = true, generatorSynthChords;
         private int generatorTargetTrack;
@@ -899,14 +901,44 @@ namespace ZPunk.DAW
             keyRow.style.height = 48;
             keyRow.style.flexDirection = FlexDirection.Row;
             keyRow.style.alignItems = Align.Center;
-            keyRow.Add(Btn("<",() => { generatorKey = (generatorKey + 11)%12; RefreshGeneratorPanel(); },43));
+            keyRow.Add(Btn("<",() => { generatorKey = (generatorKey + 11)%12; SaveSharedHarmonicSelection(); RefreshGeneratorPanel(); },43));
             generatorKeyLabel = Txt("A MIN",13,Accent);
             generatorKeyLabel.style.flexGrow = 1;
             generatorKeyLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
             keyRow.Add(generatorKeyLabel);
-            keyRow.Add(Btn(">",() => { generatorKey = (generatorKey + 1)%12; RefreshGeneratorPanel(); },43));
-            keyRow.Add(Btn("MIN/MAJ",() => { generatorMinor = !generatorMinor; RefreshGeneratorPanel(); },85));
+            keyRow.Add(Btn(">",() => { generatorKey = (generatorKey + 1)%12; SaveSharedHarmonicSelection(); RefreshGeneratorPanel(); },43));
+            keyRow.Add(Btn("MIN/MAJ",() => { generatorMinor = !generatorMinor; SaveSharedHarmonicSelection(); RefreshGeneratorPanel(); },85));
             body.Add(keyRow);
+
+            // Shared project-level harmonic direction, independent of the selected
+            // Bass / Synth / Pads track and independent of NEW VARIATION.
+            generatorProgressionSection = new VisualElement();
+            generatorProgressionSection.style.flexDirection = FlexDirection.Column;
+            var progressionHeading = Txt("PROGRESSION / SHARED BY BASS, SYNTH AND PADS", 10, Muted);
+            progressionHeading.style.marginTop = 8;
+            generatorProgressionSection.Add(progressionHeading);
+            var progressionRow = new VisualElement();
+            progressionRow.style.height = 48;
+            progressionRow.style.flexDirection = FlexDirection.Row;
+            progressionRow.style.alignItems = Align.Center;
+            progressionRow.Add(Btn("<", () => StepSharedProgression(-1), 43));
+            generatorProgressionLabel = Txt("GENRE DEFAULT", 11, Accent);
+            generatorProgressionLabel.style.flexGrow = 1;
+            generatorProgressionLabel.style.minWidth = 0;
+            generatorProgressionLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+            progressionRow.Add(generatorProgressionLabel);
+            progressionRow.Add(Btn(">", () => StepSharedProgression(1), 43));
+            generatorProgressionSection.Add(progressionRow);
+            generatorProgressionChords = Txt("", 11, Ink);
+            generatorProgressionChords.style.whiteSpace = WhiteSpace.Normal;
+            generatorProgressionChords.style.unityTextAlign = TextAnchor.MiddleCenter;
+            generatorProgressionChords.style.marginBottom = 6;
+            generatorProgressionSection.Add(generatorProgressionChords);
+            var progressionHelp = Txt("Changes future generations; existing clips are kept until regenerated.", 10, Muted);
+            progressionHelp.style.whiteSpace = WhiteSpace.Normal;
+            progressionHelp.style.marginBottom = 4;
+            generatorProgressionSection.Add(progressionHelp);
+            body.Add(generatorProgressionSection);
 
             // Explicit opt-in: importing a sample never silently changes the key
             // of other tracks or previously saved generations.
@@ -921,6 +953,7 @@ namespace ZPunk.DAW
                 if (samplePlayer == null || !samplePlayer.DawSampleKeyAvailable) return;
                 generatorKey = samplePlayer.DawPitchedKeyTonic;
                 generatorMinor = samplePlayer.DawSampleKeyMinor;
+                SaveSharedHarmonicSelection();
                 // Opt-in harmonic guide. Do not highlight unrelated piano rolls merely
                 // because a sample was loaded or its key was detected.
                 sampleKeyGuideEnabled = true;
@@ -995,6 +1028,37 @@ namespace ZPunk.DAW
             root.Add(generatorPanel);
         }
 
+        private void SaveSharedHarmonicSelection(int? newProgression = null)
+        {
+            if (projects == null || song == null) return;
+            SongData edited = projects.GetSongForArrangementEditor();
+            if (edited == null) return;
+            if (!ReferenceEquals(projects.CurrentSong, edited))
+                edited = ArrangementEditing.IndependentCopy(edited);
+            if (newProgression.HasValue)
+                edited.sharedProgressionChoice = Mathf.Clamp(newProgression.Value, 0,
+                    ZPunkGenreGenerator.ProgressionChoiceCount - 1);
+            edited.sharedProgressionKey = generatorKey;
+            edited.sharedProgressionMinor = generatorMinor;
+            projects.AcceptArrangementEdit(edited);
+            song = edited;
+            clip = ArrangementEditing.FindClip(song, clipId, out _);
+            content = clip == null ? null : ArrangementEditing.FindContent(song, clip.contentId);
+            // This changes future generation settings, not currently playing notes;
+            // avoid rebuilding the editor or interrupting the open generator sheet.
+        }
+
+        private void StepSharedProgression(int direction)
+        {
+            int count = ZPunkGenreGenerator.ProgressionChoiceCount;
+            int current = song != null ? song.sharedProgressionChoice : 0;
+            int selected = (current + direction + count) % count;
+            SaveSharedHarmonicSelection(selected);
+            // A four-chord progression needs four bars to be fully audible.
+            if (selected > 0 && current == 0 && clip == null) generatorBars = 4;
+            RefreshGeneratorPanel();
+        }
+
         private void OpenGenerator(int requestedTrack)
         {
             if (!ready || showingSampler || generatorPanel == null || song == null || song.tracks == null ||
@@ -1002,11 +1066,17 @@ namespace ZPunk.DAW
                 song.tracks[requestedTrack].kind == TrackKind.Chops) return;
             if (requestedTrack != trackIndex) SelectTrack(requestedTrack);
             generatorTargetTrack = trackIndex;
+            // All generator tracks read the SAME saved project-wide progression/key.
+            if (song.sharedProgressionChoice > 0)
+            {
+                generatorKey = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
+                generatorMinor = song.sharedProgressionMinor;
+            }
             if (song.tracks[trackIndex].kind == TrackKind.Synth)
                 generatorSynthChords = content != null &&
                     !string.IsNullOrEmpty(content.generatedTag) &&
                     content.generatedTag.Contains(" / CHORDS / ");
-            generatorBars = clip == null ? 2 :
+            generatorBars = clip == null ? (song.sharedProgressionChoice > 0 ? 4 : 2) :
                 (clip.lengthTicks >= 4 * SongData.TicksPerBar4 ? 4 :
                  clip.lengthTicks >= 2 * SongData.TicksPerBar4 ? 2 : 1);
             generatorVariation++;
@@ -1036,10 +1106,10 @@ namespace ZPunk.DAW
                 generatorGenres.Add(button);
             }
             generatorStyles.Clear();
-            if (generatorGenre == 1 && generatorStyle == 3 && song.tracks[generatorTargetTrack].kind != TrackKind.Synth) generatorStyle = 0;
+            if (generatorGenre == 1 && generatorStyle == 3 && song.tracks[generatorTargetTrack].kind == TrackKind.Drums) generatorStyle = 0;
             for (int st = 0; st < ZPunkGenreGenerator.Styles[generatorGenre].Length; st++)
             {
-                if (generatorGenre == 1 && st == 3 && song.tracks[generatorTargetTrack].kind != TrackKind.Synth) continue;
+                if (generatorGenre == 1 && st == 3 && song.tracks[generatorTargetTrack].kind == TrackKind.Drums) continue;
                 int index = st;
                 var button = Btn(ZPunkGenreGenerator.Styles[generatorGenre][st],() => { generatorStyle = index; RefreshGeneratorPanel(); },91);
                 if (st == generatorStyle) { button.style.backgroundColor = SelectedColor(); button.style.color = Accent; }
@@ -1057,13 +1127,25 @@ namespace ZPunk.DAW
             }
             bool chords = isSynth && generatorSynthChords;
             TrackKind generatorKind = song.tracks[generatorTargetTrack].kind;
+            if (generatorProgressionSection != null)
+                generatorProgressionSection.style.display = generatorKind == TrackKind.Drums
+                    ? DisplayStyle.None : DisplayStyle.Flex;
             generatorSummary.text = (chords ?
                 ZPunkGenreGenerator.ChordsDescription(generatorGenre, generatorStyle) :
                 generatorKind == TrackKind.Bass ? ZPunkGenreGenerator.BassDescription(generatorGenre, generatorStyle) :
+                generatorKind == TrackKind.Pads ? ZPunkGenreGenerator.ChordsDescription(generatorGenre, generatorStyle) :
                 ZPunkGenreGenerator.Description(generatorGenre, generatorStyle)) + "\n" +
                 "READY: " + ZPunkGenreGenerator.Label(generatorGenre, generatorStyle, generatorKey, generatorMinor, chords) +
-                (isSynth && !chords ? " / MELODY" : "");
+                (isSynth && !chords ? " / MELODY" : "") +
+                (song.sharedProgressionChoice > 0 ? " / SHARED PROGRESSION " + song.sharedProgressionChoice : "");
             generatorKeyLabel.text = ZPunkGenreGenerator.Keys[generatorKey] + (generatorMinor ? " MIN" : " MAJ");
+            int progressionChoice = song.sharedProgressionChoice;
+            if (generatorProgressionLabel != null)
+                generatorProgressionLabel.text = ZPunkGenreGenerator.ProgressionLabel(generatorGenre, generatorMinor, progressionChoice);
+            if (generatorProgressionChords != null)
+                generatorProgressionChords.text = ZPunkGenreGenerator.ProgressionChordNames(
+                    generatorGenre, generatorKey, generatorMinor, progressionChoice) +
+                    (progressionChoice > 0 ? " / all parts follow these chords" : " / original genre harmony");
             FindSampler();
             bool hasSampleKey = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
             if (generatorSampleKeyButton != null) generatorSampleKeyButton.SetEnabled(hasSampleKey);
@@ -1122,7 +1204,9 @@ namespace ZPunk.DAW
                 string styleName = ZPunkGenreGenerator.Styles[generatorGenre][Mathf.Clamp(entry.style, 0, ZPunkGenreGenerator.Styles[generatorGenre].Length - 1)];
                 var details = Txt(styleName + "  /  " + ZPunkGenreGenerator.Keys[Mathf.Clamp(entry.key, 0, 11)] +
                     (entry.minor ? "m" : "") + "  /  " + entry.bars + " BAR" +
-                    (entry.bars == 1 ? "" : "S") + "  /  V" + entry.variation, 12, Ink);
+                    (entry.bars == 1 ? "" : "S") + "  /  V" + entry.variation +
+                    (ZPunkGenreGenerator.ProgressionFromTag(entry.snapshot.generatedTag) > 0
+                        ? "  /  P" + ZPunkGenreGenerator.ProgressionFromTag(entry.snapshot.generatedTag) : ""), 12, Ink);
                 details.style.flexGrow = 1;
                 details.style.minWidth = 0;
                 details.style.overflow = Overflow.Hidden;
@@ -1262,11 +1346,15 @@ namespace ZPunk.DAW
             bool chords = kind == TrackKind.Synth && generatorSynthChords;
             int[] detectedDegrees = null;
             int[][] detectedVoices = null;
-            if (kind == TrackKind.Bass || (kind == TrackKind.Synth && !chords))
+            if (song.sharedProgressionChoice == 0 &&
+                (kind == TrackKind.Bass || (kind == TrackKind.Synth && !chords)))
                 ReadArrangementHarmony(generatorBars, out detectedDegrees, out detectedVoices);
+            // The shared progression takes priority over previously arranged harmony;
+            // bar offset is the clip's actual arrangement position, not its local bar.
+            int barOffset = clip == null ? 0 : (int)(clip.startTick / SongData.TicksPerBar4);
             ZPunkGenreGenerator.Fill(content, kind, generatorGenre, generatorStyle,
                 generatorBars, generatorKey, generatorMinor, generatorVariation, chords,
-                detectedDegrees, detectedVoices);
+                detectedDegrees, detectedVoices, song.sharedProgressionChoice, barOffset);
             ZPunkGenerationHistory.Add(projects.CurrentSlot, kind, generatorGenre, generatorStyle,
                 generatorKey, generatorMinor, generatorBars, generatorVariation, chords, content);
             FinishGeneratorContent();
@@ -1279,6 +1367,13 @@ namespace ZPunk.DAW
             content.kind = saved.kind;
             content.lengthTicks = saved.lengthTicks;
             content.generatedTag = saved.generatedTag;
+            int historyProgression = ZPunkGenreGenerator.ProgressionFromTag(saved.generatedTag);
+            if (historyProgression > 0)
+            {
+                generatorKey = Mathf.Clamp(entry.key, 0, 11);
+                generatorMinor = entry.minor;
+                SaveSharedHarmonicSelection(historyProgression);
+            }
             content.notes = saved.notes ?? new List<NoteEvent>();
             content.drums = saved.drums ?? new List<DrumEvent>();
             content.chops = new List<ChopEvent>();

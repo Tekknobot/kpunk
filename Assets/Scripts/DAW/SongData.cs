@@ -33,6 +33,11 @@ namespace ZPunk.DAW
         // Phase 3: distinguishes a deliberately edited (possibly empty) DAW song
         // from older Phase 2 snapshots that could be empty accidentally.
         public bool arrangementAuthored = false;
+        // Optional 2.0.4+ metadata; old project JSON loads with choice 0 (genre default).
+        // Set only through the generator UI. No schema migration or project reset.
+        public int sharedProgressionChoice = 0;
+        public int sharedProgressionKey = 9;
+        public bool sharedProgressionMinor = true;
         public bool legacyChainEnabled = false;
         public List<TrackData> tracks = new List<TrackData>();
         public List<ClipContentData> contents = new List<ClipContentData>();
