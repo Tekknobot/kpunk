@@ -1,0 +1,41 @@
+ZPUNK 2.0.4 — BUTTON LAYOUT / PLAYHEAD ZOOM / MIDI TOUCH PATCH
+============================================================
+SOURCE: Archive(20261022-212645).zip (reverted 2.0.4).
+
+INSTALLATION
+1. Make a backup of your Unity project.
+2. Extract this ZIP INTO YOUR PROJECT'S EXISTING Assets/ DIRECTORY.
+   The ZIP already begins with Scripts/ and KMusic/, matching the supplied source.
+3. Allow Unity to recompile. Keep the existing .meta files (no new assets).
+4. Test touch behaviour on your Android/iOS device.
+
+ONLY FIVE C# SCRIPTS HAVE BEEN MODIFIED:
+- Scripts/DAW/ZPunkArrangementUI.cs
+  * Four evenly sized actions per row in Arrange.
+  * +/- ZOOM centres on the current transport playhead while playing and
+    preserves a sensible visible anchor while stopped.
+- Scripts/DAW/ZPunkClipEditorUI.cs
+  * One fitted row of six OCT/LEN/DELETE/GEN buttons.
+  * Evenly distributed DRUMS/BASS/SYNTH/PADS/CHOPS/SAMPLER selectors.
+  * Bass/Synth/Pads piano roll: finger drag moves notes horizontally and
+    vertically, right edge drag shortens/extends, snapped to the grid.
+  * Live visual preview during dragging, commit on pointer-up.
+  * Sampler transport/edit/marker rows have equal width buttons.
+- Scripts/KMusicTabsUI.cs
+  * Even widths for the four bottom navigation buttons.
+- Scripts/DAW/ZPunkSoundUI.cs
+  * Even widths for BASS/SYNTH/PADS selection buttons.
+- KMusic/UI/Controls/WaveformView.cs
+  * Sampler +/- ZOOM follows the playhead or HEAD marker; pinch-to-zoom
+    retains its existing finger anchor.
+
+NOT CHANGED
+- Knobs, textures, faders, piano key artwork, audio engine,
+  pattern generators, project format, sound palettes, colors.
+
+VERIFICATION
+- Confirmed ZIP input contains all original files.
+- Static delimiter/syntax-shape check (braces / brackets / parentheses)
+  and key patch checks passed.
+- Cannot compile with Unity or validate touch/visual behaviour in this
+  environment. If Unity reports an error, share the exact Console message.

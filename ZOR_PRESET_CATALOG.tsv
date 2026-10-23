@@ -1,0 +1,304 @@
+CATEGORY	PATCH	STATUS	SOUND FAMILY
+Arp	ZOR Chromed Steps	NEW	pulse
+Arp	ZOR Clockwork Current	NEW	pulse
+Arp	ZOR Glass Turntable	NEW	pulse
+Arp	ZOR Hidden Escalator	NEW	pulse
+Arp	ZOR Midnight Relay	NEW	pulse
+Arp	ZOR Pendulum Signal	NEW	pulse
+Arp	ZOR Transit Sequence	NEW	pulse
+Bass	ZOR Afterhours Ink	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Arcade Spring	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Backbeat Ghost	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Basement Film	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Blue Current	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Blue Velvet Valve	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Breakline Hopper	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Chrome Pluck	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Chrome Shuffle	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR City Roller	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Clear Pulse	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Concrete Undertow	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Copper Coil	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Deep Lantern	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Emberline	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR FM Bloom	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Glassline	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Hollow Motion	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Jungle Pressure	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Magnetic Spine	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Metro Pluck	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Mirrorball Wire	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Monsoon Wobble	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Negative Space	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Neon Torque	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Night Runner	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Nightclub Plastic	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Paper Lantern	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Plush Transit	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Pocket Cartwheel	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Pump Fiction	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Quartz Bounce	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Quiet Engine	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Ragged Circuit	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Rotor Pulse	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Roundabout	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Rubber Circuit	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Rust Relay	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Satellite Glide	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Satin Square	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Scattergrid	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Sidewalk Velvet	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Slipstream Heel	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Steel Furnace	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Synapse Rubber	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Tape Current	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Velvet Mirror	ORIGINAL	Existing ZOR patch preserved
+Bass	ZOR Velvet Sub	ORIGINAL	Existing ZOR patch preserved
+Chip	ZOR 8 Bit Carousel	NEW	chip
+Chip	ZOR Arcade Sparrow	NEW	chip
+Chip	ZOR Bitcrush Boulevard	NEW	chip
+Chip	ZOR Circuit Ribbon	NEW	chip
+Chip	ZOR Coin Slot Dream	NEW	chip
+Chip	ZOR Pixel Lantern	NEW	chip
+Chip	ZOR Pocket Telemetry	NEW	chip
+Chip	ZOR Tiny Satellite	NEW	chip
+Harsh	ZOR Carbon Fracture	NEW	harsh
+Harsh	ZOR Furnace Warning	NEW	harsh
+Harsh	ZOR Iron Teeth	NEW	harsh
+Keys	ZOR After Dark Piano	NEW	chord
+Keys	ZOR Amber Comp	NEW	chord
+Keys	ZOR Amber Rhodes	NEW	electric
+Keys	ZOR Basement Drawbars	NEW	organ
+Keys	ZOR Blue Motel	NEW	electric
+Keys	ZOR Broken Marbles	NEW	pluck
+Keys	ZOR Chrome Brass	NEW	brass
+Keys	ZOR City Glints	NEW	chord
+Keys	ZOR Club Organ	NEW	organ
+Keys	ZOR Cold Celeste	NEW	bell
+Keys	ZOR Copper Keys	NEW	electric
+Keys	ZOR Crystal Steps	NEW	bell
+Keys	ZOR Dawn Cabinet	NEW	chord
+Keys	ZOR Digital Chimes	NEW	bell
+Keys	ZOR Disco Keys	NEW	chord
+Keys	ZOR Dusky Piano	NEW	chord
+Keys	ZOR Electric Horns	NEW	brass
+Keys	ZOR Electric Motel	NEW	chord
+Keys	ZOR Glass Mallet	NEW	pluck
+Keys	ZOR Hollow Marimba	NEW	pluck
+Keys	ZOR Late Shift Keys	NEW	chord
+Keys	ZOR Loft Comp	NEW	chord
+Keys	ZOR Midnight Bell	NEW	bell
+Keys	ZOR Mirror Keys	NEW	chord
+Keys	ZOR Moonlit Rotator	NEW	organ
+Keys	ZOR Motor City Organ	NEW	organ
+Keys	ZOR Motorcade	NEW	brass
+Keys	ZOR Neon Kalimba	NEW	pluck
+Keys	ZOR Night Parade	NEW	brass
+Keys	ZOR Nightfall Tines	NEW	electric
+Keys	ZOR Pearl Tooth	NEW	pluck
+Keys	ZOR Phantom Lounge	NEW	electric
+Keys	ZOR Pitched Bamboo	NEW	pluck
+Keys	ZOR Plush Keys	NEW	chord
+Keys	ZOR Rainbox Pluck	NEW	pluck
+Keys	ZOR Rubber Chords	NEW	chord
+Keys	ZOR Satin Chords	NEW	chord
+Keys	ZOR Silver Cabinet	NEW	chord
+Keys	ZOR Silver Vitrine	NEW	bell
+Keys	ZOR Soft Focus Stabs	NEW	chord
+Keys	ZOR Soft Voltage	NEW	electric
+Keys	ZOR Street Chapel	NEW	organ
+Keys	ZOR Streetlight Brass	NEW	brass
+Keys	ZOR Subway Electric	NEW	electric
+Keys	ZOR Sunset Stab	NEW	brass
+Keys	ZOR Tape Room Stab	NEW	chord
+Keys	ZOR Transistor Pluck	NEW	chord
+Keys	ZOR Twilight Glass	NEW	bell
+Keys	ZOR Velvet Dynamo	NEW	electric
+Keys	ZOR Velvet Stabs	NEW	chord
+Keys	ZOR Warm Transistor	NEW	organ
+Keys	ZOR Wire Drops	NEW	pluck
+Lead	ZOR Acid Lantern	NEW	acid
+Lead	ZOR Broken Beacon	NEW	grit
+Lead	ZOR Chrome Nectar	NEW	acid
+Lead	ZOR Chrome Rider	NEW	analog
+Lead	ZOR Coiled Wire	NEW	acid
+Lead	ZOR Copper Teeth	NEW	grit
+Lead	ZOR Crystal Dial	NEW	digital
+Lead	ZOR Digital Iris	NEW	digital
+Lead	ZOR Disco Needle	NEW	funk
+Lead	ZOR Elastic Chrome	NEW	funk
+Lead	ZOR Faded Spotlight	NEW	soft
+Lead	ZOR Feral Radio	NEW	grit
+Lead	ZOR Folding Light	NEW	digital
+Lead	ZOR Glass Funk	NEW	funk
+Lead	ZOR Glide Through	NEW	soft
+Lead	ZOR Hologram Solo	NEW	digital
+Lead	ZOR Liquid Valve	NEW	acid
+Lead	ZOR Low Orbit	NEW	soft
+Lead	ZOR Mercury Signal	NEW	digital
+Lead	ZOR Moonbeam Line	NEW	soft
+Lead	ZOR Neon Current	NEW	analog
+Lead	ZOR Night Shred	NEW	grit
+Lead	ZOR Overpass Signal	NEW	analog
+Lead	ZOR Photon String	NEW	digital
+Lead	ZOR Pocket Whistle	NEW	funk
+Lead	ZOR Prism Edge	NEW	digital
+Lead	ZOR Red Alert	NEW	grit
+Lead	ZOR Redline Melody	NEW	analog
+Lead	ZOR Resonance Alley	NEW	acid
+Lead	ZOR Rubber Satellite	NEW	funk
+Lead	ZOR Saffron Voltage	NEW	analog
+Lead	ZOR Silver Serpent	NEW	acid
+Lead	ZOR Silver Tongue	NEW	funk
+Lead	ZOR Static Saber	NEW	grit
+Lead	ZOR Summer Glass	NEW	soft
+Lead	ZOR Tight Circuit	NEW	acid
+Lead	ZOR Transformer Glow	NEW	grit
+Lead	ZOR Velour Lead	NEW	funk
+Lead	ZOR Warm Tape Solo	NEW	soft
+Lead	ZOR Wax Bloom	NEW	soft
+Lead	ZOR Wide Awake	NEW	analog
+Lead	ZOR Yellow Cab	NEW	analog
+Pad	ZOR Aerial Cinema	NEW	cinematic
+Pad	ZOR Afterimage Sky	NEW	cinematic
+Pad	ZOR Amber Haze	NEW	analog
+Pad	ZOR Blackwater Drift	NEW	dark
+Pad	ZOR Blue Dusk	NEW	analog
+Pad	ZOR Breathing Circuit	NEW	motion
+Pad	ZOR Celestial Wire	NEW	shimmer
+Pad	ZOR Cold Film	NEW	dark
+Pad	ZOR Cotton Clouds	NEW	dream
+Pad	ZOR Deep Space Dust	NEW	ambient
+Pad	ZOR Distant Terminal	NEW	cinematic
+Pad	ZOR Dream Register	NEW	dream
+Pad	ZOR Dusty Projector	NEW	vintage
+Pad	ZOR Faded Choir	NEW	vintage
+Pad	ZOR Faded Polaroid	NEW	analog
+Pad	ZOR Frosted Halo	NEW	shimmer
+Pad	ZOR Glass Weather	NEW	shimmer
+Pad	ZOR Hidden Rooms	NEW	ambient
+Pad	ZOR Hovering Static	NEW	motion
+Pad	ZOR Iridescent Frame	NEW	shimmer
+Pad	ZOR Long Exposure	NEW	cinematic
+Pad	ZOR Low Pressure	NEW	dark
+Pad	ZOR Luminous Tide	NEW	motion
+Pad	ZOR Lunar Milk	NEW	dream
+Pad	ZOR Memory Palace	NEW	dream
+Pad	ZOR Midnight Coast	NEW	cinematic
+Pad	ZOR Nocturnal Fog	NEW	dark
+Pad	ZOR Old Neon	NEW	vintage
+Pad	ZOR Orbiting Current	NEW	motion
+Pad	ZOR Prism Bloom	NEW	shimmer
+Pad	ZOR Quiet Machinery	NEW	dark
+Pad	ZOR Remote Signal	NEW	ambient
+Pad	ZOR Satellite Choir	NEW	shimmer
+Pad	ZOR Silent Comet	NEW	ambient
+Pad	ZOR Sleepwalk Circuit	NEW	analog
+Pad	ZOR Soft Relay	NEW	analog
+Pad	ZOR Soft Tremor	NEW	motion
+Pad	ZOR Still Horizon	NEW	ambient
+Pad	ZOR Tape Cathedral	NEW	vintage
+Pad	ZOR Tender Static	NEW	dream
+Pad	ZOR Underpass Mist	NEW	dark
+Pad	ZOR Velvet Decade	NEW	vintage
+Pad	ZOR Violet Window	NEW	dream
+Pad	ZOR Warm Cinema	NEW	vintage
+Pad	ZOR Warm Horizon	NEW	analog
+Pad	ZOR Waveform Garden	NEW	motion
+Pad	ZOR Wide Atlantic	NEW	cinematic
+Percussion	ZOR Block Echo	NEW	click
+Percussion	ZOR Clap Alley	NEW	clap
+Percussion	ZOR Clap Circuit	NEW	clap
+Percussion	ZOR Clap Club	NEW	clap
+Percussion	ZOR Clap Palm	NEW	clap
+Percussion	ZOR Clap Ribbon	NEW	clap
+Percussion	ZOR Clap Studio	NEW	clap
+Percussion	ZOR Clav Perc	NEW	click
+Percussion	ZOR Click Glass	NEW	click
+Percussion	ZOR Click Rim	NEW	click
+Percussion	ZOR Click Wood	NEW	click
+Percussion	ZOR Crash Signal	NEW	cymbal
+Percussion	ZOR Hat Crisp	NEW	hat
+Percussion	ZOR Hat Dry	NEW	hat
+Percussion	ZOR Hat Electric	NEW	hat
+Percussion	ZOR Hat Needle	NEW	hat
+Percussion	ZOR Hat Sand	NEW	hat
+Percussion	ZOR Hat Sizzle	NEW	hat
+Percussion	ZOR Hat Tape	NEW	hat
+Percussion	ZOR Hat Velvet	NEW	hat
+Percussion	ZOR Kick Airlock	NEW	kick
+Percussion	ZOR Kick Basement	NEW	kick
+Percussion	ZOR Kick Concrete	NEW	kick
+Percussion	ZOR Kick Disco	NEW	kick
+Percussion	ZOR Kick Pressure	NEW	kick
+Percussion	ZOR Kick Satin	NEW	kick
+Percussion	ZOR Kick Submarine	NEW	kick
+Percussion	ZOR Kick Thunder	NEW	kick
+Percussion	ZOR Kick Vintage	NEW	kick
+Percussion	ZOR Kick Warehouse	NEW	kick
+Percussion	ZOR Metal Bell	NEW	metal
+Percussion	ZOR Metal Clang	NEW	metal
+Percussion	ZOR Metal Rattle	NEW	metal
+Percussion	ZOR Metal Spring	NEW	metal
+Percussion	ZOR Metal Tick	NEW	metal
+Percussion	ZOR Metal Tube	NEW	metal
+Percussion	ZOR Open Hat Loft	NEW	cymbal
+Percussion	ZOR Open Hat Silver	NEW	cymbal
+Percussion	ZOR Open Hat Smoke	NEW	cymbal
+Percussion	ZOR Ride Diamond	NEW	cymbal
+Percussion	ZOR Ride Starlight	NEW	cymbal
+Percussion	ZOR Snare Alloy	NEW	snare
+Percussion	ZOR Snare Ash	NEW	snare
+Percussion	ZOR Snare Chamber	NEW	snare
+Percussion	ZOR Snare Dry	NEW	snare
+Percussion	ZOR Snare Dust	NEW	snare
+Percussion	ZOR Snare Neon	NEW	snare
+Percussion	ZOR Snare Ribbon	NEW	snare
+Percussion	ZOR Snare Satellite	NEW	snare
+Percussion	ZOR Snare Wide	NEW	snare
+Percussion	ZOR Snare Wired	NEW	snare
+Percussion	ZOR Sync Tap	NEW	click
+Percussion	ZOR Tom High Chrome	NEW	tom
+Percussion	ZOR Tom Low Chamber	NEW	tom
+Percussion	ZOR Tom Low Orbit	NEW	tom
+Percussion	ZOR Tom Mid Metro	NEW	tom
+Percussion	ZOR Tom Plastic	NEW	tom
+Percussion	ZOR Tom Pulse	NEW	tom
+SFX	ZOR Atmos Dark Terminal	NEW	atmos
+SFX	ZOR Atmos Distant Engines	NEW	atmos
+SFX	ZOR Atmos Machine Hall	NEW	atmos
+SFX	ZOR Atmos Radio Ghost	NEW	atmos
+SFX	ZOR Atmos Space Station	NEW	atmos
+SFX	ZOR Atmos Underwater	NEW	atmos
+SFX	ZOR Blip Data	NEW	blip
+SFX	ZOR Blip Neon Dot	NEW	blip
+SFX	ZOR Blip Radar	NEW	blip
+SFX	ZOR Blip Scanner	NEW	blip
+SFX	ZOR Blip Tiny Robot	NEW	blip
+SFX	ZOR Impact Alloy	NEW	impact
+SFX	ZOR Impact Concrete	NEW	impact
+SFX	ZOR Impact Deep Field	NEW	impact
+SFX	ZOR Impact Metal Room	NEW	impact
+SFX	ZOR Impact Reactor	NEW	impact
+SFX	ZOR Impact Voltage	NEW	impact
+SFX	ZOR Riser Cold Air	NEW	rise
+SFX	ZOR Riser Elevator	NEW	rise
+SFX	ZOR Riser Ion	NEW	rise
+SFX	ZOR Riser Static	NEW	rise
+SFX	ZOR Riser Transmission	NEW	rise
+SFX	ZOR Riser Vapor	NEW	rise
+SFX	ZOR Sweep Heat	NEW	sweep
+SFX	ZOR Sweep Laser	NEW	sweep
+SFX	ZOR Sweep Midnight	NEW	sweep
+SFX	ZOR Sweep Slow Motion	NEW	sweep
+SFX	ZOR Sweep Tape	NEW	sweep
+SFX	ZOR Sweep Whiteout	NEW	sweep
+Bass	ZOR French Filter Bounce	NEW	French house bass synthesizer
+Bass	ZOR French Disco Roller	NEW	French house bass synthesizer
+Bass	ZOR French Velvet Bass	NEW	French house bass synthesizer
+Bass	ZOR French Touch Shuffle	NEW	French house bass synthesizer
+Keys	ZOR 90s Garage Piano	NEW	90s house chord synthesizer
+Keys	ZOR 90s Club Organ	NEW	90s house chord synthesizer
+Keys	ZOR 90s Rave Keys	NEW	90s house chord synthesizer
+Keys	ZOR 90s Deep Chords	NEW	90s house chord synthesizer
+Keys	ZOR 90s Warehouse Stabs	NEW	90s house chord synthesizer

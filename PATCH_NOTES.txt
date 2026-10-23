@@ -1,36 +1,27 @@
-ZPUNK - PROJECT RESTORE / HELM SOUND FIX
-========================================
-Merge the Assets folder into your project's Assets folder.
-Overwrite only these 4 files. Retain existing .meta files.
+ZPUNK | Sampler layout + active clip playback indicators | 2026-10-21
 
-CAUSE: Legacy project saves contain a full copy of UI sound-bus parameters.
-When the preset is selected on project load, those cached (possibly stale)
-UI values were written back into Helm after the .helm file loaded. That can
-turn distortion on, alter oscillators or filters, or make the sound incorrect.
-Changing to the next preset bypasses the project override and restores the
-correct native patch, explaining why patch navigation seems to fix it.
+Apply files relative to your Unity project's Assets/ directory.
+Preserve the existing .meta files.
 
-PATCH:
-* Legacy saves: restored project sound is the actual .helm preset. Ignore
-  old Synth/Pad UI cached parameters for native sound; retain project content,
-  presets, track arrangement and mixer/non-synth bus data.
-* New saves: persist the actual native Helm settings (not the UI cache).
-  Restore this sound snapshot only after the matching preset finishes loading.
-* Sync native sound back into UI after restore.
-* Restore each channel's master volume only after its preset loads.
-* Pads: use real native FX on/off controls, never zero the dry/wet mix as a
-  substitute for an off switch.
-* Remove a single zero-byte SFX .helm from the preset index (source file intact).
-* Log successful patch restores for diagnosis in Unity Console/device logs.
+CHANGED:
+- Scripts/DAW/ZPunkClipEditorUI.cs
+  * Warp progress and state now immediately below sampler waveform.
+  * Pitch adjustment, source/pitched key, and sample library info directly below waveform, before zoom/edit/pads.
+  * Green clip-editor playhead and ruler cursor only appear while the selected clip is active and its track is audible.
+  * Clip start/end, looping, source offset and mute/solo restrictions accounted for.
 
-BACKWARD COMPATIBILITY:
-Older projects remain readable and retain their musical content. Their saved
-Synth/Pad preset is now treated as authoritative. Individual sound adjustments
-saved only in the old UI parameter dumps cannot be reliably reconstructed.
-After verifying the sound, save the project again to capture a proper native
-snapshot for subsequent launches. Never delete project files to test this fix.
+- Scripts/DAW/ZPunkArrangementUI.cs
+  * The green global arrangement position line is confined to the ruler.
+  * Individual clips show a green cursor only while their audio/MIDI source is active and their track is audible.
+  * Empty lanes, upcoming/past clips, muted tracks, and non-solo tracks during solo playback do not show cursor.
 
-VERIFICATION:
-Static source checks passed; Unity and native iOS runtime not available here.
-Do not resubmit a release to Apple until cold launch and project reload have
-been checked on a physical iOS device / TestFlight.
+VALIDATION:
+- Source structure and patch requirements checked.
+- ZIP integrity checked.
+- Unity compilation and on-device testing have not been performed.
+
+TEST IN UNITY:
+1. Load a sample, enable warp; verify progress directly under waveform.
+2. Verify PITCH +/- and RESET, source key/pitched key, and library info below waveform.
+3. Place clips at different bars/tracks; play and verify green markers appear only on active clips.
+4. Test mute/solo, looped and non-looped clips, transport stop and editor playhead.

@@ -1,0 +1,409 @@
+.km-root {
+  width: 1024px;
+  height: 2048px;
+  background-color: #0F1115;
+  padding: 24px;
+  flex-direction: column;
+}
+
+.km-topbar {
+  height: 104px;
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  border-bottom-left-radius: 20px;
+  border-bottom-right-radius: 20px;
+  background-color: #12141A;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
+  padding: 20px 20px;
+  flex-direction: row;
+  align-items: center;
+}
+
+.km-title {
+  color: #E7E9EE;
+  font-size: 44px;
+  -unity-font-style: bold;
+}
+
+.km-presetbar {
+  margin-left: 16px;
+  flex-grow: 1;
+  height: 54px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+  background-color: #1C1F28;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
+  padding: 0 16px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: row;
+}
+
+.km-presetlabel {
+  color: #9AA3B2;
+  font-size: 20px;
+}
+
+.km-pillbtn {
+  height: 54px;
+  width: 92px;
+  margin-left: 12px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+  background-color: #1C1F28;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
+  justify-content: center;
+  align-items: center;
+}
+
+.km-pillbtn:hover {
+  border-top-color: #6AE4FF;
+  border-right-color: #6AE4FF;
+  border-bottom-color: #6AE4FF;
+  border-left-color: #6AE4FF;
+}
+
+.km-pillbtn > .unity-text-element {
+  color: #E7E9EE;
+  font-size: 18px;
+  -unity-font-style: bold;
+}
+
+.km-tabs {
+  height: 56px;
+  margin-top: 18px;
+  flex-direction: row;
+}
+
+.km-tab {
+  flex-grow: 1;
+  margin-right: 12px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
+  background-color: #181B23;
+  justify-content: center;
+  align-items: center;
+}
+
+
+.km-tab--active {
+  border-top-color: #6AE4FF;
+  border-right-color: #6AE4FF;
+  border-bottom-color: #6AE4FF;
+  border-left-color: #6AE4FF;
+  background-color: #202532;
+}
+
+.km-tab-label {
+  color: #9AA3B2;
+  font-size: 18px;
+  -unity-font-style: bold;
+}
+
+.km-tab--active .km-tab-label { color: #E7E9EE; }
+
+.km-card {
+  margin-top: 14px;
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  border-bottom-left-radius: 18px;
+  border-bottom-right-radius: 18px;
+  background-color: #171A21;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
+  padding: 14px;
+}
+
+.km-row {
+  flex-direction: row;
+}
+
+.km-col3 > .km-subcard {
+  flex-grow: 1;
+}
+
+.km-subcard {
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
+  background-color: #13161E;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
+  padding: 14px;
+  margin-right: 18px;
+}
+
+
+.km-subtitle {
+  color: #9AA3B2;
+  font-size: 18px;
+  -unity-font-style: bold;
+  margin-bottom: 10px;
+}
+
+.km-controls {
+  flex-grow: 1;
+  flex-direction: column;
+}
+
+.km-macro-row {
+  flex-direction: row;
+  margin-bottom: 10px;
+}
+
+.km-step-tools {
+  flex-direction: row;
+  margin-left: 240px;
+}
+
+.km-tool {
+  width: 96px;
+  height: 34px;
+  margin-right: 10px;
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
+  background-color: #1C1F28;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
+  justify-content: center;
+  align-items: center;
+}
+
+
+.km-tool-label {
+  color: #9AA3B2;
+  font-size: 14px;
+}
+
+.km-seq-grid {
+  margin-top: 12px;
+  flex-direction: column;
+}
+
+.km-seq-row {
+  flex-direction: row;
+  margin-bottom: 18px;
+}
+
+
+.km-step {
+  width: 94px;
+  height: 94px;
+  margin-right: 18px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+  background-color: #1E2230;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-top-color: #242938;
+  border-right-color: #242938;
+  border-bottom-color: #242938;
+  border-left-color: #242938;
+  justify-content: center;
+  align-items: center;
+}
+
+
+.km-step--active {
+  border-top-color: #A78BFA;
+  border-right-color: #A78BFA;
+  border-bottom-color: #A78BFA;
+  border-left-color: #A78BFA;
+}
+
+.km-tempo {
+  height: 400px;
+}
+
+.km-tempo-row {
+  margin-top: 10px;
+  flex-direction: row;
+  align-items: center;
+}
+
+.km-label {
+  color: #9AA3B2;
+  font-size: 18px;
+  -unity-font-style: bold;
+}
+
+.km-bpm {
+  color: #E7E9EE;
+  font-size: 24px;
+  -unity-font-style: bold;
+  margin-left: 18px;
+}
+
+/* --- Layout tuning to match mockups --- */
+.km-root { padding: 20px; }
+
+.km-modules-card {
+  /* keep modules from eating the whole screen */
+  height: 980px;
+}
+
+.km-fader-row {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-top: 10px;
+}
+
+.km-subcard {
+  /* prevent over-stretching on tall devices */
+  height: 940px;
+}
+
+.km-card { overflow: hidden; }
+
+
+/* Playhead highlight (current step) */
+.km-step--playhead {
+  border-top-color: #6AE4FF;
+  border-right-color: #6AE4FF;
+  border-bottom-color: #6AE4FF;
+  border-left-color: #6AE4FF;
+  border-top-width: 3px;
+  border-right-width: 3px;
+  border-bottom-width: 3px;
+  border-left-width: 3px;
+  background-color: #2A3142;
+}
+
+/* Transport buttons */
+.km-pillbtn--transport {
+  width: 72px;
+}
+
+/* ZPUNK 2.0 RESPONSIVE ROOT — overrides legacy 1024x2048 fixed canvas */
+.km-root {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex-grow: 1;
+    flex-direction: column;
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+    padding-right: 0;
+    background-color: #0F1115;
+    color: #EDF2F7;
+    font-size: 15px;
+}
+.km-title { color: #F4F7FB; font-size: 20px; }
+.km-presetlabel { color: #BAC8D7; font-size: 12px; }
+.km-pillbtn { color: #EDF2F7; font-size: 13px; }
+.km-pillbtn--transport { color: #FFFFFF; }
+.km-subtitle, .km-tab-label, .km-label { color: #B9C8D9; }
+.km-bpm, .km-patch-name { color: #F0F5FB; }
+.km-topbar {
+    height: auto;
+    min-height: 54px;
+    flex-shrink: 0;
+    padding-top: 7px;
+    padding-bottom: 7px;
+    padding-left: 7px;
+    padding-right: 7px;
+}
+.km-presetbar { height: 30px; min-width: 0; }
+.km-card { height: auto; overflow: visible; }
+.km-subcard { height: auto; }
+.km-modules-card { height: auto; }
+
+/* ZPUNK 2.0 — consolidated functional DAW skin */
+.km-root { background-color: #09111C; color: #EFF5FF; }
+.km-topbar { background-color: #0B1625; border-top-width: 0; border-bottom-width: 1px; border-left-width: 0; border-right-width: 0; border-bottom-color: #23374C; }
+.km-title { color: #F4F7FB; font-size: 19px; }
+.km-presetbar { background-color: #122034; border-top-width: 0; border-bottom-width: 0; border-left-width: 0; border-right-width: 0; }
+.km-presetlabel { color: #BED0E0; font-size: 12px; }
+.km-pillbtn { background-color: #192B43; color: #F4F8FF; border-left-width: 1px; border-right-width: 1px; border-top-width: 1px; border-bottom-width: 1px; border-left-color: #35506C; border-right-color: #35506C; border-top-color: #35506C; border-bottom-color: #35506C; }
+.km-pillbtn > .unity-text-element { color: #F4F8FF; font-size: 13px; }
+.km-card { background-color: #111E30; border-left-color: #283A50; border-right-color: #283A50; border-top-color: #283A50; border-bottom-color: #283A50; border-left-width: 1px; border-right-width: 1px; border-top-width: 1px; border-bottom-width: 1px; border-top-left-radius: 8px; border-top-right-radius: 8px; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; margin-top: 5px; margin-bottom: 5px; padding: 10px; }
+.km-subtitle { color: #F0B760; font-size: 13px; }
+.km-label { color: #B4C6D8; }
+
+/* Touch/readability defaults for the active UXML. The DAW shell is built by
+   KMusicTabsUI and uses inline dimensions for its responsive layout. */
+.km-root {
+    -unity-font-style: normal;
+    color: #edf3fa;
+}
+.km-topbar {
+    margin-bottom: 3px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
+}
+.km-pillbtn {
+    min-height: 44px;
+    font-size: 14px;
+    color: #f2f6fa;
+}
+.km-pillbtn:focus {
+    border-top-color: #4cddb9;
+    border-bottom-color: #4cddb9;
+    border-left-color: #4cddb9;
+    border-right-color: #4cddb9;
+}

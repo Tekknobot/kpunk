@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_04
+  m_EditorClassIdentifier: 
+  kitName: Boombap
+  kick: {fileID: 8300000, guid: b203eba5e3b5b7f418c3a1795a4d31f2, type: 3}
+  snare: {fileID: 8300000, guid: 387a276482c30d547bdb3cba744bd4b5, type: 3}
+  clap: {fileID: 8300000, guid: c149a348e054c194b8a613c674ebe249, type: 3}
+  hatClosed: {fileID: 8300000, guid: 16c7cf8303f9db6419bbaae4d8df1b8e, type: 3}
+  hatOpen: {fileID: 8300000, guid: a6d1b3e9155943b4a8728e27a5e1e44f, type: 3}
+  ride: {fileID: 8300000, guid: f810b3d3efcaf804cba12b663021ba31, type: 3}
+  rim: {fileID: 8300000, guid: e68efdcebb7c2c544ba3a3a9be6dd20e, type: 3}
+  crash: {fileID: 8300000, guid: dab09995277a4224ea7043e0e5bdaf09, type: 3}

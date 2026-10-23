@@ -1,0 +1,23 @@
+ZPUNK sampler loading / amber guide / warp stability patch — 2026-10-23
+
+Fixed:
+- Imported and Android-decoded samples are explicitly detached and destroyed when replaced, while bundled Resources clips are left intact.
+- The CHOPS playback voice pool releases references to the previous sample before native PCM is destroyed.
+- Pending warp, transient, source-tempo, and key-analysis work is invalidated when a sample or project changes.
+- Saved amber hit guides are restored from a small persistent fingerprinted cache rather than recalculated every time. Both original and warped guide variants are cached separately. The cache does not overwrite manually edited chop markers.
+- Already-loaded samples are reused when reopening a project or re-enabling the player.
+- Repeated UI enable/disable no longer stacks player-button listeners or playhead update jobs.
+- The Android MediaStore bridge cleans up temporary decoded-file copies and purges old abandoned temporary files.
+- Repeated manual source-BPM adjustments debounce warp; already-matched tempo skips resynthesis; WSOLA search work is reduced.
+- The offline warp avoids dangerously large source+output native PCM allocations on memory-limited devices, preserving original audio when the safety limit is reached.
+
+New file: Scripts/DAW/ZPunkSampleAnalysisCache.cs (+ Unity .meta)
+Diagnostic: ZPUNK > Diagnostics > Test Sampler Hit Cache (Unity Editor).
+
+Manual device regression check:
+1. Load sample A, wait until amber guides show; switch to project B with sample B; return to A. Confirm the guides reappear immediately and indicate CACHED.
+2. Repeat project/sample switching 30-50 times on an actual Android/iOS device while watching Unity Profiler native AudioClip and total memory; memory should settle rather than increasing without bound.
+3. Switch projects while a long warp is working, then enable/disable WARP repeatedly, change BPM, and test CHOPS playback.
+4. Confirm manually edited chop markers, 16 pad slicing, waveform, exports, and project save/load still behave as before.
+
+Important: The code has been patched and statically inspected; it has not been compiled in Unity or stress-tested on physical devices in this environment. Native-memory stability must still be confirmed using a development build and device logs. The safety limits prevent oversized warp allocations but no application can guarantee all crashes are impossible (including OS-level decoding / out-of-memory conditions).

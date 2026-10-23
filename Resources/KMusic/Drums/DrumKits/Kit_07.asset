@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_07
+  m_EditorClassIdentifier: 
+  kitName: Triphop
+  kick: {fileID: 8300000, guid: bffb321a57124694dbf0cb0ab0097145, type: 3}
+  snare: {fileID: 8300000, guid: 6c5bbb0fd4c9e614cba876621e7d8ce0, type: 3}
+  clap: {fileID: 8300000, guid: e2f6a3291dc144e43870688b0bdd642e, type: 3}
+  hatClosed: {fileID: 8300000, guid: dbe863512ed76eb439eb0febf8f36081, type: 3}
+  hatOpen: {fileID: 8300000, guid: db09e629388db9347b7bfa0dd9570e10, type: 3}
+  ride: {fileID: 8300000, guid: 936c6b43d6a91c544be48a92dd796188, type: 3}
+  rim: {fileID: 8300000, guid: f11c6dc04d9695e4ab7193183a2cf6c3, type: 3}
+  crash: {fileID: 8300000, guid: cdc9652a9839bca41b98fb25f211affc, type: 3}

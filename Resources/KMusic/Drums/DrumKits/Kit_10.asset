@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_10
+  m_EditorClassIdentifier: 
+  kitName: DMX
+  kick: {fileID: 8300000, guid: 3d37bc55e22354a45a2fe0da861c520b, type: 3}
+  snare: {fileID: 8300000, guid: 5731b141c9cca4b45a1404fb216cbfb2, type: 3}
+  clap: {fileID: 8300000, guid: e2fec305ff3504442a5e81315f50686b, type: 3}
+  hatClosed: {fileID: 8300000, guid: 31c3a5838513ad6488dfc423afcb1b44, type: 3}
+  hatOpen: {fileID: 8300000, guid: a581788a7cb21f342a8034ac02a6c93b, type: 3}
+  ride: {fileID: 8300000, guid: a71b5fa314ec4714cafe0f50a8acf94d, type: 3}
+  rim: {fileID: 8300000, guid: b35a065beb1f3584180b30597915a181, type: 3}
+  crash: {fileID: 8300000, guid: 7f6296b4ed052264c94485d12a36d16b, type: 3}

@@ -1,0 +1,744 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:km="KMusic.UI">
+  <ui:VisualElement name="Root" class="km-root">
+    <!-- Pages: tabs show/hide these panels -->
+    <ui:VisualElement name="Pages" style="flex-grow:1; flex-direction:column; overflow:scroll;">
+
+      <!-- ZPunk 2.0 song timeline. The workspace controller moves this under the main shell. -->
+      <ui:VisualElement name="PageArrangement" style="display:none; flex-direction:column; flex-grow:1;" />
+
+      <!-- SEQ (default visible) -->
+      <ui:VisualElement name="PageSeq" style="display:flex; flex-direction:column;">
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="SEQUENCER"/>
+          </ui:VisualElement>
+
+          <km:StepGrid name="StepGrid" />
+
+        </ui:VisualElement>
+
+        <ui:VisualElement class="km-card">
+          <KMusic.UI.PianoRollGrid name="SeqPianoRoll" rows="8" cols="8" />
+        </ui:VisualElement>
+
+        <!-- SYNTH PATCH (SEQ page) -->
+        <ui:VisualElement name="CardSynthPatch" class="km-card km-patch-card">
+
+          <ui:Label class="km-subtitle" text="SYNTH PATCH"/>
+
+          <ui:VisualElement class="km-patch-row">
+
+            <ui:Button name="PatchPrevButton" class="km-pillbtn km-patch-nav" text="PREV" />
+
+            <ui:Label name="PatchNameLabel" class="km-patch-name" text="Init Patch" />
+
+            <ui:Button name="PatchNextButton" class="km-pillbtn km-patch-nav" text="NEXT" />
+
+          </ui:VisualElement>
+
+          <ui:Label name="PatchIndexLabel" class="km-patch-index" text="1 / 100" />
+
+        </ui:VisualElement>
+      </ui:VisualElement>
+
+      <!-- SYNTH -->
+      <!-- PageSynth: Audio Helm synth parameters, 3-knob touch rows -->
+      <ui:VisualElement name="PageSynth" class="km-sound-page" style="display:none; flex-direction:column;">
+        <ui:VisualElement name="CardMaster" class="km-card km-sound-card">
+          <ui:Label class="km-subtitle" text="MASTER" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Volume" paramId="master.vol" />
+              <km:KnobElement compact="true" label="Glide" paramId="master.porta" />
+              <km:KnobElement compact="true" label="Voices" paramId="master.poly" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardOsc" class="km-card km-sound-card">
+          <ui:VisualElement class="km-sound-modules">
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="OSCILLATOR 1" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Level" paramId="osc1.vol" />
+              <km:KnobElement compact="true" label="Waveform" paramId="osc1.wave" />
+              <km:KnobElement compact="true" label="Octave" paramId="osc1.trans" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Fine Tune" paramId="osc1.tune" />
+              <km:KnobElement compact="true" label="Voices" paramId="osc1.uni" />
+              <km:KnobElement compact="true" label="Detune" paramId="osc1.detune" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Harmonize" paramId="osc1.harm" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="OSCILLATOR 2" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Level" paramId="osc2.vol" />
+              <km:KnobElement compact="true" label="Waveform" paramId="osc2.wave" />
+              <km:KnobElement compact="true" label="Octave" paramId="osc2.trans" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Fine Tune" paramId="osc2.tune" />
+              <km:KnobElement compact="true" label="Voices" paramId="osc2.uni" />
+              <km:KnobElement compact="true" label="Detune" paramId="osc2.detune" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Harmonize" paramId="osc2.harm" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+          </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardSub" class="km-card km-sound-card">
+          <ui:Label class="km-subtitle" text="SUB / NOISE" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Sub Level" paramId="sub.vol" />
+              <km:KnobElement compact="true" label="Sub Octave" paramId="sub.oct" />
+              <km:KnobElement compact="true" label="Noise Level" paramId="noise.vol" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Cross Mod" paramId="synth.xmod" />
+              <km:KnobElement compact="true" label="Key Track" paramId="filter.keytrk" />
+              <km:KnobElement compact="true" label="Velocity" paramId="synth.vel" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardFilter" class="km-card km-sound-card">
+          <ui:VisualElement class="km-sound-modules">
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="FILTER" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Cutoff" paramId="filter.cutoff" />
+              <km:KnobElement compact="true" label="Resonance" paramId="filter.res" />
+              <km:KnobElement compact="true" label="Drive" paramId="filter.drive" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Attack" paramId="filter.atk" />
+              <km:KnobElement compact="true" label="Decay" paramId="filter.dec" />
+              <km:KnobElement compact="true" label="Sustain" paramId="filter.sus" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Release" paramId="filter.rel" />
+              <km:KnobElement compact="true" label="Env Depth" paramId="filter.env" />
+              <km:KnobElement compact="true" label="Blend" paramId="filter.blend" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="AMPLIFIER" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Attack" paramId="amp.atk" />
+              <km:KnobElement compact="true" label="Decay" paramId="amp.dec" />
+              <km:KnobElement compact="true" label="Sustain" paramId="amp.sus" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Release" paramId="amp.rel2" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="DISTORTION" />
+              <ui:Button name="DistToggleButton" class="km-fx-toggle" text="OFF" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Type" paramId="fx.dist.type" />
+              <km:KnobElement compact="true" label="Drive" paramId="fx.dist.drive" />
+              <km:KnobElement compact="true" label="Mix" paramId="fx.dist.mix" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+          </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardMod" class="km-card km-sound-card">
+          <ui:VisualElement class="km-sound-modules">
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="MODULATION" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="LFO Rate" paramId="mod.rate" />
+              <km:KnobElement compact="true" label="LFO Depth" paramId="mod.depth" />
+              <km:KnobElement compact="true" label="LFO Wave" paramId="mod.wave" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Env Attack" paramId="mod.atk" />
+              <km:KnobElement compact="true" label="Env Decay" paramId="mod.dec" />
+              <km:KnobElement compact="true" label="Env Sustain" paramId="mod.sus" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Env Release" paramId="mod.rel" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="EFFECTS" />
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="DELAY" />
+              <ui:Button name="DelayToggleButton" class="km-fx-toggle" text="OFF" />
+              <ui:Button name="DelaySyncToggleButton" class="km-fx-toggle" text="SYNC" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Mix" paramId="fx.delay.mix" />
+              <km:KnobElement compact="true" label="Feedback" paramId="fx.delay.fb" />
+              <km:KnobElement compact="true" label="Rate" paramId="fx.delay.time" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="REVERB" />
+              <ui:Button name="ReverbToggleButton" class="km-fx-toggle" text="OFF" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Mix" paramId="fx.rev.mix" />
+              <km:KnobElement compact="true" label="Feedback" paramId="fx.rev.fb" />
+              <km:KnobElement compact="true" label="Damping" paramId="fx.rev.damp" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+          </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardArp" class="km-card km-sound-card">
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="ARPEGGIATOR" />
+              <ui:Button name="ArpToggleButton" class="km-fx-toggle" text="OFF" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Pattern" paramId="arp.pattern" />
+              <km:KnobElement compact="true" label="Gate" paramId="arp.gate" />
+              <km:KnobElement compact="true" label="Octaves" paramId="arp.octaves" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="RATE" />
+              <ui:Button name="ArpSyncToggleButton" class="km-fx-toggle" text="FREE" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Rate" paramId="arp.rate" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+      </ui:VisualElement>
+
+      <!-- SYNTH II -->
+      <!-- PageSynth2: Audio Helm synth parameters, 3-knob touch rows -->
+      <ui:VisualElement name="PageSynth2" class="km-sound-page" style="display:none; flex-direction:column;">
+        <ui:VisualElement name="CardMaster" class="km-card km-sound-card">
+          <ui:Label class="km-subtitle" text="MASTER" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Volume" paramId="master.vol" />
+              <km:KnobElement compact="true" label="Glide" paramId="master.porta" />
+              <km:KnobElement compact="true" label="Voices" paramId="master.poly" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardOsc" class="km-card km-sound-card">
+          <ui:VisualElement class="km-sound-modules">
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="OSCILLATOR 1" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Level" paramId="osc1.vol" />
+              <km:KnobElement compact="true" label="Waveform" paramId="osc1.wave" />
+              <km:KnobElement compact="true" label="Octave" paramId="osc1.trans" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Fine Tune" paramId="osc1.tune" />
+              <km:KnobElement compact="true" label="Voices" paramId="osc1.uni" />
+              <km:KnobElement compact="true" label="Detune" paramId="osc1.detune" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Harmonize" paramId="osc1.harm" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="OSCILLATOR 2" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Level" paramId="osc2.vol" />
+              <km:KnobElement compact="true" label="Waveform" paramId="osc2.wave" />
+              <km:KnobElement compact="true" label="Octave" paramId="osc2.trans" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Fine Tune" paramId="osc2.tune" />
+              <km:KnobElement compact="true" label="Voices" paramId="osc2.uni" />
+              <km:KnobElement compact="true" label="Detune" paramId="osc2.detune" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Harmonize" paramId="osc2.harm" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+          </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardSub" class="km-card km-sound-card">
+          <ui:Label class="km-subtitle" text="SUB / NOISE" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Sub Level" paramId="sub.vol" />
+              <km:KnobElement compact="true" label="Sub Octave" paramId="sub.oct" />
+              <km:KnobElement compact="true" label="Noise Level" paramId="noise.vol" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Cross Mod" paramId="synth.xmod" />
+              <km:KnobElement compact="true" label="Key Track" paramId="filter.keytrk" />
+              <km:KnobElement compact="true" label="Velocity" paramId="synth.vel" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardFilter" class="km-card km-sound-card">
+          <ui:VisualElement class="km-sound-modules">
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="FILTER" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Cutoff" paramId="filter.cutoff" />
+              <km:KnobElement compact="true" label="Resonance" paramId="filter.res" />
+              <km:KnobElement compact="true" label="Drive" paramId="filter.drive" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Attack" paramId="filter.atk" />
+              <km:KnobElement compact="true" label="Decay" paramId="filter.dec" />
+              <km:KnobElement compact="true" label="Sustain" paramId="filter.sus" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Release" paramId="filter.rel" />
+              <km:KnobElement compact="true" label="Env Depth" paramId="filter.env" />
+              <km:KnobElement compact="true" label="Blend" paramId="filter.blend" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="AMPLIFIER" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Attack" paramId="amp.atk" />
+              <km:KnobElement compact="true" label="Decay" paramId="amp.dec" />
+              <km:KnobElement compact="true" label="Sustain" paramId="amp.sus" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Release" paramId="amp.rel2" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="DISTORTION" />
+              <ui:Button name="DistToggleButton2" class="km-fx-toggle" text="OFF" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Type" paramId="fx.dist.type" />
+              <km:KnobElement compact="true" label="Drive" paramId="fx.dist.drive" />
+              <km:KnobElement compact="true" label="Mix" paramId="fx.dist.mix" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+          </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardMod" class="km-card km-sound-card">
+          <ui:VisualElement class="km-sound-modules">
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="MODULATION" />
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="LFO Rate" paramId="mod.rate" />
+              <km:KnobElement compact="true" label="LFO Depth" paramId="mod.depth" />
+              <km:KnobElement compact="true" label="LFO Wave" paramId="mod.wave" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Env Attack" paramId="mod.atk" />
+              <km:KnobElement compact="true" label="Env Decay" paramId="mod.dec" />
+              <km:KnobElement compact="true" label="Env Sustain" paramId="mod.sus" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Env Release" paramId="mod.rel" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement class="km-subcard km-sound-module">
+              <ui:Label class="km-subtitle" text="EFFECTS" />
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="DELAY" />
+              <ui:Button name="DelayToggleButton2" class="km-fx-toggle" text="OFF" />
+              <ui:Button name="DelaySyncToggleButton2" class="km-fx-toggle" text="SYNC" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Mix" paramId="fx.delay.mix" />
+              <km:KnobElement compact="true" label="Feedback" paramId="fx.delay.fb" />
+              <km:KnobElement compact="true" label="Rate" paramId="fx.delay.time" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="REVERB" />
+              <ui:Button name="ReverbToggleButton2" class="km-fx-toggle" text="OFF" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Mix" paramId="fx.rev.mix" />
+              <km:KnobElement compact="true" label="Feedback" paramId="fx.rev.fb" />
+              <km:KnobElement compact="true" label="Damping" paramId="fx.rev.damp" />
+            </ui:VisualElement>
+            </ui:VisualElement>
+          </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="CardArp" class="km-card km-sound-card">
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="ARPEGGIATOR" />
+              <ui:Button name="ArpToggleButton2" class="km-fx-toggle" text="OFF" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Pattern" paramId="arp.pattern" />
+              <km:KnobElement compact="true" label="Gate" paramId="arp.gate" />
+              <km:KnobElement compact="true" label="Octaves" paramId="arp.octaves" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-fx-header-row">
+              <ui:Label class="km-fx-mini-title" text="RATE" />
+              <ui:Button name="ArpSyncToggleButton2" class="km-fx-toggle" text="FREE" />
+            </ui:VisualElement>
+            <ui:VisualElement class="km-sound-knob-row">
+              <km:KnobElement compact="true" label="Rate" paramId="arp.rate" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+      </ui:VisualElement>
+
+      <!-- PLAYER -->
+      <ui:VisualElement name="PagePlayer" style="display:none; flex-direction:column;">
+
+        <!-- TRACK -->
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items:center;">
+            <ui:Label name="TrackName" class="km-subtitle" text="TRACK"/>
+            <ui:VisualElement style="flex-grow:1;"/>
+          </ui:VisualElement>
+
+          <km:WaveformView name="Waveform" class="km-waveform" />
+
+          <ui:VisualElement class="player-transport-row">
+              <ui:Button name="TrackPlay" class="player-btn player-btn-transport player-btn-play" text="PLAY"/>
+              <ui:Button name="TrackStop" class="player-btn player-btn-transport" text="STOP"/>
+
+              <ui:Button name="TrackPrev" class="player-btn player-btn-nav" text="PREV"/>
+              <ui:Button name="TrackNext" class="player-btn player-btn-nav" text="NEXT"/>
+              <ui:Button name="TrackLoad" class="player-btn player-btn-load" text="LOAD"/>
+          </ui:VisualElement> 
+        </ui:VisualElement>
+
+        <ui:VisualElement class="km-card chop-panel">
+            <ui:Label class="km-subtitle" text="CHOP"/>
+
+            <!-- MAIN CHOP CONTROLS -->
+            <ui:VisualElement class="chop-row-main">
+                <ui:Button name="ChopToggle" class="chop-btn chop-btn-primary" text="CHOP MODE"/>
+
+                <ui:Button name="Auto4" class="chop-btn chop-btn-div" text="4"/>
+                <ui:Button name="Auto8" class="chop-btn chop-btn-div" text="8"/>
+                <ui:Button name="Auto16" class="chop-btn chop-btn-div" text="16"/>
+
+                <ui:Button name="ChopApply" class="chop-btn chop-btn-apply" text="APPLY"/>
+                <!-- <ui:Button name="SendButton" text="SEND" class="km-btn"/> -->              
+            </ui:VisualElement>
+
+            <!-- MARKER MODES -->
+            <ui:VisualElement class="chop-row-secondary">
+                <ui:Button name="MarkerAddMode" class="chop-btn chop-btn-mode" text="ADD"/>
+                <ui:Button name="MarkerDelMode" class="chop-btn chop-btn-mode" text="DEL"/>
+                <ui:Button name="SnapToggle" class="chop-btn chop-btn-mode" text="SNAP"/>
+                <ui:Button name="ResetMarkers" class="chop-btn chop-btn-reset" text="RESET"/>
+            </ui:VisualElement>
+            <ui:VisualElement class="chop-row-secondary" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                <ui:Button name="MarkerPrev" class="chop-btn chop-btn-mode" text="&lt;"/>
+                <ui:Label name="MarkerNavLabel" class="km-mini" text="NO MARKER" style="min-width:160px; unity-text-align:middle-center;"/>
+                <ui:Button name="MarkerNext" class="chop-btn chop-btn-mode" text="&gt;"/>
+            </ui:VisualElement>
+            <ui:VisualElement class="chop-row-secondary" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+                <ui:Button name="MarkerNudgeNeg10" class="chop-btn chop-btn-mode" text="-0.10"/>
+                <ui:Button name="MarkerNudgeNeg01" class="chop-btn chop-btn-mode" text="-0.01"/>
+                <ui:Button name="MarkerNudgePos01" class="chop-btn chop-btn-mode" text="+0.01"/>
+                <ui:Button name="MarkerNudgePos10" class="chop-btn chop-btn-mode" text="+0.10"/>
+            </ui:VisualElement>
+              <ui:VisualElement class="chop-row-third">
+                  <ui:VisualElement class="km-chip-group"
+                      style="flex-direction:row; justify-content:center; align-items:center; gap:12px;">
+                      
+                      <km:KnobElement name="SampleMasterVol"
+                          label="CHOP VOL"
+                          paramId="sample.master"
+                          style="width:90px; height:90px;" />
+
+                      <km:KnobElement
+                          name="SamplePitchKnob"
+                          label="PITCH"
+                          paramId="sample.pitch"
+                          step="1"
+                          min="-12"
+                          max="12"
+                          style="width:90px; height:90px;" />
+
+                  </ui:VisualElement>
+              </ui:VisualElement>
+        </ui:VisualElement>
+        <!-- Chop Picker (2 rows x 8) -->
+        <ui:VisualElement class="km-card">
+          <ui:Label class="km-subtitle" text="CHOP PICKER"/>
+          <ui:VisualElement class="km-chop-strip">
+            <ui:Button name="Chop01" class="km-chop-btn" text="01"/>
+            <ui:Button name="Chop02" class="km-chop-btn" text="02"/>
+            <ui:Button name="Chop03" class="km-chop-btn" text="03"/>
+            <ui:Button name="Chop04" class="km-chop-btn" text="04"/>
+            <ui:Button name="Chop05" class="km-chop-btn" text="05"/>
+            <ui:Button name="Chop06" class="km-chop-btn" text="06"/>
+            <ui:Button name="Chop07" class="km-chop-btn" text="07"/>
+            <ui:Button name="Chop08" class="km-chop-btn" text="08"/>
+
+            <ui:Button name="Chop09" class="km-chop-btn" text="09"/>
+            <ui:Button name="Chop10" class="km-chop-btn" text="10"/>
+            <ui:Button name="Chop11" class="km-chop-btn" text="11"/>
+            <ui:Button name="Chop12" class="km-chop-btn" text="12"/>
+            <ui:Button name="Chop13" class="km-chop-btn" text="13"/>
+            <ui:Button name="Chop14" class="km-chop-btn" text="14"/>
+            <ui:Button name="Chop15" class="km-chop-btn" text="15"/>
+            <ui:Button name="Chop16" class="km-chop-btn" text="16"/>
+
+          </ui:VisualElement>
+        </ui:VisualElement>        
+      </ui:VisualElement>
+
+
+      <!-- PAD / CHORD TRACK -->
+      <ui:VisualElement name="PagePad" style="display:none; flex-direction:column;">
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items:center; justify-content:space-between;">
+            <ui:Label class="km-subtitle" text="PAD / CHORDS" />
+            <ui:Label name="PadChordModeLabel" class="km-presetlabel km-pad-mode" text="MAJ" />
+          </ui:VisualElement>
+
+          <ui:VisualElement class="km-pad-chip-row">
+            <ui:Button name="PadChordMajButton" class="km-pillbtn km-pad-chip km-chip--active" text="MAJ" />
+            <ui:Button name="PadChordMinButton" class="km-pillbtn km-pad-chip" text="MIN" />
+            <ui:Button name="PadChord7Button" class="km-pillbtn km-pad-chip" text="7TH" />
+            <ui:Button name="PadChordSusButton" class="km-pillbtn km-pad-chip" text="SUS2" />
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <ui:VisualElement class="km-card km-patch-card">
+          <ui:Label class="km-subtitle" text="PAD PATCH"/>
+
+          <ui:VisualElement class="km-patch-row">
+            <ui:Button name="PadPatchPrevButton" class="km-pillbtn km-patch-nav" text="PREV" />
+            <ui:Label name="PadPatchNameLabel" class="km-patch-name" text="Init Patch" />
+            <ui:Button name="PadPatchNextButton" class="km-pillbtn km-patch-nav" text="NEXT" />
+          </ui:VisualElement>
+
+          <ui:Label name="PadPatchIndexLabel" class="km-patch-index" text="1 / 100" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="CHORD ROOT PICKER"/>
+          </ui:VisualElement>
+          <KMusic.UI.PianoRollGrid name="PadPianoRoll" rows="8" cols="8" />
+        </ui:VisualElement>
+
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="PAD SEQUENCER"/>
+          </ui:VisualElement>
+          <km:StepGrid name="PadStepGrid" />
+        </ui:VisualElement>
+      </ui:VisualElement>
+
+      <!-- SAMPLER -->
+      <ui:VisualElement name="PageSampler" style="display:none; flex-direction:column;">
+
+        <!-- Chop Picker (2 rows x 8) -->
+        <ui:VisualElement class="km-card">
+          <ui:Label class="km-subtitle" text="CHOP PICKER"/>
+
+          <ui:VisualElement class="km-chop-strip">
+
+            <ui:Button name="Chop01" class="km-chop-btn" text="01"/>
+            <ui:Button name="Chop02" class="km-chop-btn" text="02"/>
+            <ui:Button name="Chop03" class="km-chop-btn" text="03"/>
+            <ui:Button name="Chop04" class="km-chop-btn" text="04"/>
+            <ui:Button name="Chop05" class="km-chop-btn" text="05"/>
+            <ui:Button name="Chop06" class="km-chop-btn" text="06"/>
+            <ui:Button name="Chop07" class="km-chop-btn" text="07"/>
+            <ui:Button name="Chop08" class="km-chop-btn" text="08"/>
+
+            <ui:Button name="Chop09" class="km-chop-btn" text="09"/>
+            <ui:Button name="Chop10" class="km-chop-btn" text="10"/>
+            <ui:Button name="Chop11" class="km-chop-btn" text="11"/>
+            <ui:Button name="Chop12" class="km-chop-btn" text="12"/>
+            <ui:Button name="Chop13" class="km-chop-btn" text="13"/>
+            <ui:Button name="Chop14" class="km-chop-btn" text="14"/>
+            <ui:Button name="Chop15" class="km-chop-btn" text="15"/>
+            <ui:Button name="Chop16" class="km-chop-btn" text="16"/>
+
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- Sample Sequencer (for chops) -->
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="SAMPLE SEQUENCER"/>
+          </ui:VisualElement>
+
+          <!-- Dedicated grid for sample chops -->
+          <km:StepGrid name="SampleStepGrid" />
+        </ui:VisualElement>
+
+        <!-- Drum Picker (1x8) -->
+        <ui:VisualElement class="km-card">
+          <ui:Label class="km-subtitle" text="DRUM PICKER"/>
+
+          <ui:VisualElement class="km-drum-strip">
+            <ui:Button name="DrumKick"  class="km-drum-btn drum-kick"  text="Kick"/>
+            <ui:Button name="DrumSnare" class="km-drum-btn drum-snare" text="Snare"/>
+            <ui:Button name="DrumClap"  class="km-drum-btn drum-clap"  text="Clap"/>
+            <ui:Button name="DrumHatC"  class="km-drum-btn drum-hatc"  text="Closed"/>
+            <ui:Button name="DrumHatO"  class="km-drum-btn drum-hato"  text="Open"/>
+            <ui:Button name="DrumRide"  class="km-drum-btn drum-ride"  text="Ride"/>
+            <ui:Button name="DrumPerc"  class="km-drum-btn drum-rim"  text="Rim"/>
+            <ui:Button name="DrumCrash" class="km-drum-btn drum-crash" text="Crash"/>
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <!-- Drum Sequencer -->
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items: center;">
+            <ui:Label class="km-subtitle" text="DRUM SEQUENCER"/>
+          </ui:VisualElement>
+
+          <!-- Dedicated grid for drums -->
+          <km:StepGrid name="DrumStepGrid" />
+        </ui:VisualElement>
+
+        <!-- Drum Mixer -->
+        <ui:VisualElement class="km-card km-drum-mixer">
+          <ui:VisualElement class="km-row">
+            <ui:Label class="km-subtitle" text="DRUM MIXER"/>
+              <ui:VisualElement class="km-drum-kit-row">
+                <ui:Label class="km-drum-kit-label" text="KIT"/>
+                <ui:VisualElement class="km-kit-spacer"/>
+                <ui:Button name="KitPrev" class="km-kit-nav" text="PREV"/>
+                <ui:Label name="KitName" class="km-kit-name" text="707"/>
+                <ui:Button name="KitNext" class="km-kit-nav" text="NEXT"/>
+              </ui:VisualElement>         
+          </ui:VisualElement>
+
+          <ui:VisualElement class="km-drum-mixer-strip">
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Kick"/>
+              <km:FaderElement name="DrumVol01" label="" paramId="drum.vol01"/>
+              <ui:Button name="DrumMute01" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Snare"/>
+              <km:FaderElement name="DrumVol02" label="" paramId="drum.vol02"/>
+              <ui:Button name="DrumMute02" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Clap"/>
+              <km:FaderElement name="DrumVol03" label="" paramId="drum.vol03"/>
+              <ui:Button name="DrumMute03" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Hat C"/>
+              <km:FaderElement name="DrumVol04" label="" paramId="drum.vol04"/>
+              <ui:Button name="DrumMute04" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Hat O"/>
+              <km:FaderElement name="DrumVol05" label="" paramId="drum.vol05"/>
+              <ui:Button name="DrumMute05" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Ride"/>
+              <km:FaderElement name="DrumVol06" label="" paramId="drum.vol06"/>
+              <ui:Button name="DrumMute06" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Rim"/>
+              <km:FaderElement name="DrumVol07" label="" paramId="drum.vol07"/>
+              <ui:Button name="DrumMute07" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+            <ui:VisualElement class="km-drum-channel">
+              <ui:Label class="km-drum-chan-label" text="Crash"/>
+              <km:FaderElement name="DrumVol08" label="" paramId="drum.vol08"/>
+              <ui:Button name="DrumMute08" class="km-drum-mute" text="M"/>
+            </ui:VisualElement>
+
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+        <ui:VisualElement class="km-card km-tempo">
+          <ui:Label class="km-label" text="TEMPO"/>
+          <ui:VisualElement class="km-tempo-row">
+            <km:FaderElement label="" paramId="tempo" horizontal="true" />
+            <ui:Label name="BpmLabel" class="km-bpm" text="107 BPM"/>
+          </ui:VisualElement>
+        </ui:VisualElement>
+
+      </ui:VisualElement>
+
+      <!-- ARP (stub for now) -->
+      <ui:VisualElement name="PageArp" style="display:none; flex-direction:column;">
+        <ui:VisualElement class="km-card">
+          <ui:Label class="km-subtitle" text="ARP"/>
+        </ui:VisualElement>
+      </ui:VisualElement>
+
+      <!-- CHAIN / SONG MODE -->
+      <ui:VisualElement name="PageFx" style="display:none; flex-direction:column;">
+
+        <!-- Pattern controls -->
+        <ui:VisualElement class="km-card">
+          <ui:VisualElement class="km-row" style="align-items:center;">
+            <ui:Label class="km-subtitle" text="CHAIN"/>
+            <ui:Toggle name="ChainEnabledToggle" text=" " />
+          </ui:VisualElement>
+
+          <ui:VisualElement class="km-row" style="margin-top:12px; align-items:center;">
+            <ui:Label class="km-label" text="PATTERN" style="margin-right:12px;" />
+            <ui:Label name="ChainPatternLabel" class="km-chain-pattern" text="P01" />
+
+            <ui:VisualElement style="flex-grow:1;" />
+
+            <ui:Button name="ChainNewPatternButton" class="km-pillbtn km-pillbtn--chain" text="NEW" />
+            <ui:Button name="ChainSavePatternButton" class="km-pillbtn km-pillbtn--chain" text="SAVE" />
+            <ui:Button name="ChainDupPatternButton" class="km-pillbtn km-pillbtn--chain" text="DUP" />
+          </ui:VisualElement>
+
+          <ui:VisualElement class="km-row" style="margin-top:12px; align-items:center;">
+            <ui:Button name="ChainPlaceHereButton" class="km-pillbtn km-pillbtn--chain" text="PLACE" />
+            <ui:Button name="ChainDupNextButton" class="km-pillbtn km-pillbtn--chain" text="DUP+NEXT" style="width:180px;" />
+            <ui:Label name="ChainStatusLabel" class="km-muted" text="" style="margin-left:12px;" />
+          </ui:VisualElement>
+
+        </ui:VisualElement>
+
+        <!-- Chain grid -->
+        <ui:VisualElement name="ChainBarsCard" class="km-card">
+          <ui:VisualElement class="km-row" style="align-items:center; justify-content:space-between;">
+            <ui:Label class="km-subtitle" text="BARS"/>
+              <ui:VisualElement class="km-row" style="align-items:center;">
+                <ui:Button name="ChainClearButton" class="km-pillbtn km-pillbtn--chain" text="CLEAR" />
+                <ui:Button name="ChainLen2Button" class="km-pillbtn km-pillbtn--chain" text="2" />
+                <ui:Button name="ChainLen4Button" class="km-pillbtn km-pillbtn--chain" text="4" />
+                <ui:Button name="ChainLen8Button" class="km-pillbtn km-pillbtn--chain" text="8" />
+                <ui:Button name="ChainLen16Button" class="km-pillbtn km-pillbtn--chain" text="16" />
+                </ui:VisualElement>
+          </ui:VisualElement>
+
+          <ui:ScrollView name="ChainScroll" class="km-chain-scroll" style="margin-top:12px; height:1200px;">
+            <ui:VisualElement name="ChainBars" class="km-chain-bars" />
+          </ui:ScrollView>
+        </ui:VisualElement>
+
+      </ui:VisualElement>
+
+    </ui:VisualElement>
+
+    <!-- TOP BAR -->
+    <ui:VisualElement class="km-topbar">
+      <ui:Label class="km-title" text="zpunk" />
+      <ui:VisualElement class="km-presetbar">
+        <ui:Label name="PresetLabel" class="km-presetlabel" text="Project: PROJECT 0" />
+      </ui:VisualElement>
+      <ui:Button name="PlayButton" class="km-pillbtn km-pillbtn--transport" text=" " />
+      <ui:Button name="StopButton" class="km-pillbtn km-pillbtn--transport" text=" " />
+      <ui:Button name="NewFileButton" class="km-pillbtn" text="NEW" />
+      <ui:Button name="LoadButton" class="km-pillbtn" text="LOAD" />
+    </ui:VisualElement>
+
+    <!-- Tabs -->
+    <ui:VisualElement class="km-tabs">
+      <ui:VisualElement name="TabSampler" class="km-tab"><ui:Label class="km-tab-label" text="MAIN"/></ui:VisualElement>
+      <ui:VisualElement name="TabSeq" class="km-tab km-tab--active"><ui:Label class="km-tab-label" text="KEYS"/></ui:VisualElement>
+      <ui:VisualElement name="TabSynth" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH"/></ui:VisualElement>
+      <ui:VisualElement name="TabPad" class="km-tab"><ui:Label class="km-tab-label" text="CHORDS"/></ui:VisualElement>
+      <ui:VisualElement name="TabSynth2" class="km-tab"><ui:Label class="km-tab-label" text="SYNTH II"/></ui:VisualElement>
+      <ui:VisualElement name="TabPlayer" class="km-tab"><ui:Label class="km-tab-label" text="SAMPLER"/></ui:VisualElement>      
+      <ui:VisualElement name="TabFx" class="km-tab"><ui:Label class="km-tab-label" text="CHAIN"/></ui:VisualElement>
+    </ui:VisualElement>
+
+    <km:PresetBrowser name="PresetBrowser" style="display: none;" />
+  </ui:VisualElement>
+</ui:UXML>

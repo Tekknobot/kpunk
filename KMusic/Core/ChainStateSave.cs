@@ -1,0 +1,66 @@
+using System;
+using UnityEngine;
+using KMusic.Core;
+
+namespace KMusic.Core
+{
+    /// <summary>
+    /// Project-friendly snapshot of ChainState.
+    /// ChainState itself is PlayerPrefs-backed; this wrapper can apply into ProjectPrefs.
+    /// </summary>
+    [Serializable]
+    public sealed class ChainStateSave
+    {
+        private const string Key_ChainSlots = "kmusic.chain.slots.v1";
+        private const string Key_ChainLen = "kmusic.chain.len.v1";
+        private const string Key_ChainCursor = "kmusic.chain.cursor.v1";
+        private const string Key_ChainEnabled = "kmusic.chain.enabled.v1";
+
+        [Serializable]
+        private class IntArraySave { public int[] v; }
+
+        public int length = 16;
+        public int cursor = 0;
+        public bool enabled = false;
+        public int[] slots = new int[64];
+
+
+        private static int NormalizeLength(int length)
+        {
+            if (length <= 2) return 2;
+            if (length <= 4) return 4;
+            if (length <= 8) return 8;
+            return 16;
+        }
+
+        public static ChainStateSave From(ChainState s)
+        {
+            var save = new ChainStateSave();
+            if (s == null) return save;
+
+            save.length = NormalizeLength(s.length);
+            save.cursor = Mathf.Clamp(s.cursor, 0, 63);
+            save.enabled = s.enabled;
+            save.slots = new int[64];
+            if (s.slots != null)
+                Array.Copy(s.slots, save.slots, Mathf.Min(64, s.slots.Length));
+            return save;
+        }
+
+        public void ApplyToPrefs()
+        {
+            try
+            {
+                ProjectPrefs.SetInt(Key_ChainLen, NormalizeLength(length));
+                ProjectPrefs.SetInt(Key_ChainCursor, Mathf.Clamp(cursor, 0, 63));
+                ProjectPrefs.SetInt(Key_ChainEnabled, enabled ? 1 : 0);
+                ProjectPrefs.SetString(Key_ChainSlots, JsonUtility.ToJson(new IntArraySave { v = slots ?? new int[64] }));
+                ProjectPrefs.Save();
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+    }
+}

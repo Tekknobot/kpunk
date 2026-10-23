@@ -1,0 +1,39 @@
+ZPUNK sampler playhead / ghost snapping patch
+October 21, 2026
+
+Copy KMusic/ and Scripts/ into the Unity project's Assets/ directory,
+overwriting the corresponding .cs files. Keep existing .meta files.
+
+Changed:
+KMusic/UI/Controls/WaveformView.cs
+Scripts/KMusicPlayerUI.cs
+Scripts/DAW/ZPunkClipEditorUI.cs
+
+Behavior:
+- Drag the visible HEAD handle at the top of the waveform to reposition the playhead.
+- You can also tap and drag elsewhere along the ruler to seek. The handle
+  remains independent of chop boundary editing below the ruler.
+- HIT SNAP (default) snaps the playhead to nearby visible kick/snare ghost
+  markers. The threshold is 18 on-screen pixels, independent of zoom.
+- GRID SNAP snaps to the musical sixteenth-note grid instead.
+- When snapping, the handle and playhead temporarily change to mint green.
+- PLAY starts at the placed playhead, not the beginning of the sample.
+- When stopped, the playhead stays where it was placed. STOP retains position.
+- Warp processing retains the paused playhead position when swapping clips.
+- Touch/pen pinch zoom and chop marker dragging remain separate gestures.
+- No audio analysis or persistent chop format changes.
+
+Validation:
+- Static source checks: balanced braces, brackets, and parentheses.
+- Play/seek and event subscription paths reviewed.
+- Unity compilation and device playback not run in this environment.
+
+Suggested Unity QA:
+1. Load a sample, activate HIT SNAP, drag HEAD to a ghost onset, press PLAY.
+2. Drag HEAD repeatedly with playback stopped; ensure position remains.
+3. Toggle GRID SNAP and verify sixteenth snapping; zoom in and repeat.
+4. Drag a blue chop marker below the ruler, then HEAD above the ruler.
+5. Pinch zoom, pan the waveform, then seek from the ruler.
+6. Start marker audition, move HEAD, then press PLAY; playback should not
+   stop again when the old preview would have ended.
+7. Toggle WARP on/off after positioning HEAD and check retained seek time.
