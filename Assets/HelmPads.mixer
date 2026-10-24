@@ -414,6 +414,10 @@ AudioMixerController:
   m_ExposedParameters:
   - guid: bcf4d7ebd9e5f9e4598f41a6c2eeb9bc
     name: ZPunkPadsTrackGain
+  - guid: 3b7f964c8479480ca52f2f3f19c79dcf
+    name: ZPunkMusicLowPassHz
+  - guid: 20301e92c33e41d5806ad7bfe986ac3d
+    name: ZPunkMusicHighPassHz
   m_AudioMixerGroupViews:
   - guids:
     - db8a64a0c5e7951449bf1461ec9dbdd4
@@ -435,6 +439,8 @@ AudioMixerGroupController:
   m_Send: 00000000000000000000000000000000
   m_Effects:
   - {fileID: -908367233256254250}
+  - {fileID: 7666098456897227691}
+  - {fileID: 7871253459757432738}
   - {fileID: 24400004}
   m_UserColorIndex: 0
   m_Mute: 0
@@ -464,5 +470,45 @@ AudioMixerSnapshotController:
   m_AudioMixer: {fileID: 24100000}
   m_SnapshotID: b2821f463e099524a8e3f189207f79ac
   m_FloatValues:
+    3b7f964c8479480ca52f2f3f19c79dcf: 22000
+    559e02bdd3a149748c4429d252e3873d: 1
+    20301e92c33e41d5806ad7bfe986ac3d: 10
+    30fe38bd068a424392f9c9d3c08f780c: 1
     72251e46da022484384054b13c9e49d2: 1
   m_TransitionOverrides: {}
+--- !u!244 &7666098456897227691
+AudioMixerEffectController:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: 
+  m_EffectID: 6809100e301f4c259f64ab09bc7b08a1
+  m_EffectName: Lowpass
+  m_MixLevel: 99b64007c9cd4e028862ab39212d9a56
+  m_Parameters:
+  - m_ParameterName: Cutoff freq
+    m_GUID: 3b7f964c8479480ca52f2f3f19c79dcf
+  - m_ParameterName: Resonance
+    m_GUID: 559e02bdd3a149748c4429d252e3873d
+  m_SendTarget: {fileID: 0}
+  m_EnableWetMix: 0
+  m_Bypass: 0
+--- !u!244 &7871253459757432738
+AudioMixerEffectController:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: 
+  m_EffectID: d5d23bac14ef45df88f855d5fe8201bd
+  m_EffectName: Highpass
+  m_MixLevel: c05df503abff4716b0139b579a9647af
+  m_Parameters:
+  - m_ParameterName: Cutoff freq
+    m_GUID: 20301e92c33e41d5806ad7bfe986ac3d
+  - m_ParameterName: Resonance
+    m_GUID: 30fe38bd068a424392f9c9d3c08f780c
+  m_SendTarget: {fileID: 0}
+  m_EnableWetMix: 0
+  m_Bypass: 0

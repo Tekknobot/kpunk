@@ -54,6 +54,21 @@ namespace ZPunk.DAW
         private Label visibleBarLabel;
         private int viewStartBar;
         private Label hint;
+        // Arrangement output filters: two paired knob banks, independent of SOUND patches.
+        private sealed class FilterKnob
+        {
+            public bool drums;
+            public bool lowPass;
+            public VisualElement face;
+            public VisualElement dot;
+            public Label value;
+        }
+        private readonly Dictionary<VisualElement, FilterKnob> filterKnobs =
+            new Dictionary<VisualElement, FilterKnob>();
+        private FilterKnob activeFilter;
+        private int filterPointer = -1;
+        private float filterStartY, filterStartAmount;
+        private Vector2 lockedFilterScroll;
         private Label details;
         private Button loopSongButton;
         private Button snapButton;
@@ -97,18 +112,35 @@ namespace ZPunk.DAW
             // Unregister if the workspace is rebuilt with a different root.
             if (page != null)
             {
+                page.UnregisterCallback<PointerDownEvent>(OnFilterDown, TrickleDown.TrickleDown);
+                page.UnregisterCallback<PointerMoveEvent>(OnFilterMove, TrickleDown.TrickleDown);
+                page.UnregisterCallback<PointerUpEvent>(OnFilterUp, TrickleDown.TrickleDown);
+                page.UnregisterCallback<PointerCancelEvent>(OnFilterCancel, TrickleDown.TrickleDown);
+                page.UnregisterCallback<PointerCaptureOutEvent>(OnFilterCaptureLost);
                 page.UnregisterCallback<PointerDownEvent>(OnClipPointerDown, TrickleDown.TrickleDown);
                 page.UnregisterCallback<PointerMoveEvent>(OnClipPointerMove, TrickleDown.TrickleDown);
                 page.UnregisterCallback<PointerUpEvent>(OnClipPointerUp, TrickleDown.TrickleDown);
                 page.UnregisterCallback<PointerCancelEvent>(OnClipPointerCancel, TrickleDown.TrickleDown);
                 page.UnregisterCallback<PointerCaptureOutEvent>(OnClipCaptureLost);
             }
+            activeFilter = null;
+            filterPointer = -1;
+            filterKnobs.Clear();
             gesture = null;
             playheadPointerId = -1;
             page = target;
             projects = FindObjectOfType<KMusicProjectManager>();
             transport = FindObjectOfType<ZPunkSongTransport>();
             BuildLayout();
+            // Filters win pointer gestures before the ScrollView and clip editor.
+            page.RegisterCallback<PointerDownEvent>(OnFilterDown, TrickleDown.TrickleDown);
+            page.RegisterCallback<PointerMoveEvent>(OnFilterMove, TrickleDown.TrickleDown);
+            page.RegisterCallback<PointerUpEvent>(OnFilterUp, TrickleDown.TrickleDown);
+            page.RegisterCallback<PointerCancelEvent>(OnFilterCancel, TrickleDown.TrickleDown);
+            page.RegisterCallback<PointerCaptureOutEvent>(OnFilterCaptureLost);
+            if (GetComponent<ZPunkArrangementFilters>() == null)
+                gameObject.AddComponent<ZPunkArrangementFilters>();
+            ZPunkArrangementFilters.RefreshHelmMixers();
             page.RegisterCallback<PointerDownEvent>(OnClipPointerDown, TrickleDown.TrickleDown);
             page.RegisterCallback<PointerMoveEvent>(OnClipPointerMove, TrickleDown.TrickleDown);
             page.RegisterCallback<PointerUpEvent>(OnClipPointerUp, TrickleDown.TrickleDown);
@@ -139,6 +171,8 @@ namespace ZPunk.DAW
                 catch (Exception ex) { Debug.LogWarning("[ZPunk DAW] Cannot open arrangement: " + ex.Message); }
             }
             Refresh();
+            ZPunkArrangementFilters.RefreshHelmMixers();
+            RefreshFilterKnobs();
         }
 
         /// <summary>Scale touch targets in the Unity PanelSettings reference coordinate
@@ -449,12 +483,190 @@ namespace ZPunk.DAW
             details = Label("Select track, + CLIP, then EDIT to compose.", 11, Text);
             details.style.marginTop = 5 * uiScale;
             details.style.marginBottom = 4 * uiScale;
+            BuildArrangementFilters();
             arrangementPageScroll.Add(details);
             hint = Label("Drag clips to arrange. Tap EDIT for drums and piano roll.", 10, MutedText);
             hint.style.whiteSpace = WhiteSpace.Normal;
             hint.style.marginTop = 3 * uiScale;
             hint.style.marginBottom = 4 * uiScale;
             arrangementPageScroll.Add(hint);
+        }
+
+        private void BuildArrangementFilters()
+        {
+            // One horizontal strip under the arrangement: MUSIC LP/HP | DRUMS LP/HP.
+            var banks = new VisualElement { name = "ZPunkArrangementFilterStrip" };
+            banks.style.flexDirection = FlexDirection.Row;
+            banks.style.width = new Length(100, LengthUnit.Percent);
+            banks.style.flexShrink = 0;
+            banks.style.marginTop = 7 * uiScale;
+            banks.style.marginBottom = 9 * uiScale;
+            AddFilterBank(banks, "BASS  SYNTH  PADS  CHOPS", false, new Color(.29f, .84f, .72f));
+            AddFilterBank(banks, "DRUMS", true, new Color(.94f, .62f, .31f));
+            arrangementPageScroll.Add(banks);
+        }
+
+        private void AddFilterBank(VisualElement banks, string heading, bool drums, Color accent)
+        {
+            var bank = new VisualElement();
+            bank.style.flexGrow = 1;
+            bank.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            bank.style.minWidth = 0;
+            bank.style.flexShrink = 1;
+            bank.style.paddingTop = 8 * uiScale;
+            bank.style.paddingBottom = 7 * uiScale;
+            bank.style.paddingLeft = 3 * uiScale;
+            bank.style.paddingRight = 3 * uiScale;
+            bank.style.marginLeft = 2 * uiScale;
+            bank.style.marginRight = 2 * uiScale;
+            bank.style.backgroundColor = new Color(.092f, .125f, .17f);
+            bank.style.borderTopLeftRadius = 10; bank.style.borderTopRightRadius = 10;
+            bank.style.borderBottomLeftRadius = 10; bank.style.borderBottomRightRadius = 10;
+            var title = Label(heading, 9, accent);
+            title.style.unityTextAlign = TextAnchor.MiddleCenter;
+            title.style.unityFontStyleAndWeight = FontStyle.Bold;
+            title.style.whiteSpace = WhiteSpace.NoWrap;
+            title.style.marginBottom = 5 * uiScale;
+            bank.Add(title);
+            var knobs = new VisualElement();
+            knobs.style.flexDirection = FlexDirection.Row;
+            knobs.style.justifyContent = Justify.SpaceAround;
+            knobs.style.width = new Length(100, LengthUnit.Percent);
+            AddFilterKnob(knobs, drums, true, accent);
+            AddFilterKnob(knobs, drums, false, accent);
+            bank.Add(knobs);
+            banks.Add(bank);
+        }
+
+        private void AddFilterKnob(VisualElement parent, bool drums, bool lowPass, Color color)
+        {
+            var knob = new FilterKnob { drums = drums, lowPass = lowPass };
+            var cell = new VisualElement();
+            cell.style.flexGrow = 1;
+            cell.style.minWidth = 0;
+            cell.style.alignItems = Align.Center;
+            var face = new VisualElement { name = (drums ? "Drums" : "Music") +
+                (lowPass ? "LowPassKnob" : "HighPassKnob") };
+            face.style.width = 57 * uiScale;
+            face.style.height = 57 * uiScale;
+            face.style.position = Position.Relative;
+            face.style.alignItems = Align.Center;
+            face.style.justifyContent = Justify.Center;
+            face.style.backgroundColor = new Color(.17f, .22f, .29f);
+            face.style.borderTopLeftRadius = 29; face.style.borderTopRightRadius = 29;
+            face.style.borderBottomLeftRadius = 29; face.style.borderBottomRightRadius = 29;
+            face.style.borderLeftWidth = 2; face.style.borderRightWidth = 2;
+            face.style.borderTopWidth = 2; face.style.borderBottomWidth = 2;
+            var rim = new Color(.29f, .36f, .43f);
+            face.style.borderLeftColor = rim; face.style.borderRightColor = rim;
+            face.style.borderTopColor = rim; face.style.borderBottomColor = rim;
+            face.pickingMode = PickingMode.Position;
+            knob.face = face;
+            var value = Label("OFF", 10, Text);
+            value.style.unityTextAlign = TextAnchor.MiddleCenter;
+            value.style.unityFontStyleAndWeight = FontStyle.Bold;
+            value.pickingMode = PickingMode.Ignore;
+            knob.value = value;
+            face.Add(value);
+            var dot = new VisualElement();
+            dot.style.position = Position.Absolute;
+            dot.style.width = 6 * uiScale; dot.style.height = 6 * uiScale;
+            dot.style.backgroundColor = color;
+            dot.style.borderTopLeftRadius = 3; dot.style.borderTopRightRadius = 3;
+            dot.style.borderBottomLeftRadius = 3; dot.style.borderBottomRightRadius = 3;
+            dot.pickingMode = PickingMode.Ignore;
+            knob.dot = dot;
+            face.Add(dot);
+            cell.Add(face);
+            var title = Label(lowPass ? "LOW PASS" : "HIGH PASS", 9, MutedText);
+            title.style.unityTextAlign = TextAnchor.MiddleCenter;
+            title.style.marginTop = 4 * uiScale;
+            title.style.whiteSpace = WhiteSpace.NoWrap;
+            cell.Add(title);
+            parent.Add(cell);
+            filterKnobs[face] = knob;
+            UpdateFilterKnob(knob);
+        }
+
+        private void UpdateFilterKnob(FilterKnob knob)
+        {
+            if (knob == null || knob.face == null) return;
+            float amount = ZPunkArrangementFilters.Get(knob.drums, knob.lowPass);
+            if (knob.value != null)
+                knob.value.text = ZPunkArrangementFilters.Readout(knob.lowPass, amount);
+            // Visible marker follows the conventional 270-degree knob sweep.
+            float theta = (-225f + 270f * amount) * Mathf.Deg2Rad;
+            float center = 57f * uiScale / 2f;
+            float radius = 20f * uiScale;
+            float dotRadius = 3f * uiScale;
+            knob.dot.style.left = center + Mathf.Sin(theta) * radius - dotRadius;
+            knob.dot.style.top = center - Mathf.Cos(theta) * radius - dotRadius;
+        }
+
+        private void RefreshFilterKnobs()
+        {
+            foreach (var pair in filterKnobs) UpdateFilterKnob(pair.Value);
+        }
+
+        private FilterKnob FindFilterKnob(VisualElement target)
+        {
+            while (target != null && target != page)
+            {
+                if (filterKnobs.TryGetValue(target, out var knob)) return knob;
+                target = target.parent;
+            }
+            return null;
+        }
+
+        private void OnFilterDown(PointerDownEvent evt)
+        {
+            if (evt.button != 0 || activeFilter != null) return;
+            var knob = FindFilterKnob(evt.target as VisualElement);
+            if (knob == null) return;
+            activeFilter = knob;
+            filterPointer = evt.pointerId;
+            filterStartY = evt.position.y;
+            filterStartAmount = ZPunkArrangementFilters.Get(knob.drums, knob.lowPass);
+            lockedFilterScroll = arrangementPageScroll != null ? arrangementPageScroll.scrollOffset : Vector2.zero;
+            page.CapturePointer(evt.pointerId);
+            evt.StopPropagation();
+        }
+
+        private void OnFilterMove(PointerMoveEvent evt)
+        {
+            if (activeFilter == null || filterPointer != evt.pointerId) return;
+            float sensitivity = evt.shiftKey ? .0015f : .006f;
+            ZPunkArrangementFilters.Set(activeFilter.drums, activeFilter.lowPass,
+                filterStartAmount + (filterStartY - evt.position.y) * sensitivity);
+            UpdateFilterKnob(activeFilter);
+            if (arrangementPageScroll != null) arrangementPageScroll.scrollOffset = lockedFilterScroll;
+            evt.StopPropagation();
+        }
+
+        private void EndFilterDrag(int pointerId)
+        {
+            if (activeFilter == null || filterPointer != pointerId) return;
+            activeFilter = null;
+            filterPointer = -1;
+            if (page.HasPointerCapture(pointerId)) page.ReleasePointer(pointerId);
+        }
+
+        private void OnFilterUp(PointerUpEvent evt)
+        {
+            if (activeFilter == null || filterPointer != evt.pointerId) return;
+            EndFilterDrag(evt.pointerId);
+            evt.StopPropagation();
+        }
+        private void OnFilterCancel(PointerCancelEvent evt)
+        {
+            if (activeFilter == null || filterPointer != evt.pointerId) return;
+            EndFilterDrag(evt.pointerId);
+            evt.StopPropagation();
+        }
+        private void OnFilterCaptureLost(PointerCaptureOutEvent evt)
+        {
+            if (activeFilter != null && filterPointer == evt.pointerId)
+            { activeFilter = null; filterPointer = -1; }
         }
 
         private Button CommandButton(string label, Action action)

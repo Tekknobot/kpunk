@@ -77,6 +77,75 @@ public class KMusicPlayerUI : MonoBehaviour
     private AudioClip _transientAnalysisSource;
     // Exact mapping returned by the warp renderer (not an approximation).
     private List<ZPunkSampleWarp.TimeMapPoint> _activeWarpTimeMap;
+    // A warp displays ONLY the bounded chop region. All saved marker coordinates
+    // remain in the full, immutable source clip's timeline.
+    private float _warpSourceStart01;
+    private float _warpSourceEnd01 = 1f;
+
+    private static float TranslateTimeMap(float position01,
+        List<ZPunkSampleWarp.TimeMapPoint> map, bool inverse)
+    {
+        position01 = Mathf.Clamp01(position01);
+        if (map == null || map.Count < 2) return position01;
+        for (int i = 0; i + 1 < map.Count; i++)
+        {
+            float a = inverse ? map[i].destination01 : map[i].source01;
+            float b = inverse ? map[i + 1].destination01 : map[i + 1].source01;
+            if (position01 > b && i + 2 < map.Count) continue;
+            float da = inverse ? map[i].source01 : map[i].destination01;
+            float db = inverse ? map[i + 1].source01 : map[i + 1].destination01;
+            return Mathf.Lerp(da, db, Mathf.Clamp01((position01 - a) /
+                Mathf.Max(.0000001f, b - a)));
+        }
+        return position01;
+    }
+
+    private float SourceToActive01(float source01)
+    {
+        if (_warpedClip == null || _activeWarpTimeMap == null) return Mathf.Clamp01(source01);
+        float local = (source01 - _warpSourceStart01) /
+            Mathf.Max(.0000001f, _warpSourceEnd01 - _warpSourceStart01);
+        return TranslateTimeMap(local, _activeWarpTimeMap, false);
+    }
+
+    private float ActiveToSource01(float active01)
+    {
+        if (_warpedClip == null || _activeWarpTimeMap == null) return Mathf.Clamp01(active01);
+        float local = TranslateTimeMap(active01, _activeWarpTimeMap, true);
+        return Mathf.Lerp(_warpSourceStart01, _warpSourceEnd01, local);
+    }
+
+    private List<float> SourceChopMarkers()
+    {
+        var positions = new List<float>(_chops01.Count);
+        for (int i = 0; i < _chops01.Count; i++)
+            positions.Add(ActiveToSource01(_chops01[i]));
+        return positions;
+    }
+
+    private bool TryWarpChopRange(List<float> sourceMarkers,
+        out float start01, out float end01)
+    {
+        start01 = end01 = 0f;
+        // A closing marker is essential: the implicit last chop otherwise
+        // extends to the end of a multi-minute song.
+        if (!_closingHitMarker || sourceMarkers == null || sourceMarkers.Count < 2 ||
+            _clip == null) return false;
+        start01 = sourceMarkers[0];
+        end01 = sourceMarkers[sourceMarkers.Count - 1];
+        return end01 > start01 && (end01 - start01) * _clip.length >= .15f;
+    }
+
+    private void DisplayMarkersFromSource(List<float> sourceMarkers)
+    {
+        _chops01.Clear();
+        foreach (float position in sourceMarkers)
+            _chops01.Add(SourceToActive01(position));
+        ClampSelectedMarkerIndex();
+        SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+    }
+
     private Coroutine _transientJob;
     private bool _hitAnalysisBusy;
     private float _hitAnalysisStartedAt;
@@ -216,16 +285,33 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
         _transientHints.Clear();
         if (_warpedClip != null && _activeWarpTimeMap != null)
+        {
+            var croppedHints = new List<ZPunkSampleWarp.TransientHint>();
+            float range = Mathf.Max(.0000001f, _warpSourceEnd01 - _warpSourceStart01);
+            foreach (var hint in _originalTransientHints)
+            {
+                if (hint.position01 < _warpSourceStart01 ||
+                    hint.position01 > _warpSourceEnd01) continue;
+                croppedHints.Add(new ZPunkSampleWarp.TransientHint(
+                    (hint.position01 - _warpSourceStart01) / range,
+                    hint.kick, hint.strength));
+            }
             _transientHints.AddRange(ZPunkSampleWarp.RemapTransientHints(
-                _originalTransientHints, _activeWarpTimeMap));
+                croppedHints, _activeWarpTimeMap));
+        }
         else
             _transientHints.AddRange(_originalTransientHints);
         _analysisCompleted = true;
         DetectBeatPhase(_transientHints);
-        if (_beatAlignFromHead && _warpedClip != null)
+        if (_warpedClip != null && _activeWarpTimeMap != null)
         {
+            // The cropped warp starts on the first chop/hit. Display the
+            // beat ruler from that start (or the user's explicit HEAD), not
+            // from a noisy phase re-estimate on the rendered waveform.
             float beatSeconds = 60f / Mathf.Max(1f, CurrentSongTempo());
-            _beatPhaseSeconds = Mathf.Repeat(_beatAlignStart01 * DawSampleDuration, beatSeconds);
+            _beatPhaseSeconds = _beatAlignFromHead
+                ? Mathf.Repeat(SourceToActive01(_beatAlignStart01) * DawSampleDuration, beatSeconds)
+                : 0f;
             _beatPhaseFound = true;
         }
         _wave?.SetTransientGuides(_transientHints);
@@ -594,6 +680,7 @@ public class KMusicPlayerUI : MonoBehaviour
               hitsMatched + " HIT MATCHES / ORIGINAL AUDIO"
             : "SLICED " + pads + " FREE-HIT CHOPS / BEAT UNCERTAIN";
         UpdateTrackTitle(_sliceHitsFeedback);
+        if (_autoWarpEnabled) QueueWarp(true);
     }
 
     // Following a successful beat alignment, these are real quarter-note
@@ -640,6 +727,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _sliceHitsFeedback = "SLICED " + (boundaries.Count - 1) +
             " EQUAL BEAT CHOPS / FROM HEAD";
         UpdateTrackTitle(_sliceHitsFeedback);
+        if (_autoWarpEnabled) QueueWarp(true);
     }
 
     public void DawToggleTransientSnap()
@@ -994,6 +1082,9 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_wave != null) { _wave.SetClip(null); _wave.SetPlayhead01(0f); }
         _clip = null;
         _warpedClip = null;
+        _activeWarpTimeMap = null;
+        _warpSourceStart01 = 0f;
+        _warpSourceEnd01 = 1f;
         _ownsSourceClip = false;
         _clipResourcesPath = null;
         _loadedFileSize = -1;
@@ -1963,7 +2054,7 @@ public class KMusicPlayerUI : MonoBehaviour
         // Even when switching from an existing warp, HEAD is a normalized
         // position in that clip. It maps approximately onto original time;
         // the source clip is always used for offline resynthesis.
-        _beatAlignStart01 = Mathf.Clamp(_scrub01, 0f, .99999f);
+        _beatAlignStart01 = Mathf.Clamp(ActiveToSource01(_scrub01), 0f, .99999f);
         _beatAlignFromHead = true;
         if (!_autoWarpEnabled)
         {
@@ -2052,6 +2143,8 @@ public class KMusicPlayerUI : MonoBehaviour
         }
         _warpedClip = null;
         _activeWarpTimeMap = null;
+        _warpSourceStart01 = 0f;
+        _warpSourceEnd01 = 1f;
         _tempoDetectionRevision++;
         _tempoDetectionRunning = false;
         _tempoDetectionStatus = "";
@@ -2071,6 +2164,12 @@ public class KMusicPlayerUI : MonoBehaviour
         _warpPendingAt = Time.unscaledTime + (immediate ? 0.05f : 0.35f);
         if (_autoWarpEnabled && _clip != null)
         {
+            if (!TryWarpChopRange(SourceChopMarkers(), out _, out _))
+            {
+                _warpStatus = "SLICE HITS FIRST / SET END MARKER";
+                _warpProcessing = false;
+                return;
+            }
             _warpStatus = "WAITING TO WARP";
             _warpProgress = 0f;
             _warpStage = "QUEUED";
@@ -2103,7 +2202,14 @@ public class KMusicPlayerUI : MonoBehaviour
 
     private string WarpSignature()
     {
+        var markers = SourceChopMarkers();
+        // Markers determine both the allocated region and beat anchors.
+        // Include their positions so edits invalidate a stale warp render.
+        long markerHash = 17;
+        foreach (float value in markers)
+            markerHash = unchecked(markerHash * 31 + Mathf.RoundToInt(value * 1000000f));
         return (_autoWarpEnabled ? "1" : "0") + ":" +
+            (_closingHitMarker ? "C" : "N") + ":" + markers.Count + ":" + markerHash + ":" +
             _sourceBpm.ToString("R", System.Globalization.CultureInfo.InvariantCulture) + ":" +
             CurrentSongTempo().ToString("R", System.Globalization.CultureInfo.InvariantCulture) + ":" +
             (_sourceBpmManual ? "M" : _sourceBpmRhythmic ? "R" : "?") + ":" +
@@ -2127,39 +2233,122 @@ public class KMusicPlayerUI : MonoBehaviour
         _warpJob = StartCoroutine(RunWarp(generation));
     }
 
+    // Allocate and populate only the trimmed chop region in cooperative blocks.
+    // This temporary clip is destroyed after rendering, including on failure.
+    private IEnumerator CopyChopRegion(int startFrame, int frameCount,
+        Action<AudioClip> completed, Func<bool> cancelled)
+    {
+        AudioClip region = null;
+        try
+        {
+            region = AudioClip.Create(_clip.name + " [Chops Source]",
+                frameCount, _clip.channels, _clip.frequency, false);
+        }
+        catch (Exception) { region = null; }
+        if (region == null) { completed?.Invoke(null); yield break; }
+        const int block = 8192;
+        int channels = _clip.channels;
+        for (int at = 0; at < frameCount; at += block)
+        {
+            if (cancelled != null && cancelled()) { Destroy(region); yield break; }
+            int count = Mathf.Min(block, frameCount - at);
+            // AudioClip.GetData uses the supplied array's length for read count.
+            var pcm = new float[count * channels];
+            if (!_clip.GetData(pcm, startFrame + at) || !region.SetData(pcm, at))
+            { Destroy(region); completed?.Invoke(null); yield break; }
+            if ((at / block & 3) == 3) yield return null;
+        }
+        completed?.Invoke(region);
+    }
+
     private IEnumerator RunWarp(int generation)
     {
         AudioClip next = null;
         List<ZPunkSampleWarp.TimeMapPoint> nextTimeMap = null;
         string result = "OFF / ORIGINAL AUDIO";
-        if (_autoWarpEnabled && !_sourceBpmRhythmic && !_sourceBpmManual)
-        {
-            // The previous source BPM came from assumed loop length, not
-            // rhythmic evidence. Preserve PCM while hit/BPM analysis runs.
+        var sourceMarkers = SourceChopMarkers();
+        bool hasChops = TryWarpChopRange(sourceMarkers,
+            out float sourceStart01, out float sourceEnd01);
+        if (_autoWarpEnabled && !hasChops)
+            result = "SLICE HITS FIRST / SET END MARKER";
+        else if (_autoWarpEnabled && !_sourceBpmRhythmic && !_sourceBpmManual)
             result = "ORIGINAL / BPM UNCONFIRMED";
-        }
         else if (_autoWarpEnabled)
         {
-            _warpStatus = "WARPING";
-            yield return StartCoroutine(ZPunkSampleWarp.StretchAsync(_clip,
-                _sourceBpm, CurrentSongTempo(), (clip, status) =>
-                {
-                    next = clip;
-                    result = status;
-                }, () => generation != _warpGeneration || this == null,
-                (value, stage) =>
-                {
-                    if (generation != _warpGeneration) return;
-                    _warpProgress = Mathf.Clamp01(value);
-                    _warpStage = stage;
-                }, _beatAlignFromHead ? _beatAlignStart01 : -1f,
-                map => { nextTimeMap = map; }));
-            if (generation != _warpGeneration)
+            // Source stays untouched. Only the user-created chop set is warped;
+            // without the closing marker, warping is intentionally unavailable.
+            int from = Mathf.Clamp(Mathf.RoundToInt(sourceStart01 * _clip.samples),
+                0, _clip.samples - 1);
+            int to = Mathf.Clamp(Mathf.RoundToInt(sourceEnd01 * _clip.samples),
+                from + 1, _clip.samples);
+            int frames = to - from;
+            double ratio = Mathf.Clamp(_sourceBpm / Mathf.Max(1f, CurrentSongTempo()), .25f, 4f);
+            long extraBytes = (long)(frames + Math.Ceiling(frames * ratio)) *
+                _clip.channels * sizeof(float);
+            long extraBudget = SystemInfo.systemMemorySize > 0 && SystemInfo.systemMemorySize <= 3072
+                ? 48L * 1024L * 1024L : 96L * 1024L * 1024L;
+            if (frames < 1024 || extraBytes > extraBudget)
+                result = "CHOP REGION TOO LARGE / REDUCE CHOPS";
+            else
             {
-                if (next != null && next != _clip) Destroy(next);
-                yield break;
+                AudioClip region = null;
+                _warpStatus = "WARPING CHOP REGION";
+                _warpStage = "PREPARING CHOPS";
+                yield return StartCoroutine(CopyChopRegion(from, frames, clip => region = clip,
+                    () => generation != _warpGeneration || this == null));
+                if (generation != _warpGeneration) { if (region != null) Destroy(region); yield break; }
+                if (region == null) result = "CHOP REGION READ FAILED";
+                else
+                {
+                    var beatMarkers = new List<float>(sourceMarkers.Count);
+                    var guides = new List<float>();
+                    float sourceRange = sourceEnd01 - sourceStart01;
+                    foreach (float marker in sourceMarkers)
+                    {
+                        float t = (marker - sourceStart01) / sourceRange;
+                        if (t >= 0f && t <= 1f) beatMarkers.Add(t);
+                    }
+                    // Strong amber hit guides can reinforce the selected grid
+                    // provided they're near a beat, not hats on subdivisions.
+                    if (_originalTransientReady && _originalTransientSource == _clip)
+                    {
+                        foreach (var hit in _originalTransientHints)
+                        {
+                            if (hit.strength < .65f || hit.position01 <= sourceStart01 ||
+                                hit.position01 >= sourceEnd01) continue;
+                            guides.Add((hit.position01 - sourceStart01) / sourceRange);
+                        }
+                    }
+                    float anchor = _beatAlignFromHead &&
+                        _beatAlignStart01 >= sourceStart01 &&
+                        _beatAlignStart01 < sourceEnd01 ?
+                        Mathf.Clamp01((_beatAlignStart01 - sourceStart01) / sourceRange) : 0f;
+                    yield return StartCoroutine(ZPunkSampleWarp.StretchAsync(region,
+                        _sourceBpm, CurrentSongTempo(), (clip, status) =>
+                        {
+                            next = clip;
+                            result = status;
+                            // No stretch needed: keep the short region as the
+                            // active clip and supply an identity time map.
+                            if (clip == region && nextTimeMap == null)
+                                nextTimeMap = new List<ZPunkSampleWarp.TimeMapPoint>
+                                {
+                                    new ZPunkSampleWarp.TimeMapPoint(0f, 0f),
+                                    new ZPunkSampleWarp.TimeMapPoint(1f, 1f)
+                                };
+                        }, () => generation != _warpGeneration || this == null,
+                        (value, stage) =>
+                        {
+                            if (generation != _warpGeneration) return;
+                            _warpProgress = Mathf.Clamp01(value);
+                            _warpStage = stage;
+                        }, anchor, map => { nextTimeMap = map; },
+                        beatMarkers, guides));
+                    // StretchAsync owns only its OUTPUT. A tempo-matched region
+                    // can itself become the active clip (no duplicate needed).
+                    if (next != region) Destroy(region);
+                }
             }
-            if (next == null) result = "ORIGINAL / " + result;
         }
         if (generation != _warpGeneration)
         {
@@ -2167,40 +2356,45 @@ public class KMusicPlayerUI : MonoBehaviour
             yield break;
         }
         AudioClip oldWarp = _warpedClip;
-        _warpedClip = next != _clip ? next : null;
+        // Work in original coordinates before replacing the active time map.
+        float previousSourceScrub = ActiveToSource01(_scrub01);
+        if (audioSource != null && audioSource.isPlaying && audioSource.clip != null &&
+            audioSource.clip.length > 0f)
+            previousSourceScrub = ActiveToSource01(audioSource.time / audioSource.clip.length);
+
+        _warpedClip = next;
         _activeWarpTimeMap = _warpedClip != null ? nextTimeMap : null;
-        _appliedWarpSignature = WarpSignature();
-        _warpStatus = result;
+        _warpSourceStart01 = _warpedClip != null ? sourceStart01 : 0f;
+        _warpSourceEnd01 = _warpedClip != null ? sourceEnd01 : 1f;
+        _warpStatus = _warpedClip != null ? "CHOPS ONLY / " + result : result;
         _warpProcessing = false;
-        _warpProgress = _autoWarpEnabled && next != null ? 1f : 0f;
+        _warpProgress = _warpedClip != null ? 1f : 0f;
         AudioClip active = _warpedClip != null ? _warpedClip : _clip;
+        _scrub01 = SourceToActive01(previousSourceScrub);
         if (audioSource != null && active != null)
         {
             bool wasPlaying = audioSource.isPlaying;
-            // A stopped AudioSource often reports time 0 even when the user
-            // has moved the playhead elsewhere. Preserve the scrub position.
-            float ratio = wasPlaying && audioSource.clip != null && audioSource.clip.length > 0f
-                ? audioSource.time / audioSource.clip.length : _scrub01;
-            _scrub01 = Mathf.Clamp01(ratio);
+            audioSource.Stop();
             audioSource.clip = active;
             audioSource.time = _scrub01 * Mathf.Max(0f, active.length - .001f);
             if (wasPlaying) audioSource.Play();
-            _wave?.SetPlayhead01(_scrub01);
         }
-        if (!string.IsNullOrEmpty(_clipResourcesPath))
-            KMusicChopState.SetCachedClip(_clipResourcesPath, active);
+        string activeId = !string.IsNullOrEmpty(_clipResourcesPath)
+            ? _clipResourcesPath : "cached:" + _clip.name;
+        KMusicChopState.SetCachedClip(activeId, active,
+            _warpSourceStart01, _warpSourceEnd01, _activeWarpTimeMap);
         if (_wave != null)
         {
-            float start01 = _wave.ViewStart01, len01 = _wave.ViewLen01;
             _wave.SetClip(active);
-            _wave.RestoreWindow(start01, len01);
+            _wave.ResetZoom(); // the chopped audio, not the full song, is now displayed
+            _wave.SetPlayhead01(_scrub01);
             UpdateBeatGrid();
-            SyncMarkersToWave();
-            _wave.SetTransientGuides(_transientHints);
+            DisplayMarkersFromSource(sourceMarkers);
             HighlightSelectedSlice();
         }
-        // NEVER rescan a rendered warp. The source's disk/memory-cached guides
-        // are mapped through the same curve used to render this waveform.
+        if (_wave == null) DisplayMarkersFromSource(sourceMarkers);
+        // Compute signature only AFTER displayed markers are remapped.
+        _appliedWarpSignature = WarpSignature();
         if (oldWarp != _warpedClip) BeginTransientAnalysis();
         if (oldWarp != null && oldWarp != _clip && oldWarp != active)
         {
@@ -2901,10 +3095,13 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null || _clip.length <= 0f)
             return;
 
+        var originalPositions = SourceChopMarkers();
         if (!string.IsNullOrEmpty(_clipResourcesPath))
-            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01, _closingHitMarker);
+            KMusicChopState.SaveApplied(_clipResourcesPath, originalPositions, _closingHitMarker);
         else
-            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01, lastMarkerIsEndOnly: _closingHitMarker);
+            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null,
+                markerPositions01: originalPositions, lastMarkerIsEndOnly: _closingHitMarker);
+        if (_autoWarpEnabled) QueueWarp();
     }
 
     private void OnAddMarkerButton()
@@ -3033,10 +3230,12 @@ public class KMusicPlayerUI : MonoBehaviour
         boundaries.Add(1f);
         boundaries.Sort();
 
+        var originalPositions = SourceChopMarkers();
         if (!string.IsNullOrEmpty(_clipResourcesPath))
-            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01, _closingHitMarker);
+            KMusicChopState.SaveApplied(_clipResourcesPath, originalPositions, _closingHitMarker);
         else
-            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01, lastMarkerIsEndOnly: _closingHitMarker);
+            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null,
+                markerPositions01: originalPositions, lastMarkerIsEndOnly: _closingHitMarker);
 
         UpdateTrackTitle($"APPLIED {Mathf.Min(16, _chops01.Count)} SLICES");
     }
@@ -3045,10 +3244,12 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (_clip == null || _clip.length <= 0f) return;
 
+        var originalPositions = SourceChopMarkers();
         if (!string.IsNullOrEmpty(_clipResourcesPath))
-            KMusicChopState.SaveApplied(_clipResourcesPath, _chops01, _closingHitMarker);
+            KMusicChopState.SaveApplied(_clipResourcesPath, originalPositions, _closingHitMarker);
         else
-            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null, markerPositions01: _chops01, lastMarkerIsEndOnly: _closingHitMarker);
+            KMusicChopState.SaveAppliedFromClip(_clip, resourcesPathOrNull: null,
+                markerPositions01: originalPositions, lastMarkerIsEndOnly: _closingHitMarker);
 
         UpdateTrackTitle($"SENT {Mathf.Min(16, _chops01.Count)} CHOPS");
     }

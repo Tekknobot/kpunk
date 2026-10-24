@@ -346,7 +346,9 @@ namespace ZPunk.DAW
             float targetBpm, Action<AudioClip, string> complete,
             Func<bool> cancelled = null, Action<float, string> progress = null,
             float beatAnchor01 = -1f,
-            Action<List<TimeMapPoint>> timeMapReady = null)
+            Action<List<TimeMapPoint>> timeMapReady = null,
+            IList<float> chopBoundaries01 = null,
+            IList<float> amberHitGuides01 = null)
         {
             if (original == null) { complete?.Invoke(null, "NO SAMPLE"); yield break; }
             if (sourceBpm <= 0f || targetBpm <= 0f)
@@ -442,7 +444,11 @@ namespace ZPunk.DAW
             float[] attackPcm = null, attackEnvelope = null;
             int anchorBeatCount = 0, anchoredAlignedCount = 0;
             bool anchoredBeats = beatAnchor01 >= 0f && beatAnchor01 <= 1f;
-            if (anchoredBeats)
+            // A bounded chop warp uses the actual onset positions as anchors.
+            // An FFT envelope peak can lag the visually refined amber marker;
+            // the marker's source coordinate MUST be the warp control point.
+            bool guidedChops = chopBoundaries01 != null && chopBoundaries01.Count >= 2;
+            if (anchoredBeats || guidedChops)
             {
                 // The user's HEAD position explicitly establishes beat 1. Each
                 // subsequent source beat is projected using the SOURCE tempo.
@@ -460,7 +466,51 @@ namespace ZPunk.DAW
                 int searchBins = Mathf.Max(1, beatWindow / AnalysisHop + 2);
                 int edgeGuard = Mathf.RoundToInt(sampleRate * .060f);
                 var proposed = new List<WarpPoint>();
-                for (int beat = firstBeat; beat <= lastBeat; beat++)
+                if (guidedChops)
+                {
+                    // Selected chop boundaries are authoritative. Snap only
+                    // when they are near the beat they appear to represent,
+                    // avoiding destructive moves to intentionally offbeat chops.
+                    float closeEnough = targetBeat * .26f;
+                    int previousSource = -1, previousDestination = -1;
+                    for (int marker = 1; marker < chopBoundaries01.Count - 1; marker++)
+                    {
+                        int src = Mathf.RoundToInt(Mathf.Clamp01(chopBoundaries01[marker]) * original.samples);
+                        int dst = Mathf.RoundToInt(targetAnchor +
+                            Mathf.Round((src * ratio - targetAnchor) / targetBeat) * targetBeat);
+                        if (Mathf.Abs(dst - src * ratio) > closeEnough ||
+                            src < edgeGuard || src > original.samples - edgeGuard ||
+                            dst < edgeGuard || dst > outputCount - edgeGuard ||
+                            src <= previousSource || dst <= previousDestination) continue;
+                        proposed.Add(new WarpPoint(src, dst));
+                        previousSource = src;
+                        previousDestination = dst;
+                    }
+                    // Only strong cached original-PCM amber guides near a
+                    // quarter-note target may create additional anchors.
+                    // The selected chop boundaries take precedence if nearby.
+                    if (amberHitGuides01 != null)
+                    {
+                        foreach (float normalized in amberHitGuides01)
+                        {
+                            int src = Mathf.RoundToInt(Mathf.Clamp01(normalized) * original.samples);
+                            int dst = Mathf.RoundToInt(targetAnchor +
+                                Mathf.Round((src * ratio - targetAnchor) / targetBeat) * targetBeat);
+                            if (src < edgeGuard || src > original.samples - edgeGuard ||
+                                dst < edgeGuard || dst > outputCount - edgeGuard ||
+                                Mathf.Abs(dst - src * ratio) > targetBeat * .16f) continue;
+                            bool nearChop = false;
+                            foreach (var point in proposed)
+                            {
+                                if (Mathf.Abs(point.source - src) < sampleRate * .085f ||
+                                    Mathf.Abs(point.destination - dst) < sampleRate * .085f)
+                                { nearChop = true; break; }
+                            }
+                            if (!nearChop) proposed.Add(new WarpPoint(src, dst));
+                        }
+                    }
+                }
+                else for (int beat = firstBeat; beat <= lastBeat; beat++)
                 {
                     if (cancelled != null && cancelled()) yield break;
                     float idealSource = sourceAnchor + beat * sourceBeat;
@@ -510,6 +560,7 @@ namespace ZPunk.DAW
                     }
                 }
                 proposed.Sort((a, b) => a.source.CompareTo(b.source));
+                if (guidedChops) anchorBeatCount = proposed.Count;
                 int sourceGuard = Mathf.RoundToInt(sampleRate * .075f);
                 foreach (var proposedPoint in proposed)
                 {
@@ -521,8 +572,9 @@ namespace ZPunk.DAW
                         Mathf.Max(1f, proposedPoint.source - previous.source);
                     float endRatio = (outputCount - proposedPoint.destination) /
                         Mathf.Max(1f, original.samples - proposedPoint.source);
-                    if (localRatio < ratio * .82f || localRatio > ratio * 1.22f ||
-                        endRatio < ratio * .82f || endRatio > ratio * 1.22f) continue;
+                    if (localRatio < ratio * (guidedChops ? .74f : .82f) ||
+                        localRatio > ratio * (guidedChops ? 1.30f : 1.22f) ||
+                        endRatio < ratio * .72f || endRatio > ratio * 1.32f) continue;
                     points.Add(proposedPoint);
                     anchoredAlignedCount++;
                 }
@@ -614,7 +666,7 @@ namespace ZPunk.DAW
 
             }
             points.Add(new WarpPoint(original.samples, outputCount));
-            progress?.Invoke(.25f, anchoredBeats ? "ALIGNING MAIN BEATS" : "ALIGNING GRID");
+            progress?.Invoke(.25f, anchoredBeats || guidedChops ? "ALIGNING CHOP HITS" : "ALIGNING GRID");
             yield return null;
             if (cancelled != null && cancelled()) yield break;
             int shifted = points.Count - 2;
@@ -627,7 +679,7 @@ namespace ZPunk.DAW
             if (!movedAttack && Mathf.Abs(ratio - 1f) < .0001f)
             {
                 progress?.Invoke(1f, "ALREADY ALIGNED");
-                complete?.Invoke(original, anchoredBeats ? "BEATS ALREADY ALIGNED" :
+                complete?.Invoke(original, anchoredBeats || guidedChops ? "BEATS ALREADY ALIGNED" :
                     "GRID / NO CORRECTION NEEDED");
                 yield break;
             }
@@ -713,7 +765,7 @@ namespace ZPunk.DAW
                 }
                 cursor += writeFrames;
                 progress?.Invoke(.25f + .75f * cursor / outputCount,
-                    anchoredBeats ? "STRETCHING BEAT SECTIONS" :
+                    anchoredBeats || guidedChops ? "STRETCHING CHOP SECTIONS" :
                     shifted > 0 ? "ALIGNING TRANSIENTS" : "MATCHING TEMPO");
                 yield return null;
             }
@@ -735,8 +787,8 @@ namespace ZPunk.DAW
                         points[i].destination / (float)outputCount));
                 timeMapReady(map);
             }
-            progress?.Invoke(1f, anchoredBeats ? "BEAT ALIGN COMPLETE" : "GRID WARP COMPLETE");
-            if (anchoredBeats)
+            progress?.Invoke(1f, anchoredBeats || guidedChops ? "CHOP HIT ALIGN COMPLETE" : "GRID WARP COMPLETE");
+            if (anchoredBeats || guidedChops)
             {
                 complete?.Invoke(target, "BEAT ALIGN / " + anchoredAlignedCount +
                     " OF " + anchorBeatCount + " BEATS / " +

@@ -203,6 +203,7 @@ public class KMusicDrumSequencer : MonoBehaviour
             var g = GetMixerGroupForDrum(drumId);
             if (g != null) src.outputAudioMixerGroup = g;
 
+            ZPunkArrangementFilters.RegisterVoice(src, true);
             pool.Add(src);
         }
 
@@ -214,6 +215,7 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         if (voice != null)
         {
+            ZPunkArrangementFilters.RegisterVoice(voice, true);
             voice.clip = clip; // clip can change with kit
             // keep output group in sync in case inspector changed
             var g = GetMixerGroupForDrum(drumId);
@@ -1849,8 +1851,8 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         // Copy arrays (defensive)
         for (int i = 0; i < 16; i++)
         {
-            _sliceStart01[i] = Mathf.Clamp01(s01[i]);
-            _sliceEnd01[i] = Mathf.Clamp01(e01[i]);
+            _sliceStart01[i] = KMusicChopState.MapSourceToCachedClip(resPath, s01[i]);
+            _sliceEnd01[i] = KMusicChopState.MapSourceToCachedClip(resPath, e01[i]);
             if (_sliceEnd01[i] < _sliceStart01[i]) _sliceEnd01[i] = _sliceStart01[i];
         }
 
@@ -1882,6 +1884,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
             var meter = go.AddComponent<ZPunkSampleChannelMeter>();
             meter.Gain = _dawChopTrackGain;
 
+            ZPunkArrangementFilters.RegisterVoice(src, false);
             _sampleVoicePool.Add(src);
         }
 

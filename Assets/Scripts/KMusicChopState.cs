@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using KMusic.Core;
+using ZPunk.DAW;
 
 namespace KMusic
 {
@@ -19,6 +20,11 @@ namespace KMusic
         // ----------------------------
         private static AudioClip _cachedClip;
         private static string _cachedId;
+        // Runtime-only map for the cropped warped AudioClip. Project saves keep
+        // all original full-song 0..1 slice positions.
+        private static float _runtimeStart01;
+        private static float _runtimeEnd01 = 1f;
+        private static List<ZPunkSampleWarp.TimeMapPoint> _runtimeTimeMap;
 
         // Bumped any time applied chops are saved/cleared so samplers can refresh.
         private static int _appliedRevision;
@@ -32,12 +38,40 @@ public static bool TryGetCachedClip(out AudioClip clip)
 
         
 
-        public static void SetCachedClip(string id, AudioClip clip)
+        public static void SetCachedClip(string id, AudioClip clip,
+            float regionStart01 = 0f, float regionEnd01 = 1f,
+            IList<ZPunkSampleWarp.TimeMapPoint> timeMap = null)
         {
-            bool changed = _cachedClip != clip || _cachedId != id;
+            bool changed = _cachedClip != clip || _cachedId != id ||
+                _runtimeTimeMap != null || timeMap != null;
             _cachedId = id;
             _cachedClip = clip;
-            if (changed) _appliedRevision++; // refresh DSP slice voices after live warp change
+            _runtimeStart01 = Mathf.Clamp01(regionStart01);
+            _runtimeEnd01 = Mathf.Clamp01(regionEnd01);
+            _runtimeTimeMap = timeMap != null
+                ? new List<ZPunkSampleWarp.TimeMapPoint>(timeMap) : null;
+            if (changed) _appliedRevision++;
+        }
+
+        // Converts original saved slice positions to the active (shortened)
+        // AudioClip. Never call this on persisted project values.
+        public static float MapSourceToCachedClip(string id, float source01)
+        {
+            source01 = Mathf.Clamp01(source01);
+            if (_cachedClip == null || _cachedId != id || _runtimeTimeMap == null ||
+                _runtimeTimeMap.Count < 2) return source01;
+            float local = Mathf.Clamp01((source01 - _runtimeStart01) /
+                Mathf.Max(.0000001f, _runtimeEnd01 - _runtimeStart01));
+            for (int i = 0; i + 1 < _runtimeTimeMap.Count; i++)
+            {
+                var a = _runtimeTimeMap[i];
+                var b = _runtimeTimeMap[i + 1];
+                if (local > b.source01 && i + 2 < _runtimeTimeMap.Count) continue;
+                return Mathf.Lerp(a.destination01, b.destination01,
+                    Mathf.Clamp01((local - a.source01) /
+                        Mathf.Max(.0000001f, b.source01 - a.source01)));
+            }
+            return local;
         }
 
         public static bool TryGetCachedClip(string id, out AudioClip clip)
@@ -78,8 +112,11 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
 
             SaveApplied(id, list, lastMarkerIsEndOnly);
 
-            _cachedId = id;
-            _cachedClip = clip;
+            // SaveApplied() increments the revision and retains the currently
+            // playing cached warp for the same source. Do not swap it back to
+            // original audio just because an applied marker was edited.
+            if (_cachedClip == null || _cachedId != id)
+                SetCachedClip(id, clip);
         }     
         // Keep keys stable.
         private const string PrefKey_Json = "kmusic.chops.applied.v1";
