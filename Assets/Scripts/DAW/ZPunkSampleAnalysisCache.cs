@@ -17,7 +17,7 @@ namespace ZPunk.DAW
     /// </summary>
     public static class ZPunkSampleAnalysisCache
     {
-        private const int FormatVersion = 3; // canonical original source guides; bump with detector
+        private const int FormatVersion = 5; // 2.1.0b leading-edge refinement: invalidate old positions once
         private const int MaxEntries = 256;
         private const long MaxTotalBytes = 12L * 1024 * 1024;
         private const int MaxHints = 256;

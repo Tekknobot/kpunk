@@ -101,61 +101,154 @@ namespace ZPunk.DAW
             { frame = at; strength = value; kick = isKick; }
         }
 
-        // The analysis FFT/RMS windows describe a REGION, not the first sample of
-        // an attack. Find its actual leading edge in 1 ms envelopes around a
-        // candidate, preventing ghost markers from preceding the visible hit.
-        // Reuse the PCM buffer: songs can contain thousands of onsets.
+        // 2.1.0b: attack placement is based on the first sustained rise above a
+        // locally measured floor, NOT a local energy maximum. This is also used
+        // to align guides with actually rendered warped PCM; WSOLA overlap can
+        // shift/smear attacks by more than one analysis hop. All offsets here
+        // are in AUDIO SAMPLE FRAMES, never pixels or UI display coordinates.
         private static int RefineAttackFrame(AudioClip clip, int estimate,
             ref float[] pcm, ref float[] envelope)
         {
             int rate = clip.frequency;
             int channels = clip.channels;
-            int windowStart = Mathf.Max(0, estimate - Mathf.RoundToInt(rate * .020f));
-            int windowEnd = Mathf.Min(clip.samples, estimate + Mathf.RoundToInt(rate * .020f));
-            int frames = windowEnd - windowStart;
+            int start = Mathf.Max(0, estimate - Mathf.RoundToInt(rate * .072f));
+            int end = Mathf.Min(clip.samples, estimate + Mathf.RoundToInt(rate * .017f));
+            int frames = end - start;
             if (frames < 64) return Mathf.Clamp(estimate, 0, clip.samples - 1);
-            if (pcm == null || pcm.Length < frames * channels)
-                pcm = new float[frames * channels];
-            if (!clip.GetData(pcm, windowStart)) return Mathf.Clamp(estimate, 0, clip.samples - 1);
+            int needed = frames * channels;
+            if (pcm == null || pcm.Length < needed) pcm = new float[needed];
+            if (!clip.GetData(pcm, start)) return Mathf.Clamp(estimate, 0, clip.samples - 1);
 
-            int step = Mathf.Max(16, rate / 1000); // about one millisecond
+            int step = Mathf.Max(8, Mathf.RoundToInt(rate * .0005f));
             int bins = frames / step;
             if (bins < 8) return Mathf.Clamp(estimate, 0, clip.samples - 1);
             if (envelope == null || envelope.Length < bins) envelope = new float[bins];
+            // Stereo RMS energy, never (L+R)/2; opposing channels must not cancel.
             for (int b = 0; b < bins; b++)
             {
-                float energy = 0f;
-                for (int n = b * step; n < (b + 1) * step; n++)
+                double power = 0d;
+                for (int i = b * step; i < (b + 1) * step; ++i)
                 {
-                    int p = n * channels;
-                    float v = channels == 2 ? (pcm[p] + pcm[p + 1]) * .5f : pcm[p];
-                    energy += v * v;
+                    int p = i * channels;
+                    for (int c = 0; c < channels; ++c)
+                    {
+                        float sample = pcm[p + c];
+                        power += (double)sample * sample;
+                    }
                 }
-                envelope[b] = Mathf.Sqrt(energy / step);
+                envelope[b] = Mathf.Sqrt((float)(power / (step * channels)));
             }
-            // The strongest positive envelope slope identifies an attack. Search
-            // around it for the first substantial rise, rather than returning its
-            // (usually later) energy peak or a fixed number of milliseconds.
-            int minBin = Mathf.Max(2, (estimate - windowStart) / step - 15);
-            int maxBin = Mathf.Min(bins - 2, (estimate - windowStart) / step + 14);
-            int bestBin = -1;
-            float bestRise = 0f;
-            for (int b = minBin; b <= maxBin; b++)
+
+            int center = (estimate - start) / step;
+            int searchFrom = Mathf.Max(4, center - Mathf.RoundToInt(rate * .055f / step));
+            int searchTo = Mathf.Min(bins - 4, center + Mathf.RoundToInt(rate * .009f / step));
+            int steepest = -1;
+            float bestSlope = 0f;
+            for (int b = searchFrom; b <= searchTo; ++b)
             {
-                float before = (envelope[b - 1] + envelope[b - 2]) * .5f;
-                float rise = envelope[b] - before;
-                if (rise > bestRise) { bestRise = rise; bestBin = b; }
+                float before = (envelope[b - 3] + 2f * envelope[b - 2] +
+                    2f * envelope[b - 1] + envelope[b]) / 6f;
+                float after = (envelope[b] + 2f * envelope[b + 1] +
+                    2f * envelope[b + 2] + envelope[b + 3]) / 6f;
+                float slope = after - before;
+                if (slope > bestSlope) { bestSlope = slope; steepest = b; }
             }
-            if (bestBin < 0 || bestRise < .0004f) return Mathf.Clamp(estimate, 0, clip.samples - 1);
-            int firstBin = bestBin;
-            int firstAllowed = Mathf.Max(minBin, bestBin - 8);
-            for (int b = bestBin - 1; b >= firstAllowed; b--)
+            if (steepest < 0 || bestSlope < .0003f)
+                return Mathf.Clamp(estimate, 0, clip.samples - 1);
+
+            int earliest = Mathf.Max(2, steepest - Mathf.RoundToInt(rate * .037f / step));
+            // The 12% energy threshold used previously fell into the body of
+            // soft/slow kicks. Use a 5% relative edge and adapt to local floor.
+            // The floor is computed before the steep flank, not from the peak.
+            float floor = float.MaxValue;
+            for (int b = earliest; b < Mathf.Max(earliest + 1, steepest - 3); ++b)
+                floor = Mathf.Min(floor, envelope[b]);
+            if (floor == float.MaxValue) floor = envelope[earliest];
+            float peak = envelope[steepest];
+            for (int b = steepest + 1; b <= Mathf.Min(bins - 1, steepest + 7); ++b)
+                peak = Mathf.Max(peak, envelope[b]);
+            float excursion = peak - floor;
+            if (excursion < .001f) return Mathf.Clamp(estimate, 0, clip.samples - 1);
+            float threshold = floor + Mathf.Max(.00035f, excursion * .05f);
+
+            // Find the quiet -> above-threshold transition immediately before
+            // the dominant rise. Requiring two quiet bins reduces false triggers
+            // on periodic zero crossings of bass-heavy sounds.
+            int onset = steepest;
+            bool found = false;
+            for (int b = steepest - 1; b >= earliest + 2; --b)
             {
-                float before = (envelope[b - 1] + envelope[b - 2]) * .5f;
-                if (envelope[b] - before < bestRise * .24f) break;
-                firstBin = b;
+                if (envelope[b] <= threshold && envelope[b - 1] <= threshold)
+                {
+                    onset = b + 1;
+                    found = true;
+                    break;
+                }
             }
-            return Mathf.Clamp(windowStart + firstBin * step, 0, clip.samples - 1);
+            if (!found)
+            {
+                // Dense audio may have no quiet gap: use the beginning of the
+                // positive-slope region, not the late max-energy location.
+                onset = steepest;
+                for (int b = steepest - 1; b >= earliest + 2; --b)
+                {
+                    float slope = envelope[b + 1] - envelope[b - 1];
+                    if (slope <= bestSlope * .15f) break;
+                    onset = b;
+                }
+            }
+            return Mathf.Clamp(start + onset * step, 0, clip.samples - 1);
+        }
+
+        /// <summary>
+        /// After rendering, place DISPLAY guides against the PCM that the
+        /// listener actually hears. A piecewise warp time map predicts the
+        /// timing but WSOLA synthesis can smear an attack around that estimate.
+        /// The original on-disk/in-memory hit cache is NOT modified. Only the
+        /// projected positions on the warped AudioClip receive small corrections.
+        /// Intended to run once when a warp completes, never per UI redraw.
+        /// </summary>
+        public static List<TransientHint> RefineRenderedTransientHints(
+            AudioClip warped, List<TransientHint> projected)
+        {
+            if (projected == null) return new List<TransientHint>();
+            if (warped == null || warped.samples < 1024 || warped.frequency <= 0 ||
+                warped.channels < 1 || warped.channels > 2)
+                return new List<TransientHint>(projected);
+            var aligned = new List<TransientHint>(projected.Count);
+            float[] pcm = null, envelope = null;
+            int last = -1;
+            int minGap = Mathf.RoundToInt(warped.frequency * .022f);
+            int maxEarly = Mathf.RoundToInt(warped.frequency * .057f);
+            int maxLate = Mathf.RoundToInt(warped.frequency * .012f);
+            int correctedCount = 0;
+            float totalCorrectionMs = 0f, maxCorrectionMs = 0f;
+            for (int i = 0; i < projected.Count; i++)
+            {
+                TransientHint guide = projected[i];
+                int predicted = Mathf.Clamp(Mathf.RoundToInt(guide.position01 * warped.samples),
+                    0, warped.samples - 1);
+                int refined = RefineAttackFrame(warped, predicted, ref pcm, ref envelope);
+                // Avoid snapping to an unrelated sound, even in dense mixes.
+                if (refined < predicted - maxEarly || refined > predicted + maxLate ||
+                    refined <= last + minGap)
+                    refined = predicted;
+                if (refined != predicted)
+                {
+                    correctedCount++;
+                    float correctionMs = Mathf.Abs(predicted - refined) * 1000f / warped.frequency;
+                    totalCorrectionMs += correctionMs;
+                    maxCorrectionMs = Mathf.Max(maxCorrectionMs, correctionMs);
+                }
+                aligned.Add(new TransientHint(refined / (float)warped.samples,
+                    guide.kick, guide.strength));
+                last = refined;
+            }
+            ZPunkSampleAnalysisCache.Trace("RENDERED guide alignment / checked=" + projected.Count +
+                " corrected=" + correctedCount + " avgMs=" +
+                (correctedCount > 0 ? totalCorrectionMs / correctedCount : 0f).ToString("0.0") +
+                " maxMs=" + maxCorrectionMs.ToString("0.0"));
+            return aligned;
         }
 
         public static IEnumerator AnalyzeTransientHints(AudioClip clip,
@@ -171,7 +264,8 @@ namespace ZPunk.DAW
             const int hop = 512;
             const int chunkFrames = 16384;
             float[] buffer = new float[chunkFrames * channels];
-            float bass = 0, presence = 0, slowLow = 0, slowHigh = 0;
+            float bassL = 0, bassR = 0, presenceL = 0, presenceR = 0;
+            float slowLow = 0, slowHigh = 0;
             float lowEnergy = 0, highEnergy = 0, sumStrength = 0;
             int accumulator = 0;
             float lowAlpha = 1f - Mathf.Exp(-2f * Mathf.PI * 190f / rate);
@@ -187,12 +281,16 @@ namespace ZPunk.DAW
                 for (int i = 0; i < length; ++i)
                 {
                     int at = i * channels;
-                    float x = channels == 2 ? (buffer[at] + buffer[at + 1]) * .5f : buffer[at];
-                    bass += lowAlpha * (x - bass);
-                    presence += presenceAlpha * (x - presence);
-                    float high = x - presence;
-                    lowEnergy += bass * bass;
-                    highEnergy += high * high;
+                    float left = buffer[at];
+                    float right = channels == 2 ? buffer[at + 1] : left;
+                    bassL += lowAlpha * (left - bassL);
+                    bassR += lowAlpha * (right - bassR);
+                    presenceL += presenceAlpha * (left - presenceL);
+                    presenceR += presenceAlpha * (right - presenceR);
+                    float highL = left - presenceL;
+                    float highR = right - presenceR;
+                    lowEnergy += .5f * (bassL * bassL + bassR * bassR);
+                    highEnergy += .5f * (highL * highL + highR * highR);
                     if (++accumulator != hop) continue;
                     float lo = Mathf.Sqrt(lowEnergy / hop);
                     float hi = Mathf.Sqrt(highEnergy / hop);

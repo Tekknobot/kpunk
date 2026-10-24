@@ -74,6 +74,11 @@ public class KMusicPlayerUI : MonoBehaviour
     private readonly List<ZPunkSampleWarp.TransientHint> _originalTransientHints = new();
     private AudioClip _originalTransientSource;
     private bool _originalTransientReady;
+    // Cache post-render display corrections for the exact active warped clip.
+    // The original cached guides remain immutable and are still used for BPM,
+    // beat alignment and future rewarps.
+    private AudioClip _warpedGuideSource;
+    private readonly List<ZPunkSampleWarp.TransientHint> _warpedDisplayGuides = new();
     private AudioClip _transientAnalysisSource;
     // Exact mapping returned by the warp renderer (not an approximation).
     private List<ZPunkSampleWarp.TimeMapPoint> _activeWarpTimeMap;
@@ -265,6 +270,8 @@ public class KMusicPlayerUI : MonoBehaviour
         _hitAnalysisFromCache = false;
         if (forgetOriginal)
         {
+            _warpedGuideSource = null;
+            _warpedDisplayGuides.Clear();
             _originalTransientHints.Clear();
             _originalTransientSource = null;
             _originalTransientReady = false;
@@ -296,8 +303,19 @@ public class KMusicPlayerUI : MonoBehaviour
                     (hint.position01 - _warpSourceStart01) / range,
                     hint.kick, hint.strength));
             }
-            _transientHints.AddRange(ZPunkSampleWarp.RemapTransientHints(
-                croppedHints, _activeWarpTimeMap));
+            if (_warpedGuideSource != _warpedClip)
+            {
+                // Rendering may shift a transient a few milliseconds relative
+                // to its theoretical time-map coordinate. Align each guide to
+                // the actual rendered waveform ONCE, never on every panel open.
+                var projected = ZPunkSampleWarp.RemapTransientHints(
+                    croppedHints, _activeWarpTimeMap);
+                _warpedDisplayGuides.Clear();
+                _warpedDisplayGuides.AddRange(
+                    ZPunkSampleWarp.RefineRenderedTransientHints(_warpedClip, projected));
+                _warpedGuideSource = _warpedClip;
+            }
+            _transientHints.AddRange(_warpedDisplayGuides);
         }
         else
             _transientHints.AddRange(_originalTransientHints);
@@ -336,6 +354,8 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         if (this == null || revision != _transientRevision || source != _clip)
             return;
+        _warpedGuideSource = null; // New original hit positions invalidate the rendered projection.
+        _warpedDisplayGuides.Clear();
         _originalTransientHints.Clear();
         if (hits != null) _originalTransientHints.AddRange(hits);
         _originalTransientSource = source;
@@ -1720,6 +1740,11 @@ public class KMusicPlayerUI : MonoBehaviour
             }
             _chops01.Sort();
             _closingHitMarker = lastIsEndOnly && _chops01.Count >= 2;
+            // Persisted positions are ORIGINAL coordinates; the on-screen
+            // markers must match the active warped audio timeline.
+            if (_warpedClip != null && _activeWarpTimeMap != null)
+                for (int i = 0; i < _chops01.Count; i++)
+                    _chops01[i] = SourceToActive01(_chops01[i]);
             ClampSelectedMarkerIndex();
             SyncMarkersToWave();
             UpdateMarkerNavigatorUI();
@@ -1784,6 +1809,12 @@ public class KMusicPlayerUI : MonoBehaviour
         }
 
         _chops01.Sort();
+        // Project storage always uses ORIGINAL sample time. A same-sample
+        // project restore may happen while the rendered warp is still active;
+        // convert the restored positions for the currently displayed clip.
+        if (_warpedClip != null && _activeWarpTimeMap != null)
+            for (int i = 0; i < _chops01.Count; i++)
+                _chops01[i] = SourceToActive01(_chops01[i]);
         ClampSelectedMarkerIndex();
         SyncMarkersToWave();
         UpdateMarkerNavigatorUI();
@@ -2357,12 +2388,22 @@ public class KMusicPlayerUI : MonoBehaviour
         }
         AudioClip oldWarp = _warpedClip;
         // Work in original coordinates before replacing the active time map.
+        // A marker edit may re-render (or remove) a warp. Preserve the exact
+        // source-audio interval the user was inspecting instead of zooming out.
+        float sourceViewStart = _wave != null
+            ? ActiveToSource01(_wave.ViewStart01) : 0f;
+        float sourceViewEnd = _wave != null
+            ? ActiveToSource01(Mathf.Min(1f, _wave.ViewStart01 + _wave.ViewLen01)) : 1f;
+        float previousViewLength = _wave != null ? _wave.ViewLen01 : 1f;
         float previousSourceScrub = ActiveToSource01(_scrub01);
         if (audioSource != null && audioSource.isPlaying && audioSource.clip != null &&
             audioSource.clip.length > 0f)
             previousSourceScrub = ActiveToSource01(audioSource.time / audioSource.clip.length);
 
         _warpedClip = next;
+        // A newly rendered clip must receive its own final guide alignment.
+        _warpedGuideSource = null;
+        _warpedDisplayGuides.Clear();
         _activeWarpTimeMap = _warpedClip != null ? nextTimeMap : null;
         _warpSourceStart01 = _warpedClip != null ? sourceStart01 : 0f;
         _warpSourceEnd01 = _warpedClip != null ? sourceEnd01 : 1f;
@@ -2386,7 +2427,20 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_wave != null)
         {
             _wave.SetClip(active);
-            _wave.ResetZoom(); // the chopped audio, not the full song, is now displayed
+            // SetClip normally resets zoom for genuinely new samples. This is
+            // a render of the SAME sample, so restore the view in source-time
+            // coordinates (also works when WARP OFF restores the full source).
+            float viewStart = SourceToActive01(sourceViewStart);
+            float viewEnd = SourceToActive01(sourceViewEnd);
+            float viewLength = viewEnd - viewStart;
+            if (viewLength < .0001f)
+            {
+                // The old view was outside the newly cropped warp region;
+                // retain its zoom factor at the nearest surviving boundary.
+                viewLength = previousViewLength;
+                viewStart = Mathf.Clamp01(viewStart - viewLength * .5f);
+            }
+            _wave.RestoreWindow(viewStart, viewLength);
             _wave.SetPlayhead01(_scrub01);
             UpdateBeatGrid();
             DisplayMarkersFromSource(sourceMarkers);
@@ -2424,15 +2478,10 @@ public class KMusicPlayerUI : MonoBehaviour
     }
     public void DawPrepareSliceLab()
     {
+        // Entering/re-entering the sampler is a UI operation. Do NOT clear
+        // warp mode, the rendered AudioClip, beat alignment or the time map.
+        // WARP OFF remains the explicit user-controlled way to return to PCM.
         DawEnableManualMarkers();
-        if (!_autoWarpEnabled) return;
-        // An intentionally non-destructive default: leave warp available as
-        // an explicit secondary button, but not applied behind the user's back.
-        _autoWarpEnabled = false;
-        _beatAlignFromHead = false;
-        ProjectPrefs.SetInt(WarpEnabledKey, 0);
-        ProjectPrefs.Save();
-        QueueWarp(true);
     }
     public void DawAddMarker() { DawEnableManualMarkers(); DropChopMarkerAt01(_scrub01); }
     public void DawDeleteMarker()

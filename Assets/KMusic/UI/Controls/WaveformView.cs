@@ -32,7 +32,11 @@ namespace KMusic.UI
         // the ruler so dragging it never accidentally edits a chop boundary.
         private readonly Label _playheadHandle;
         private bool _playheadSnapped;
-        private const float PlayheadGrabPx = 22f;
+        // Only the HEAD handle (or a very narrow strip immediately below the
+        // ruler) starts a playhead drag. The old 22px-wide line hitbox and
+        // full-ruler capture intercepted ordinary zoomed waveform swipes.
+        private const float PlayheadGrabPx = 6f;
+        private const float PlayheadLineGrabBelowRulerPx = 8f;
         private const float PlayheadSnapPx = 18f;
         private const float PlayheadRulerHeight = 25f;
         // HIT SNAP selects the nearest visible kick/snare guide. GRID SNAP
@@ -135,6 +139,8 @@ namespace KMusic.UI
         private Vector2 _pointerDownPosition;
         private bool _pointerMoved;
         private bool _pointerWasPinching;
+        // Empty ruler taps seek, but ruler swipes remain available for panning.
+        private bool _rulerTapCandidate;
         private Vector2 _lastPointerPosition;
         private Vector2 _pointerDownPanelPosition;
         private Vector2 _lastPointerPanelPosition;
@@ -739,22 +745,28 @@ namespace KMusic.UI
                 _verticalScrolling = false;
                 _pointerMoved = false;
                 _pointerWasPinching = false;
+                _rulerTapCandidate = false;
 
-                float t01 = PositionToTimeline01(this.WorldToLocal(evt.position));
-                // A touch on HEAD is always a seek gesture, even at the
-                // extreme ends of the waveform or just below the ruler.
-                bool onHandle = _playheadHandle.worldBound.Contains((Vector2)evt.position);
-                bool rulerTouch = this.WorldToLocal(evt.position).y <= PlayheadRulerHeight || onHandle;
-                int markerIndex = !rulerTouch && MarkersDraggable
-                    ? FindMarkerIndexNear(this.WorldToLocal(evt.position)) : -1;
-                // The ruler is always a seek lane. Below it, chop markers
-                // retain their own drag priority, then the playhead line.
+                Vector2 localPos = this.WorldToLocal(evt.position);
+                bool inRuler = localPos.y >= 0f && localPos.y <= PlayheadRulerHeight;
+                bool headVisible = _playhead01 >= ViewStart01 &&
+                    _playhead01 <= ViewStart01 + ViewLen01;
+                // Only HEAD itself is pickable across its full 44px width;
+                // the remainder of the ruler no longer steals touch swipes.
+                bool onHandle = headVisible &&
+                    _playheadHandle.resolvedStyle.display == DisplayStyle.Flex &&
+                    _playheadHandle.worldBound.Contains((Vector2)evt.position);
+                int markerIndex = !inRuler && MarkersDraggable
+                    ? FindMarkerIndexNear(localPos) : -1;
                 float px = (_playhead01 - ViewStart01) /
                     Mathf.Max(.000001f, ViewLen01) * contentRect.width;
-                bool nearHead = _playhead01 >= ViewStart01 &&
-                    _playhead01 <= ViewStart01 + ViewLen01 &&
-                    Mathf.Abs(this.WorldToLocal(evt.position).x - px) <= PlayheadGrabPx;
-                _draggingPlayhead = rulerTouch || (markerIndex < 0 && nearHead);
+                bool onLineTip = headVisible && !inRuler &&
+                    localPos.y <= PlayheadRulerHeight + PlayheadLineGrabBelowRulerPx &&
+                    Mathf.Abs(localPos.x - px) <= PlayheadGrabPx;
+                // Marker edits have priority below the ruler; HEAD remains
+                // draggable using the visible handle or the narrow line tip.
+                _draggingPlayhead = onHandle || (markerIndex < 0 && onLineTip);
+                _rulerTapCandidate = inRuler && !_draggingPlayhead;
                 if (_draggingPlayhead)
                 {
                     _draggingMarker = false;
@@ -778,7 +790,9 @@ namespace KMusic.UI
                     _dragMarkerIndex = -1;
                     _activeMarkerIndex = -1;
                     UpdateMarkerLabels();
-                    UserPointer01?.Invoke(t01, false);
+                    // Do not seek on pointer-down: a swipe should pan the
+                    // zoomed waveform without first moving the playback head.
+                    // A stationary tap will seek on pointer-up instead.
                 }
             }
 
@@ -837,7 +851,7 @@ namespace KMusic.UI
                         float width = Mathf.Max(1f, contentRect.width);
                         SetViewWindow(ViewStart01 - (panelPos.x - _lastPointerPanelPosition.x) / width * ViewLen01, ViewLen01);
                     }
-                    else
+                    else if (!_rulerTapCandidate)
                         UserPointer01?.Invoke(PositionToTimeline01(pos), true);
                 }
                 _lastPointerPosition = pos;
@@ -867,7 +881,21 @@ namespace KMusic.UI
                 bool clickedEmpty = _pointerDown && !_draggingPlayhead && !_draggingMarker &&
                     !_pointerMoved && !_pointerWasPinching &&
                     ((Vector2)this.WorldToLocal(evt.position) - _pointerDownPosition).sqrMagnitude <= 64f;
-                if (clickedEmpty) UserTap01?.Invoke(PositionToTimeline01(this.WorldToLocal(evt.position)));
+                if (clickedEmpty)
+                {
+                    Vector2 localPos = this.WorldToLocal(evt.position);
+                    if (_rulerTapCandidate)
+                    {
+                        // A tap on the ruler seeks; a swipe never grabs HEAD.
+                        DragPlayhead(localPos);
+                    }
+                    else
+                    {
+                        float t01 = PositionToTimeline01(localPos);
+                        UserPointer01?.Invoke(t01, false);
+                        UserTap01?.Invoke(t01);
+                    }
+                }
                 if (_pointerDown && _draggingMarker && _dragMarkerIndex >= 0 &&
                     _pointerMoved && !_pointerWasPinching)
                 {
@@ -882,6 +910,7 @@ namespace KMusic.UI
                 _dragMarkerIndex = -1;
                 _panningWave = false;
                 _verticalScrolling = false;
+                _rulerTapCandidate = false;
                 // Preserve selected-marker highlight after releasing a tap.
                 UpdateMarkerLabels();
                 MarkDirtyRepaint();
@@ -901,6 +930,7 @@ namespace KMusic.UI
             _dragMarkerIndex = -1;
             _panningWave = false;
             _verticalScrolling = false;
+            _rulerTapCandidate = false;
             UpdateMarkerLabels();
             if (this.HasPointerCapture(evt.pointerId)) this.ReleasePointer(evt.pointerId);
 
@@ -933,6 +963,7 @@ namespace KMusic.UI
             _pinching = true;
             _pointerWasPinching = true;
             _pointerMoved = true;
+            _rulerTapCandidate = false;
 
             _pinchStartDist = Vector2.Distance(_p1Pos, _p2Pos);
             _pinchStartViewLen = ViewLen01;
