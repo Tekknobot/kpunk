@@ -14,7 +14,10 @@ namespace ZPunk.DAW
     /// </summary>
     public static class ZPunkSampleWarp
     {
-        private const int WindowSize = 1024;
+        // A 46ms Hann grain with 75% overlap reduces flutter and audible
+        // re-triggering of sustained tones compared with the old 23ms/50% grains.
+        // The original phase of each source grain is preserved (no resampling).
+        private const int WindowSize = 2048;
         private const int SynthesisHop = 512;
         private const int AnalysisHop = 512;
         private static readonly float[] Hann = MakeWindow();
@@ -284,40 +287,145 @@ namespace ZPunk.DAW
             float durationSeconds, float preferredBpm, out float confidence)
         {
             confidence = 0f;
-            if (hits == null || hits.Count < 16 || durationSeconds < 5f)
+            // A full song can have many weak hats, muted measures and intros;
+            // use convincing percussive spacing and section-local pulse evidence.
+            // Don't fabricate a tempo for truly non-rhythmic recordings.
+            if (hits == null || hits.Count < 6 || durationSeconds < 3f)
                 return 0f;
-            float best = 0f, bestRating = 0f, bestCoherence = 0f;
-            // Scan fine enough to distinguish 119.8 from 120 on a long track.
-            for (int tenth = 600; tenth <= 1900; tenth++)
+
+            int n = hits.Count;
+            double[] times = new double[n], weights = new double[n];
+            double[] sectionWeights = new double[3];
+            int useful = 0;
+            for (int i = 0; i < n; i++)
             {
-                float bpm = tenth * .1f;
-                double real = 0d, imaginary = 0d, total = 0d;
-                for (int i = 0; i < hits.Count; i++)
+                var hit = hits[i];
+                // Weaker hats and incidental highs remain available as supporting
+                // evidence, but kick-like low-frequency hits dominate the pulse.
+                double strength = Math.Max(.1, Math.Min(2.0, hit.strength));
+                double weight = Math.Sqrt(strength) * (hit.kick ? 1.75 : .95);
+                if (strength < .65) weight *= .35;
+                times[i] = Math.Max(0, Math.Min(durationSeconds, hit.position01 * durationSeconds));
+                weights[i] = weight;
+                if (strength >= .24) useful++;
+                int section = Math.Min(2, (int)(3.0 * times[i] / durationSeconds));
+                sectionWeights[section] += weight;
+            }
+            if (useful < 6) return 0f;
+
+            // The spacing of strong attacks helps resolve 65/130 or 90/180
+            // aliases without inventing a tempo from the file's length.
+            var strongGaps = new List<double>();
+            double lastStrong = -1;
+            for (int i = 0; i < n; i++)
+            {
+                if (hits[i].strength < .8f) continue;
+                if (lastStrong >= 0)
                 {
-                    double weight = hits[i].kick ? 1.6 : 1.0;
-                    double cycle = hits[i].position01 * durationSeconds * bpm / 60.0;
-                    // Remove large whole cycles before evaluating trig functions.
-                    double angle = (cycle - Math.Floor(cycle)) * 2.0 * Math.PI;
-                    real += Math.Cos(angle) * weight;
-                    imaginary += Math.Sin(angle) * weight;
-                    total += weight;
+                    double gap = times[i] - lastStrong;
+                    if (gap >= .22 && gap <= 1.3) strongGaps.Add(gap);
                 }
-                float coherence = (float)(Math.Sqrt(real * real + imaginary * imaginary) /
-                    Math.Max(.00001d, total));
-                // A mild prior breaks occasional half/double tempo aliases but
-                // never overrules strong rhythmic evidence.
-                float proximity = 1f - .07f * Mathf.Clamp01(Mathf.Abs(
-                    Mathf.Log(bpm / Mathf.Clamp(preferredBpm, 40f, 240f))) / .7f);
-                float rating = coherence * proximity;
-                if (rating > bestRating)
+                lastStrong = times[i];
+            }
+            strongGaps.Sort();
+            double primaryGap = strongGaps.Count >= 3 ?
+                strongGaps[strongGaps.Count / 2] : 0;
+            double bestScore = 0, winningPulse = 0, winningSpacing = 0;
+            float bestBpm = 0;
+            float preference = Mathf.Clamp(preferredBpm, 50f, 220f);
+            // Evaluate the percussive beat interval directly. Section-specific
+            // phase allows imperfect live performances to drift slightly rather
+            // than cancelling a valid tempo over several minutes.
+            // Coarse half-BPM sweep followed by tenths near the strongest
+            // candidate. This saves most of the mobile CPU work versus a
+            // 0.1-BPM brute-force sweep across the entire tempo range.
+            double[] real = new double[3], imaginary = new double[3];
+            for (int pass = 0; pass < 2; pass++)
+            {
+                int begin = pass == 0 ? 500 :
+                    Math.Max(500, Mathf.RoundToInt(bestBpm * 10f) - 25);
+                int end = pass == 0 ? 2200 :
+                    Math.Min(2200, Mathf.RoundToInt(bestBpm * 10f) + 25);
+                int step = pass == 0 ? 5 : 1;
+                for (int tenth = begin; tenth <= end; tenth += step)
                 {
-                    bestRating = rating;
-                    bestCoherence = coherence;
-                    best = bpm;
+                Array.Clear(real, 0, 3);
+                Array.Clear(imaginary, 0, 3);
+                double bpm = tenth * .1;
+                double period = 60.0 / bpm;
+                for (int i = 0; i < n; i++)
+                {
+                    double cycle = times[i] / period;
+                    double angle = (cycle - Math.Floor(cycle)) * Math.PI * 2;
+                    int section = Math.Min(2, (int)(3.0 * times[i] / durationSeconds));
+                    real[section] += Math.Cos(angle) * weights[i];
+                    imaginary[section] += Math.Sin(angle) * weights[i];
+                }
+                double pulse = 0, pulseWeight = 0;
+                for (int section = 0; section < 3; section++)
+                {
+                    if (sectionWeights[section] < 2.5) continue;
+                    // Bound the influence of a percussion-heavy section so a
+                    // lengthy drum solo doesn't drown out other sections.
+                    double influence = Math.Sqrt(sectionWeights[section]);
+                    pulse += influence * Math.Sqrt(real[section] * real[section] +
+                        imaginary[section] * imaginary[section]) / sectionWeights[section];
+                    pulseWeight += influence;
+                }
+                if (pulseWeight <= 0) continue;
+                pulse /= pulseWeight;
+
+                // Look at the timing of nearby hits rather than song duration.
+                // Include half-beat subdivisions while favoring recurring
+                // quarter-note intervals between strong percussion attacks.
+                double spacingMatched = 0, spacingPossible = 0;
+                double eighth = period * .5;
+                for (int i = 0; i < n; i++)
+                {
+                    if (weights[i] < .30) continue;
+                    for (int j = i + 1; j < n && j <= i + 8; j++)
+                    {
+                        double delta = times[j] - times[i];
+                        if (delta > period * 4.25) break;
+                        if (delta < .10) continue;
+                        int units = (int)Math.Round(delta / eighth);
+                        if (units < 1 || units > 8) continue;
+                        double gapWeight = Math.Sqrt(weights[i] * weights[j]) /
+                            Math.Sqrt(units);
+                        spacingPossible += gapWeight;
+                        double error = Math.Abs(delta - units * eighth);
+                        double tolerance = Math.Max(.025, Math.Min(.075, period * .12));
+                        if (error < tolerance)
+                            spacingMatched += gapWeight * (1.0 - error / tolerance) *
+                                (units % 2 == 0 ? 1.0 : .67);
+                    }
+                }
+                double spacing = spacingPossible > 0 ? spacingMatched / spacingPossible : 0;
+                // Only use the project tempo as a weak alias tie-breaker.
+                double prior = .025 * Math.Min(1.0, Math.Abs(Math.Log(bpm / preference)) / .70);
+                double pulseGapBonus = 0;
+                if (primaryGap > .0)
+                {
+                    double logError = Math.Log(period / primaryGap) / .18;
+                    pulseGapBonus = .085 * Math.Exp(-.5 * logError * logError);
+                }
+                double score = .72 * pulse + .28 * spacing + pulseGapBonus - prior;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestBpm = (float)bpm;
+                    winningPulse = pulse;
+                    winningSpacing = spacing;
+                }
                 }
             }
-            confidence = bestCoherence;
-            return bestCoherence >= .28f ? best : 0f;
+            // Confidence is a measure of rhythmic support, not a guaranteed
+            // probability that a mixed recording's BPM is objectively correct.
+            confidence = Mathf.Clamp01((float)(.73 * winningPulse +
+                .27 * winningSpacing));
+            if (bestScore < .235 || winningPulse < .18 || winningSpacing < .11)
+                return 0f;
+            return Mathf.Round(bestBpm * 10f) / 10f;
         }
 
         public static AudioClip Stretch(AudioClip source, float sourceBpm, float targetBpm,
@@ -864,7 +972,6 @@ namespace ZPunk.DAW
             List<WarpPoint> points, float[] result, float[] weights,
             Func<bool> cancelled)
         {
-            const int radius = 96;
             int available = Math.Max(0, inputFrames - WindowSize);
             for (int outPos = 0; outPos < outFrames; outPos += SynthesisHop)
             {
@@ -872,32 +979,41 @@ namespace ZPunk.DAW
                     MapOutputToSource(points, outputStart + outPos) - inputStart),
                     0, available);
                 int position = expected;
-                if (outPos > 0 && inputFrames >= WindowSize)
+                // FIX: match the audio that has ALREADY been synthesized before
+                // this grain, against the source preceding the candidate grain.
+                // The old code compared the UNRENDERED region after outPos and
+                // mostly chose arbitrary shifts; that produced warble and flams.
+                int correlationFrames = Math.Min(512, outPos);
+                if (correlationFrames >= 128 && inputFrames >= WindowSize)
                 {
+                    const int radius = 192;
                     float best = -2f;
-                    for (int d = -radius; d <= radius; d += 16)
+                    int low = Math.Max(correlationFrames, expected - radius);
+                    int high = Math.Min(available, expected + radius);
+                    for (int offset = low; offset <= high; offset += 8)
                     {
-                        int offset = Mathf.Clamp(expected + d, 0, available);
-                        float dot = 0f, energyA = 0f, energyB = 0f;
-                        for (int j = 0; j < 256 && outPos + j < outFrames; j += 2)
+                        double dot = 0.0, energyA = 0.0, energyB = 0.0;
+                        for (int j = 0; j < correlationFrames; j += 3)
                         {
-                            int frame = outPos + j;
-                            int previousAt = frame * channels;
-                            int incomingAt = Math.Min(inputFrames - 1, offset + j) * channels;
-                            // Match the same source offset for both channels.
-                            // Avoid aligning stereo material from only the left
-                            // channel, which can smear hard-panned transients.
+                            int renderedFrame = outPos - correlationFrames + j;
+                            float norm = weights[renderedFrame];
+                            if (norm < .04f) continue;
+                            int renderedAt = renderedFrame * channels;
+                            int sourceAt = (offset - correlationFrames + j) * channels;
                             for (int c = 0; c < channels; c++)
                             {
-                                float previous = result[previousAt + c] /
-                                    Mathf.Max(.00001f, weights[frame]);
-                                float incoming = input[incomingAt + c];
-                                dot += previous * incoming;
-                                energyA += previous * previous;
-                                energyB += incoming * incoming;
+                                float a = result[renderedAt + c] / norm;
+                                float b = input[sourceAt + c];
+                                dot += a * b;
+                                energyA += a * a;
+                                energyB += b * b;
                             }
                         }
-                        float score = dot / Mathf.Sqrt(Mathf.Max(.0000001f, energyA * energyB));
+                        if (energyA < 1e-8 || energyB < 1e-8) continue;
+                        float score = (float)(dot / Math.Sqrt(energyA * energyB));
+                        // In ties, prefer the true tempo curve rather than
+                        // drifting off the time-aligned transient position.
+                        score -= .012f * Math.Abs(offset - expected) / radius;
                         if (score > best) { best = score; position = offset; }
                     }
                 }
