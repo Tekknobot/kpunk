@@ -660,6 +660,54 @@ public class KMusicPlayerUI : MonoBehaviour
     private int _keyAnalysisRevision;
     private bool _keyAnalysisRunning;
     private ZPunkSampleKeyDetector.Result _sampleKey;
+    // The browser and project restore must analyze the SAME original PCM.
+    // These diagnostics identify the exact source/decoder settings used.
+    private string _keyLoadRoute = "UNSPECIFIED";
+    private long _loadedFileSize = -1;
+    private long _loadedFileWriteUtcTicks = -1;
+
+    private void RememberLoadedFile(string path)
+    {
+        _loadedFileSize = -1;
+        _loadedFileWriteUtcTicks = -1;
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Exists)
+            {
+                _loadedFileSize = info.Length;
+                _loadedFileWriteUtcTicks = info.LastWriteTimeUtc.Ticks;
+            }
+        }
+        catch (Exception) { /* The normal browser load will report an inaccessible file. */ }
+    }
+
+    private bool AlreadyLoadedUnchangedFile(string path)
+    {
+        if (_clip == null || _loadedFileSize < 0 || string.IsNullOrEmpty(_clipResourcesPath) ||
+            !string.Equals(CanonicalSampleId(_clipResourcesPath),
+                CanonicalSampleId(SampleIdForFile(path)), StringComparison.Ordinal)) return false;
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists && info.Length == _loadedFileSize &&
+                info.LastWriteTimeUtc.Ticks == _loadedFileWriteUtcTicks;
+        }
+        catch (Exception) { return false; }
+    }
+
+    private void LogKeySource(string phase, AudioClip source, string details)
+    {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        if (source == null) return;
+        Debug.Log("[ZPUNK KEY] " + phase + " route=" + _keyLoadRoute +
+            " id=" + (_clipResourcesPath ?? "(none)") +
+            " clip=" + source.name + " instance=" + source.GetEntityId() +
+            " samples=" + source.samples + " channels=" + source.channels +
+            " hz=" + source.frequency + " state=" + source.loadState +
+            " " + details);
+#endif
+    }
 
     public bool DawSampleKeyAvailable => _clip != null && !_keyAnalysisRunning && _sampleKey.found;
     public bool DawSampleKeyAnalyzing => _clip != null && _keyAnalysisRunning;
@@ -689,13 +737,46 @@ public class KMusicPlayerUI : MonoBehaviour
         _keyAnalysisRunning = true;
         int revision = _keyAnalysisRevision;
         AudioClip source = _clip;
-        _keyAnalysisJob = StartCoroutine(ZPunkSampleKeyDetector.Analyze(source, result =>
+        LogKeySource("ANALYZE START", source, "");
+        // Imported audio can be handed off by a decoder while its AudioClip is
+        // still loading. Never analyze partially initialized PCM from Browse.
+        _keyAnalysisJob = StartCoroutine(CoAnalyzeReadySampleKey(source, revision));
+    }
+
+    private IEnumerator CoAnalyzeReadySampleKey(AudioClip source, int revision)
+    {
+        Func<bool> cancelled = () => revision != _keyAnalysisRevision || _clip != source || this == null;
+        if (source != null && source.loadState == AudioDataLoadState.Unloaded)
+            source.LoadAudioData();
+        float deadline = Time.realtimeSinceStartup + 10f;
+        while (!cancelled() && source != null &&
+            source.loadState == AudioDataLoadState.Loading && Time.realtimeSinceStartup < deadline)
+            yield return null;
+        if (cancelled()) yield break;
+        if (source == null || source.loadState != AudioDataLoadState.Loaded)
         {
-            if (revision != _keyAnalysisRevision || _clip != source) return;
+            LogKeySource("ANALYZE UNAVAILABLE", source, "audio not decoded");
+            _sampleKey = new ZPunkSampleKeyDetector.Result { status = "AUDIO NOT READY" };
+            _keyAnalysisRunning = false;
+            _keyAnalysisJob = null;
+            yield break;
+        }
+        // Keep the exact same algorithm for both Browse and project restore.
+        yield return ZPunkSampleKeyDetector.Analyze(source, result =>
+        {
+            if (cancelled()) return;
             _sampleKey = result;
             _keyAnalysisRunning = false;
             _keyAnalysisJob = null;
-        }, () => revision != _keyAnalysisRevision || _clip != source || this == null));
+            LogKeySource("ANALYZE DONE", source,
+                "key=" + result.Name + " confidence=" + result.status);
+        }, cancelled);
+        if (!cancelled() && _keyAnalysisRunning)
+        {
+            _keyAnalysisRunning = false;
+            _keyAnalysisJob = null;
+            _sampleKey = new ZPunkSampleKeyDetector.Result { status = "ANALYSIS INCOMPLETE" };
+        }
     }
     private string _clipResourcesPath = null;
     private bool _autoWarpEnabled = true;
@@ -915,6 +996,8 @@ public class KMusicPlayerUI : MonoBehaviour
         _warpedClip = null;
         _ownsSourceClip = false;
         _clipResourcesPath = null;
+        _loadedFileSize = -1;
+        _loadedFileWriteUtcTicks = -1;
         if (oldWarp != null && oldWarp != oldSource) Destroy(oldWarp);
         if (ownSource && oldSource != null) Destroy(oldSource);
     }
@@ -1027,8 +1110,10 @@ public class KMusicPlayerUI : MonoBehaviour
         if (!string.IsNullOrEmpty(id) && _clip != null &&
             string.Equals(id, CanonicalSampleId(_clipResourcesPath), StringComparison.Ordinal))
         {
+            _keyLoadRoute = "PROJECT RESTORE (REUSE)";
             SaveLastTrackId(id);
             RestoreMarkersFromAppliedState();
+            LogKeySource("REUSE", _clip, "project retained current sample and key");
             return;
         }
         // Project loader calls this with null for projects that never selected a sample.
@@ -1123,6 +1208,7 @@ public class KMusicPlayerUI : MonoBehaviour
 #endif
             if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
             {
+                _keyLoadRoute = "PROJECT RESTORE (DECODE)";
                 int serial = ++_sampleRequestSerial;
                 StartImportedLoad(filePath, serial);
                 return true;
@@ -1172,8 +1258,21 @@ public class KMusicPlayerUI : MonoBehaviour
             return;
 
         index = Mathf.Clamp(index, 0, _importedTracks.Count - 1);
+        string path = _importedTracks[index].absolutePath;
+        if (AlreadyLoadedUnchangedFile(path))
+        {
+            // Project restore already has this original PCM and its key result.
+            // Selecting it again in Browse must not destroy/redecode/rescore it.
+            _keyLoadRoute = "BROWSE (REUSE)";
+            SaveLastTrackId(_clipResourcesPath);
+            LogKeySource("REUSE", _clip, "keeping completed/running key analysis");
+            if (!_keyAnalysisRunning && !_sampleKey.found) BeginSampleKeyAnalysis();
+            RefreshTrackBrowserList();
+            return;
+        }
+        _keyLoadRoute = "BROWSE (DECODE)";
         int serial = ++_sampleRequestSerial;
-        StartImportedLoad(_importedTracks[index].absolutePath, serial);
+        StartImportedLoad(path, serial);
     }
 
     private void StartImportedLoad(string path, int serial)
@@ -1223,6 +1322,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _ownsSourceClip = true;
         _pendingProjectId = null;
         _clipResourcesPath = SampleIdForFile(absolutePath);
+        RememberLoadedFile(absolutePath);
         _clipIndex = -1;
 
         if (persistAsLastTrack)
@@ -1692,7 +1792,17 @@ public class KMusicPlayerUI : MonoBehaviour
         _sampleRequestSerial++;
         _pendingProjectId = null;
         index = Mathf.Clamp(index, 0, _clips.Length - 1);
-
+        bool resourceRestore = !string.IsNullOrEmpty(_pendingProjectId);
+        if (_clip != null && _clip == _clips[index])
+        {
+            _keyLoadRoute = resourceRestore ? "PROJECT RESOURCE (REUSE)" : "BROWSE RESOURCE (REUSE)";
+            _clipIndex = index;
+            LogKeySource("REUSE", _clip, "same original resource clip");
+            if (!_keyAnalysisRunning && !_sampleKey.found) BeginSampleKeyAnalysis();
+            RefreshTrackBrowserList();
+            return;
+        }
+        _keyLoadRoute = resourceRestore ? "PROJECT RESOURCE (NEW)" : "BROWSE RESOURCE (NEW)";
         _chops01.Clear();
         _closingHitMarker = false;
         SyncMarkersToWave();
@@ -1737,6 +1847,17 @@ public class KMusicPlayerUI : MonoBehaviour
     private void LoadDeviceTrackByInfo(TrackInfo t)
     {
         if (t == null || string.IsNullOrEmpty(t.uri)) return;
+        bool restoring = !string.IsNullOrEmpty(_pendingProjectId);
+        if (_clip != null && string.Equals(_clipResourcesPath, "uri:" + t.uri, StringComparison.Ordinal))
+        {
+            _keyLoadRoute = restoring ? "ANDROID PROJECT (REUSE)" : "ANDROID BROWSE (REUSE)";
+            SaveLastTrackId(_clipResourcesPath);
+            LogKeySource("REUSE", _clip, "same MediaStore URI");
+            if (!_keyAnalysisRunning && !_sampleKey.found) BeginSampleKeyAnalysis();
+            RefreshTrackBrowserList();
+            return;
+        }
+        _keyLoadRoute = restoring ? "ANDROID PROJECT (DECODE)" : "ANDROID BROWSE (DECODE)";
         int serial = ++_sampleRequestSerial;
         _pendingProjectId = null;
         _chops01.Clear();
