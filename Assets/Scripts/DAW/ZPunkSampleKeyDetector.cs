@@ -31,8 +31,10 @@ namespace ZPunk.DAW
         // Standard tonal profiles, indexed chromatically from the root.
         private static readonly double[] Major = { 6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88 };
         private static readonly double[] Minor = { 6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17 };
-        private const int FftSize = 4096;
-        private const int MaxWindows = 48;
+        // ~0.74 s at 11 kHz provides better pitch resolution for bass notes.
+        // Windows span the whole recording; only one reusable PCM buffer is kept.
+        private const int FftSize = 8192;
+        private const int MaxWindows = 144;
 
         public static IEnumerator Analyze(AudioClip sample, Action<Result> finished, Func<bool> cancelled)
         {
@@ -50,11 +52,19 @@ namespace ZPunk.DAW
             float[] interleaved = new float[readFrames * channels];
             double[] re = new double[FftSize], im = new double[FftSize];
             double[] chroma = new double[12], frameChroma = new double[12];
+            // Strong, recurring bass notes provide additional tonic evidence
+            // when relative major/minor keys share almost the same pitch set.
+            double[] bassChroma = new double[12], frameBass = new double[12];
+            // Many loops establish their tonal center in the opening phrase.
+            // Record the first few *tonal* bass frames separately, so a later
+            // relative-major chord cannot automatically win by note frequency.
+            double[] openingBass = new double[12];
             double[] magnitudes = new double[FftSize / 2 + 1];
-            int windows = Mathf.Min(MaxWindows, Mathf.Max(8, Mathf.CeilToInt(sample.length * 1.5f)));
-            int accepted = 0;
+            int windows = sample.samples <= required ? 1 :
+                Mathf.Min(MaxWindows, Mathf.Max(16, Mathf.CeilToInt(sample.length * 1.6f)));
+            int accepted = 0, bassAccepted = 0, openingAccepted = 0;
             double effectiveRate = (double)sample.frequency / stride;
-            int loBin = Math.Max(2, (int)Math.Ceiling(65 * FftSize / effectiveRate));
+            int loBin = Math.Max(2, (int)Math.Ceiling(48 * FftSize / effectiveRate));
             int hiBin = Math.Min(FftSize / 2 - 2, (int)(1450 * FftSize / effectiveRate));
 
             for (int win = 0; win < windows; win++)
@@ -104,7 +114,8 @@ namespace ZPunk.DAW
                     if (magnitudes[b] > highest) highest = magnitudes[b];
                 }
                 Array.Clear(frameChroma, 0, frameChroma.Length);
-                double sum = 0;
+                Array.Clear(frameBass, 0, frameBass.Length);
+                double sum = 0, bassSum = 0;
                 int peaks = 0;
                 double minMagnitude = highest * .115;
                 for (int b = loBin + 1; b < hiBin; b++)
@@ -128,14 +139,33 @@ namespace ZPunk.DAW
                     double weight = Math.Sqrt(magnitude) * Math.Pow(130.0 / hz, .32) * (1.0 - cents / .50);
                     frameChroma[chromatic] += weight;
                     sum += weight;
+                    if (hz <= 310.0)
+                    {
+                        // Normalize each bass frame so a few loud moments do
+                        // not drown the harmonic context of the entire song.
+                        double lowWeight = weight * Math.Pow(180.0 / hz, .24);
+                        frameBass[chromatic] += lowWeight;
+                        bassSum += lowWeight;
+                    }
                     peaks++;
                 }
                 if (sum > 0 && peaks >= 2)
                 {
                     for (int note = 0; note < 12; note++) chroma[note] += frameChroma[note] / sum;
                     accepted++;
+                    if (bassSum > sum * .12)
+                    {
+                        for (int note = 0; note < 12; note++)
+                        {
+                            double share = frameBass[note] / bassSum;
+                            bassChroma[note] += share;
+                            if (openingAccepted < 4) openingBass[note] += share;
+                        }
+                        bassAccepted++;
+                        if (openingAccepted < 4) openingAccepted++;
+                    }
                 }
-                if (win % 3 == 2) yield return null;
+                if (win % 2 == 1) yield return null;
             }
             if (cancelled != null && cancelled()) yield break;
             if (accepted < Math.Max(3, windows / 6))
@@ -152,6 +182,27 @@ namespace ZPunk.DAW
                 for (int mode = 0; mode < 2; mode++)
                 {
                     double score = Correlation(chroma, mode == 0 ? Major : Minor, key);
+                    // Relative major and minor use the same seven notes.
+                    // Favor the root actually recurring in the sample, with
+                    // a moderate bass emphasis rather than a hard minor bias.
+                    double tonicShare = chroma[key] / Math.Max(1, accepted);
+                    score += .11 * (tonicShare - 1.0 / 12.0);
+                    // The relative-major pitch set is almost identical to a
+                    // natural minor scale. An audible minor third over the
+                    // candidate root is positive minor evidence; an audible
+                    // major third is positive major evidence. Keep this a
+                    // *soft* weight so power chords / sus chords remain valid.
+                    int expectedThird = (key + (mode == 1 ? 3 : 4)) % 12;
+                    int otherThird = (key + (mode == 1 ? 4 : 3)) % 12;
+                    score += .22 * (chroma[expectedThird] - chroma[otherThird]) /
+                        Math.Max(1, accepted);
+                    if (bassAccepted >= 3)
+                    {
+                        double bassShare = bassChroma[key] / bassAccepted;
+                        score += .26 * (bassShare - 1.0 / 12.0);
+                    }
+                    if (openingAccepted >= 3)
+                        score += .16 * (openingBass[key] / openingAccepted - 1.0 / 12.0);
                     if (score > best)
                     {
                         next = best;
@@ -169,9 +220,12 @@ namespace ZPunk.DAW
                 finished?.Invoke(unavailable);
                 yield break;
             }
+            // A tiny gap is common for relative keys; mark it LOW instead of
+            // communicating undeserved certainty from an averaged histogram.
             float confidence = Mathf.Clamp01((float)((best - .25) * 1.1 + (best - next) * 3.0));
             string grade = best >= .68 && best - next >= .10 ? "HIGH" :
                            best >= .48 && best - next >= .045 ? "MED" : "LOW";
+            if (accepted < 8 || bassAccepted < 3 || sample.length < 6f) grade = "LOW";
             finished?.Invoke(new Result { found = true, tonic = bestKey, minor = bestMinor,
                 confidence = confidence, status = grade });
         }

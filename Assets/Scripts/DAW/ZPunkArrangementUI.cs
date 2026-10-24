@@ -33,6 +33,13 @@ namespace ZPunk.DAW
         private VisualElement trackHeaders;
         private VisualElement canvas;
         private VisualElement playhead;
+        private VisualElement rulerVisual;
+        private Label playheadHandle;
+        private int playheadPointerId = -1;
+        private Vector2 playheadPointerWorld;
+        private bool resumeAfterPlayheadDrag;
+        private const float PlayheadEdgePixels = 42f;
+
         // A playback cursor belongs only to an active clip, not to every lane.
         private sealed class ClipPlaybackCursor
         {
@@ -97,6 +104,7 @@ namespace ZPunk.DAW
                 page.UnregisterCallback<PointerCaptureOutEvent>(OnClipCaptureLost);
             }
             gesture = null;
+            playheadPointerId = -1;
             page = target;
             projects = FindObjectOfType<KMusicProjectManager>();
             transport = FindObjectOfType<ZPunkSongTransport>();
@@ -530,6 +538,11 @@ namespace ZPunk.DAW
             ruler.style.height = RulerHeight;
             ruler.style.width = width;
             ruler.style.backgroundColor = new Color(.14f, .17f, .22f);
+            // Ruler is an independent, full-width scrub target. Capturing on
+            // the stable page leaves clip editing and empty-lane swipes intact.
+            // Page receives the gesture first (trickle-down), before ScrollView
+            // can convert ruler touches into timeline panning.
+            rulerVisual = ruler;
             canvas.Add(ruler);
             for (int bar = 0; bar < renderedBars; ++bar)
             {
@@ -639,12 +652,28 @@ namespace ZPunk.DAW
             playhead.style.position = Position.Absolute;
             playhead.style.top = 0;
             playhead.style.width = 2;
-            // A thin time reference stays in the ruler; individual clip cursors
-            // appear only when their clips are active and audible.
-            playhead.style.height = RulerHeight;
-            playhead.style.backgroundColor = Highlight;
+            // Global playhead spans the arrangement; the existing neon clip
+            // markers still show only the clips actually being played.
+            playhead.style.height = RulerHeight + count * RowHeight;
+            playhead.style.backgroundColor = new Color(Highlight.r, Highlight.g, Highlight.b, .72f);
             playhead.pickingMode = PickingMode.Ignore;
             canvas.Add(playhead);
+            playheadHandle = new Label("HEAD") { name = "ZPunkArrangementPlayheadHandle" };
+            playheadHandle.style.position = Position.Absolute;
+            playheadHandle.style.top = 1;
+            playheadHandle.style.width = 44;
+            playheadHandle.style.height = RulerHeight - 1;
+            playheadHandle.style.fontSize = 10;
+            playheadHandle.style.unityFontStyleAndWeight = FontStyle.Bold;
+            playheadHandle.style.unityTextAlign = TextAnchor.MiddleCenter;
+            playheadHandle.style.color = new Color(.035f, .075f, .075f);
+            playheadHandle.style.backgroundColor = Highlight;
+            playheadHandle.style.borderTopLeftRadius = 4;
+            playheadHandle.style.borderTopRightRadius = 4;
+            playheadHandle.style.borderBottomLeftRadius = 4;
+            playheadHandle.style.borderBottomRightRadius = 4;
+            playheadHandle.pickingMode = PickingMode.Position;
+            canvas.Add(playheadHandle);
             RefreshPlayhead();
             UpdateDetails();
             if (song.arrangementLoopEnabled && !song.loopLengthCustom)
@@ -732,13 +761,125 @@ namespace ZPunk.DAW
             lane.Add(rect);
         }
 
+        // Scrubbing stops scheduled voices once on press, not on every move.
+        // If the song was playing it restarts from the chosen tick on release.
+        private bool HitPlayheadScrubLane(Vector2 world)
+        {
+            if (rulerVisual == null || canvas == null ||
+                timelineViewport == null) return false;
+            // Only capture the visible ruler. Clips/lane gestures remain separate,
+            // and touches on the adjacent track column do not seek.
+            return rulerVisual.worldBound.Contains(world) &&
+                timelineViewport.contentViewport.worldBound.Contains(world);
+        }
+
+        private void OnRulerPointerDown(PointerDownEvent evt)
+        {
+            if (evt.button != 0 || page == null || song == null ||
+                canvas == null || gesture != null || playheadPointerId >= 0 ||
+                !HitPlayheadScrubLane(evt.position)) return;
+            if (transport == null) transport = FindObjectOfType<ZPunkSongTransport>();
+            playheadPointerId = evt.pointerId;
+            playheadPointerWorld = evt.position;
+            if (playheadHandle != null)
+            {
+                playheadHandle.text = "DRAG";
+                playheadHandle.style.backgroundColor = Color.white;
+            }
+            resumeAfterPlayheadDrag = transport != null && transport.IsPlaying;
+            if (resumeAfterPlayheadDrag) transport.StopSong();
+            page.CapturePointer(evt.pointerId);
+            SeekPlayheadFromPointer();
+            evt.StopPropagation();
+        }
+
+        private long PlayheadTickAtWorld(Vector2 world)
+        {
+            if (canvas == null || song == null) return 0;
+            float px = Mathf.Clamp(canvas.WorldToLocal(world).x, 0f,
+                Mathf.Max(0f, renderedBars * pixelsPerBar));
+            return Math.Max(0L, Math.Min(Math.Max(0L, song.lengthTicks), PixelToTick(px)));
+        }
+
+        private void SeekPlayheadFromPointer()
+        {
+            if (playheadPointerId < 0 || transport == null) return;
+            long tick = PlayheadTickAtWorld(playheadPointerWorld);
+            if (transport.CurrentTick != tick) transport.Seek(tick);
+            RefreshPlayhead();
+        }
+
+        private void EndPlayheadDrag(bool resume)
+        {
+            if (playheadPointerId < 0) return;
+            int pointerId = playheadPointerId;
+            // Clear the gesture BEFORE release: CaptureOut may arrive synchronously.
+            playheadPointerId = -1;
+            if (page != null && page.HasPointerCapture(pointerId)) page.ReleasePointer(pointerId);
+            bool shouldResume = resumeAfterPlayheadDrag && resume;
+            resumeAfterPlayheadDrag = false;
+            if (playheadHandle != null)
+            {
+                playheadHandle.text = "HEAD";
+                playheadHandle.style.backgroundColor = Highlight;
+            }
+            if (shouldResume && transport != null)
+                transport.PlaySong(transport.CurrentTick);
+            RefreshPlayhead();
+        }
+
+        private void AutoScrollPlayheadDrag()
+        {
+            if (playheadPointerId < 0 || timelineViewport == null || canvas == null) return;
+            float width = timelineViewport.contentViewport.resolvedStyle.width;
+            if (float.IsNaN(width) || width <= 1f) return;
+            float screenX = timelineViewport.contentViewport.WorldToLocal(playheadPointerWorld).x;
+            float push = screenX < PlayheadEdgePixels ? screenX - PlayheadEdgePixels :
+                screenX > width - PlayheadEdgePixels ? screenX - (width - PlayheadEdgePixels) : 0f;
+            if (Mathf.Abs(push) < .001f) return;
+            float maxOffset = Mathf.Max(0f, renderedBars * pixelsPerBar - width);
+            float delta = Mathf.Sign(push) * Mathf.Lerp(0.15f, 1f,
+                Mathf.Clamp01(Mathf.Abs(push) / PlayheadEdgePixels)) *
+                Mathf.Max(60f, width * .65f) * Time.unscaledDeltaTime;
+            float next = Mathf.Clamp(timelineViewport.scrollOffset.x + delta, 0f, maxOffset);
+            if (Mathf.Abs(next - timelineViewport.scrollOffset.x) < .01f) return;
+            timelineViewport.scrollOffset = new Vector2(next, 0f);
+            SeekPlayheadFromPointer();
+        }
+
+        private void FollowArrangementPlayhead()
+        {
+            if (timelineViewport == null || transport == null || !transport.IsPlaying ||
+                !transport.SongMode || playheadPointerId >= 0 || gesture != null) return;
+            float width = timelineViewport.contentViewport.resolvedStyle.width;
+            if (float.IsNaN(width) || width <= 1f) return;
+            float x = TickToPixel(transport.CurrentTick);
+            float offset = Mathf.Max(0f, timelineViewport.scrollOffset.x);
+            if (x >= offset + width * .82f || x < offset + width * .12f)
+            {
+                float anchor = x >= offset + width * .82f ? .72f : .22f;
+                float maxOffset = Mathf.Max(0f, renderedBars * pixelsPerBar - width);
+                timelineViewport.scrollOffset = new Vector2(
+                    Mathf.Clamp(x - width * anchor, 0f, maxOffset), 0f);
+            }
+        }
+
         // Clip interactions are handled in the page's trickle-down phase, before
         // ScrollView receives PointerDown. This prevents native touch panning from
         // stealing a resize when the right clip edge moves left of the finger.
         // Blank lanes continue to use ordinary ScrollView swipes.
         private void OnClipPointerDown(PointerDownEvent evt)
         {
-            if (evt.button != 0 || gesture != null || song == null || canvas == null) return;
+            if (evt.button != 0 || gesture != null || song == null || canvas == null ||
+                playheadPointerId >= 0) return;
+            // This callback is on the PAGE in trickle-down. It runs before the
+            // built-in horizontal ScrollView touch handler, unlike callbacks on
+            // the ruler itself. Scrubbing is therefore reliable on mobile.
+            if (HitPlayheadScrubLane(evt.position))
+            {
+                OnRulerPointerDown(evt);
+                return;
+            }
             var rect = evt.target as VisualElement;
             while (rect != null && rect != page &&
                    (rect.name == null || !rect.name.StartsWith("Clip_", StringComparison.Ordinal)))
@@ -774,6 +915,13 @@ namespace ZPunk.DAW
 
         private void OnClipPointerMove(PointerMoveEvent evt)
         {
+            if (playheadPointerId == evt.pointerId)
+            {
+                playheadPointerWorld = evt.position;
+                SeekPlayheadFromPointer();
+                evt.StopPropagation();
+                return;
+            }
             if (gesture == null || gesture.pointerId != evt.pointerId) return;
             evt.StopPropagation();
             RestoreTimelineOffset(gesture.viewportOffset);
@@ -799,6 +947,14 @@ namespace ZPunk.DAW
 
         private void OnClipPointerUp(PointerUpEvent evt)
         {
+            if (playheadPointerId == evt.pointerId)
+            {
+                playheadPointerWorld = evt.position;
+                SeekPlayheadFromPointer();
+                EndPlayheadDrag(true);
+                evt.StopPropagation();
+                return;
+            }
             if (gesture == null || gesture.pointerId != evt.pointerId) return;
             evt.StopPropagation();
             var drag = gesture;
@@ -821,6 +977,12 @@ namespace ZPunk.DAW
 
         private void OnClipPointerCancel(PointerCancelEvent evt)
         {
+            if (playheadPointerId == evt.pointerId)
+            {
+                EndPlayheadDrag(false);
+                evt.StopPropagation();
+                return;
+            }
             if (gesture == null || gesture.pointerId != evt.pointerId) return;
             evt.StopPropagation();
             var offset = gesture.viewportOffset;
@@ -832,6 +994,11 @@ namespace ZPunk.DAW
 
         private void OnClipCaptureLost(PointerCaptureOutEvent evt)
         {
+            if (playheadPointerId == evt.pointerId)
+            {
+                EndPlayheadDrag(false);
+                return;
+            }
             if (gesture == null || gesture.pointerId != evt.pointerId) return;
             var offset = gesture.viewportOffset;
             gesture = null;
@@ -1173,11 +1340,22 @@ namespace ZPunk.DAW
         private void RefreshPlayhead()
         {
             if (playhead == null || song == null) return;
-            bool moving = transport != null && transport.SongMode && transport.IsPlaying;
-            // The ruler remains a global time reference. Bright green markers
-            // inside clip rectangles belong only to active, audible clips.
-            playhead.style.display = moving ? DisplayStyle.Flex : DisplayStyle.None;
-            if (moving) playhead.style.left = TickToPixel(transport.CurrentTick);
+            if (transport == null) transport = FindObjectOfType<ZPunkSongTransport>();
+            bool activeTransport = transport != null && transport.SongMode;
+            bool moving = activeTransport && transport.IsPlaying;
+            // Show stopped/seeked position, too. Clip-local cursors still need
+            // active playback so they cannot light up on silent clips.
+            // The cursor MUST be shown before pressing PLAY, even while the
+            // transport component is still initializing on the first frame.
+            playhead.style.display = DisplayStyle.Flex;
+            if (playheadHandle != null) playheadHandle.style.display = DisplayStyle.Flex;
+            {
+                float x = TickToPixel(transport != null ? transport.CurrentTick : 0L);
+                playhead.style.left = x;
+                if (playheadHandle != null)
+                    playheadHandle.style.left = Mathf.Clamp(x - 22f, 0f,
+                        Mathf.Max(0f, renderedBars * pixelsPerBar - 44f));
+            }
 
             long tick = moving ? transport.CurrentTick : -1;
             bool anySolo = false;
@@ -1212,6 +1390,8 @@ namespace ZPunk.DAW
             if (projects != null && (projects.CurrentSlot != projectSlot ||
                 (ownsSong && !ReferenceEquals(projects.CurrentSong, song)))) { OnShown(); return; }
             RefreshPlayhead();
+            AutoScrollPlayheadDrag();
+            FollowArrangementPlayhead();
             // Defend against ScrollView touch inertia during a captured clip gesture.
             if (gesture != null) RestoreTimelineOffset(gesture.viewportOffset);
             // Reflect touch scrolling in the existing bar counter. Do not assign

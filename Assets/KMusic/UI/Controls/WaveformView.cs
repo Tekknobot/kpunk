@@ -215,12 +215,14 @@ namespace KMusic.UI
             Add(_playheadOverlay);
 
             _playheadHandle = new Label("HEAD") { name = "ZPunkPlayheadHandle" };
-            _playheadHandle.pickingMode = PickingMode.Ignore;
+            // A genuine pickable touch target. The parent WaveformView still
+            // owns capture and dispatches scrubbing; marker taps are unaffected.
+            _playheadHandle.pickingMode = PickingMode.Position;
             _playheadHandle.style.position = Position.Absolute;
             _playheadHandle.style.top = 1f;
-            _playheadHandle.style.width = 36f;
-            _playheadHandle.style.height = 20f;
-            _playheadHandle.style.fontSize = 9f;
+            _playheadHandle.style.width = 44f;
+            _playheadHandle.style.height = 24f;
+            _playheadHandle.style.fontSize = 10f;
             _playheadHandle.style.unityTextAlign = TextAnchor.MiddleCenter;
             _playheadHandle.style.unityFontStyleAndWeight = FontStyle.Bold;
             _playheadHandle.style.color = Color.white;
@@ -254,6 +256,41 @@ namespace KMusic.UI
             MovePlayhead();
         }
 
+        // Track playback only when the cursor approaches the viewport edge.
+        // Finger panning/pinch gestures retain full control of the viewport.
+        public void FollowPlayhead(float t01)
+        {
+            if (_pointerDown || _pinching || ViewLen01 >= .9999f ||
+                contentRect.width <= 2f || t01 < 0f) return;
+            float screen = (t01 - ViewStart01) / ViewLen01;
+            if (screen > .82f)
+                SetViewWindow(t01 - ViewLen01 * .72f, ViewLen01);
+            else if (screen < .12f)
+                SetViewWindow(t01 - ViewLen01 * .22f, ViewLen01);
+        }
+
+        // During ruler/HEAD dragging, keep the head underneath the finger
+        // while scrolling the zoomed waveform into view at either edge.
+        // Called by the sampler's existing 30 Hz UI scheduler so it also works
+        // when the finger pauses at the edge (no PointerMove events).
+        public void AutoScrollDraggedPlayhead(float deltaTime)
+        {
+            if (!_draggingPlayhead || !_pointerDown || _pinching ||
+                ViewLen01 >= .9999f || contentRect.width <= 2f) return;
+            float x = _lastPointerPosition.x - contentRect.x;
+            float width = contentRect.width;
+            const float edge = 34f;
+            float proximity = x < edge ? -(edge - x) / edge :
+                x > width - edge ? (x - (width - edge)) / edge : 0f;
+            if (Mathf.Abs(proximity) < .001f) return;
+            float previousStart = ViewStart01;
+            SetViewWindow(ViewStart01 + Mathf.Clamp(proximity, -2f, 2f) *
+                ViewLen01 * Mathf.Min(.10f, Mathf.Max(0f, deltaTime)) * 1.35f,
+                ViewLen01);
+            if (Mathf.Abs(previousStart - ViewStart01) > .0000001f)
+                DragPlayhead(_lastPointerPosition);
+        }
+
         private void MovePlayhead()
         {
             if (_playheadOverlay == null) return;
@@ -270,7 +307,7 @@ namespace KMusic.UI
             _playheadOverlay.style.display = DisplayStyle.Flex;
             _playheadOverlay.style.left = Mathf.Clamp(px - 1.25f, 0f, Mathf.Max(0f, contentRect.width - 2.5f));
             _playheadHandle.style.display = DisplayStyle.Flex;
-            _playheadHandle.style.left = Mathf.Clamp(px - 18f, 0f, Mathf.Max(0f, contentRect.width - 36f));
+            _playheadHandle.style.left = Mathf.Clamp(px - 22f, 0f, Mathf.Max(0f, contentRect.width - 44f));
             Color color = _playheadSnapped ? new Color(.40f, .86f, .73f, 1f) : PlayheadColor;
             _playheadOverlay.style.backgroundColor = color;
             _playheadHandle.style.backgroundColor = color;
@@ -680,12 +717,12 @@ namespace KMusic.UI
             if (_p1 == -1)
             {
                 _p1 = evt.pointerId;
-                _p1Pos = evt.localPosition;
+                _p1Pos = this.WorldToLocal(evt.position);
             }
             else if (_p2 == -1 && evt.pointerId != _p1)
             {
                 _p2 = evt.pointerId;
-                _p2Pos = evt.localPosition;
+                _p2Pos = this.WorldToLocal(evt.position);
                 BeginPinch();
             }
 
@@ -694,7 +731,7 @@ namespace KMusic.UI
             {
                 _pointerDown = true;
                 _pointerIdPrimary = evt.pointerId;
-                _pointerDownPosition = (Vector2)evt.localPosition;
+                _pointerDownPosition = (Vector2)this.WorldToLocal(evt.position);
                 _lastPointerPosition = _pointerDownPosition;
                 _pointerDownPanelPosition = (Vector2)evt.position;
                 _lastPointerPanelPosition = _pointerDownPanelPosition;
@@ -703,24 +740,28 @@ namespace KMusic.UI
                 _pointerMoved = false;
                 _pointerWasPinching = false;
 
-                float t01 = PositionToTimeline01(evt.localPosition);
-                bool rulerTouch = evt.localPosition.y <= PlayheadRulerHeight;
+                float t01 = PositionToTimeline01(this.WorldToLocal(evt.position));
+                // A touch on HEAD is always a seek gesture, even at the
+                // extreme ends of the waveform or just below the ruler.
+                bool onHandle = _playheadHandle.worldBound.Contains((Vector2)evt.position);
+                bool rulerTouch = this.WorldToLocal(evt.position).y <= PlayheadRulerHeight || onHandle;
                 int markerIndex = !rulerTouch && MarkersDraggable
-                    ? FindMarkerIndexNear(evt.localPosition) : -1;
+                    ? FindMarkerIndexNear(this.WorldToLocal(evt.position)) : -1;
                 // The ruler is always a seek lane. Below it, chop markers
                 // retain their own drag priority, then the playhead line.
                 float px = (_playhead01 - ViewStart01) /
                     Mathf.Max(.000001f, ViewLen01) * contentRect.width;
                 bool nearHead = _playhead01 >= ViewStart01 &&
                     _playhead01 <= ViewStart01 + ViewLen01 &&
-                    Mathf.Abs(evt.localPosition.x - px) <= PlayheadGrabPx;
+                    Mathf.Abs(this.WorldToLocal(evt.position).x - px) <= PlayheadGrabPx;
                 _draggingPlayhead = rulerTouch || (markerIndex < 0 && nearHead);
                 if (_draggingPlayhead)
                 {
                     _draggingMarker = false;
                     _dragMarkerIndex = -1;
+                    _playheadHandle.text = "DRAG";
                     PlayheadGrabbed?.Invoke(true);
-                    DragPlayhead(evt.localPosition);
+                    DragPlayhead(this.WorldToLocal(evt.position));
                 }
                 else if (markerIndex >= 0)
                 {
@@ -749,8 +790,8 @@ namespace KMusic.UI
             if (evt == null) return;
 
             // update pointer positions
-            if (evt.pointerId == _p1) _p1Pos = evt.localPosition;
-            if (evt.pointerId == _p2) _p2Pos = evt.localPosition;
+            if (evt.pointerId == _p1) _p1Pos = this.WorldToLocal(evt.position);
+            if (evt.pointerId == _p2) _p2Pos = this.WorldToLocal(evt.position);
 
             if (_pinching)
             {
@@ -762,7 +803,7 @@ namespace KMusic.UI
 
             if (_pointerDown && evt.pointerId == _pointerIdPrimary)
             {
-                Vector2 pos = (Vector2)evt.localPosition;
+                Vector2 pos = (Vector2)this.WorldToLocal(evt.position);
                 Vector2 panelPos = (Vector2)evt.position;
                 Vector2 displacement = panelPos - _pointerDownPanelPosition;
                 if (displacement.sqrMagnitude > 64f) _pointerMoved = true;
@@ -819,17 +860,18 @@ namespace KMusic.UI
             {
                 if (_draggingPlayhead && _pointerDown && !_pointerWasPinching)
                 {
-                    DragPlayhead(evt.localPosition);
+                    DragPlayhead(this.WorldToLocal(evt.position));
                     PlayheadGrabbed?.Invoke(false);
+                    _playheadHandle.text = "HEAD";
                 }
                 bool clickedEmpty = _pointerDown && !_draggingPlayhead && !_draggingMarker &&
                     !_pointerMoved && !_pointerWasPinching &&
-                    ((Vector2)evt.localPosition - _pointerDownPosition).sqrMagnitude <= 64f;
-                if (clickedEmpty) UserTap01?.Invoke(PositionToTimeline01(evt.localPosition));
+                    ((Vector2)this.WorldToLocal(evt.position) - _pointerDownPosition).sqrMagnitude <= 64f;
+                if (clickedEmpty) UserTap01?.Invoke(PositionToTimeline01(this.WorldToLocal(evt.position)));
                 if (_pointerDown && _draggingMarker && _dragMarkerIndex >= 0 &&
                     _pointerMoved && !_pointerWasPinching)
                 {
-                    float t01 = PositionToTimeline01(evt.localPosition);
+                    float t01 = PositionToTimeline01(this.WorldToLocal(evt.position));
                     MarkerDrag01?.Invoke(_dragMarkerIndex, t01, false);
                 }
 
@@ -851,6 +893,7 @@ namespace KMusic.UI
         private void OnPointerCancel(PointerCancelEvent evt)
         {
             if (_draggingPlayhead) PlayheadGrabbed?.Invoke(false);
+            _playheadHandle.text = "HEAD";
             _draggingPlayhead = false;
             _pointerDown = false;
             _pointerIdPrimary = -1;
@@ -882,6 +925,7 @@ namespace KMusic.UI
         private void BeginPinch()
         {
             if (_draggingPlayhead) PlayheadGrabbed?.Invoke(false);
+            _playheadHandle.text = "HEAD";
             _draggingPlayhead = false;
             _draggingMarker = false;
             _dragMarkerIndex = -1;

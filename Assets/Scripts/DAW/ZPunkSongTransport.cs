@@ -129,9 +129,12 @@ namespace ZPunk.DAW
             RefreshButton();
         }
 
-        public bool PlaySong(long fromTick = 0, bool oneShotExport = false)
+        public bool PlaySong(long fromTick = -1, bool oneShotExport = false)
         {
             Resolve();
+            // Normal PLAY starts from a manually scrubbed arrangement head.
+            // Explicit callers (exports, resume, restart) retain their ticks.
+            if (fromTick < 0L) fromTick = playing ? 0L : CurrentTick;
             if (playing) StopSong();
             if (!songMode) return false;
             if (drums == null || projects == null)

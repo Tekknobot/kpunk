@@ -3117,6 +3117,7 @@ public class KMusicPlayerUI : MonoBehaviour
         // stopped, or fight a finger that is holding the playhead.
         if (_playheadGrabbed || !audioSource.isPlaying)
         {
+            if (_playheadGrabbed) _wave?.AutoScrollDraggedPlayhead(1f / 30f);
             _wave?.SetPlayhead01(_scrub01);
             UpdateTimeLabels(_scrub01 * active.length, active.length);
             return;
@@ -3125,6 +3126,7 @@ public class KMusicPlayerUI : MonoBehaviour
         float t01 = Mathf.Clamp01(t / active.length);
         _scrub01 = t01;
         _wave?.SetPlayhead01(t01);
+        _wave?.FollowPlayhead(t01);
         UpdateTimeLabels(t, active.length);
     }
 
