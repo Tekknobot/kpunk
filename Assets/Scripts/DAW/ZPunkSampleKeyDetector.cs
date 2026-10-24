@@ -45,8 +45,215 @@ namespace ZPunk.DAW
         private const int MaxWindows = 144;
         // A root+third+fifth present together is more useful for separating
         // relative keys than their shared whole-song pitch-class histogram.
-        // The additional evidence uses the EXISTING FFT windows (no more reads).
+        // Section evidence reuses the existing FFT windows; a second pass
+        // may spend up to 24 of the 144-window budget on disputed sections.
         private const int KeyCount = 24; // 12 major, then 12 minor
+        private const int BaseWindowCap = 120;
+        private const int ExtraWindowCap = 24;
+        private const int SectionCount = 3;
+
+        // Fixed-size per-section accumulators: memory does not scale with audio length.
+        private sealed class SectionEvidence
+        {
+            public readonly double[] chroma = new double[12];
+            public readonly double[] bass = new double[12];
+            public readonly double[] openingBass = new double[12];
+            public readonly double[] triads = new double[KeyCount];
+            public readonly double[] rootedTriads = new double[KeyCount];
+            public readonly double[] closingTriads = new double[KeyCount];
+            public readonly double[] cadences = new double[KeyCount];
+            public int accepted, bassAccepted, openingAccepted, attempted, chordFrames;
+            public int previousChord = -1;
+            public double previousChordStrength, previousTime = -1;
+
+            // Require repeated coherent pitch information. Sparse, percussion-led
+            // sections are deliberately excluded from the decision process.
+            public bool Reliable => accepted >= 5 && chordFrames >= 2 &&
+                (bassAccepted >= 3 || chordFrames >= 5) &&
+                accepted >= Math.Max(3, attempted / 6);
+        }
+
+        private static int TopKey(double[] scores, out double margin)
+        {
+            int best = 0;
+            double highest = double.NegativeInfinity, runnerUp = double.NegativeInfinity;
+            for (int i = 0; i < KeyCount; i++)
+            {
+                if (scores[i] > highest)
+                {
+                    runnerUp = highest;
+                    highest = scores[i];
+                    best = i;
+                }
+                else if (scores[i] > runnerUp) runnerUp = scores[i];
+            }
+            margin = highest - runnerUp;
+            return best;
+        }
+
+        // Exactly the established full-song scoring formula, reusable on thirds.
+        // No fixed bias toward minor or major is introduced.
+        private static double[] ScoreEvidence(double[] chroma, double[] bass,
+            double[] openingBass, double[] triads, double[] rootedTriads,
+            double[] closingTriads, double[] cadences,
+            int accepted, int bassAccepted, int openingAccepted)
+        {
+            double[] result = new double[KeyCount];
+            if (accepted < 1) return result;
+            for (int key = 0; key < 12; key++)
+            {
+                for (int mode = 0; mode < 2; mode++)
+                {
+                    bool minorCandidate = mode == 1;
+                    double score = Correlation(chroma, minorCandidate ? Minor : Major, key);
+                    if (minorCandidate)
+                        score = Math.Max(score, Correlation(chroma, MinorDorian, key) - .025);
+                    double scaleFit = ScaleFit(chroma, key, minorCandidate);
+                    score += .30 * (scaleFit - .65);
+                    double tonicShare = chroma[key] / accepted;
+                    score += .11 * (tonicShare - 1.0 / 12.0);
+                    int expectedThird = (key + (minorCandidate ? 3 : 4)) % 12;
+                    int otherThird = (key + (minorCandidate ? 4 : 3)) % 12;
+                    score += .26 * (chroma[expectedThird] - chroma[otherThird]) / accepted;
+                    if (bassAccepted >= 3)
+                        score += .32 * (bass[key] / bassAccepted - 1.0 / 12.0);
+                    if (openingAccepted >= 3)
+                        score += .09 * (openingBass[key] / openingAccepted - 1.0 / 12.0);
+                    int index = mode * 12 + key;
+                    double scaleCompatibility = Math.Max(.30,
+                        Math.Min(1.0, (scaleFit - .40) / .38));
+                    double harmonicEvidence = 2.0 * triads[index] / accepted;
+                    if (bassAccepted >= 3)
+                        harmonicEvidence += 4.0 * rootedTriads[index] / bassAccepted;
+                    harmonicEvidence += .6 * closingTriads[index] / accepted;
+                    harmonicEvidence += 2.0 * cadences[index] / accepted;
+                    result[index] = score + scaleCompatibility * harmonicEvidence;
+                }
+            }
+            return result;
+        }
+
+        private static double[] ScoreSection(SectionEvidence section)
+        {
+            return ScoreEvidence(section.chroma, section.bass, section.openingBass,
+                section.triads, section.rootedTriads, section.closingTriads,
+                section.cadences, section.accepted, section.bassAccepted,
+                section.openingAccepted);
+        }
+
+        private static void CollectSection(SectionEvidence section, double[] frameChroma,
+            double[] frameBass, double sum, double bassSum, bool bassPresent,
+            double strongestChord, double secondChord, int strongestIndex,
+            double positionWithinSection, double time, bool extra)
+        {
+            section.attempted++;
+            double maxShare = 0;
+            for (int note = 0; note < 12; note++)
+                maxShare = Math.Max(maxShare, frameChroma[note] / sum);
+
+            // Broad, drum-like spectra and silent frames don't influence a
+            // section's estimate. Allow clear pitched bass even without triads.
+            if (maxShare < .16 ||
+                (strongestChord < .020 && !(bassPresent && maxShare > .30)))
+            {
+                section.previousChord = -1;
+                return;
+            }
+            section.accepted++;
+            if (strongestChord >= .032) section.chordFrames++;
+            for (int note = 0; note < 12; note++)
+                section.chroma[note] += frameChroma[note] / sum;
+            if (bassPresent)
+            {
+                for (int note = 0; note < 12; note++)
+                {
+                    double share = frameBass[note] / bassSum;
+                    section.bass[note] += share;
+                    // Extra windows are sampled out of chronological order;
+                    // they must not overwrite the original opening evidence.
+                    if (!extra && section.openingAccepted < 4)
+                        section.openingBass[note] += share;
+                }
+                section.bassAccepted++;
+                if (!extra && section.openingAccepted < 4) section.openingAccepted++;
+            }
+            for (int index = 0; index < KeyCount; index++)
+            {
+                int root = index % 12;
+                double triad = TriadSupport(frameChroma, sum, root, index >= 12);
+                section.triads[index] += triad;
+                if (bassPresent) section.rootedTriads[index] +=
+                    triad * frameBass[root] / bassSum;
+                if (positionWithinSection >= .88)
+                    section.closingTriads[index] += triad;
+            }
+            bool clear = strongestIndex >= 0 && strongestChord > .038 &&
+                strongestChord > secondChord * 1.12;
+            if (!extra && clear && section.previousChord >= 0 &&
+                time - section.previousTime > 0 && time - section.previousTime < 3.5)
+            {
+                int tonic = strongestIndex % 12;
+                int previousRoot = section.previousChord % 12;
+                bool dominant = previousRoot == (tonic + 7) % 12;
+                bool subtonic = strongestIndex >= 12 && previousRoot == (tonic + 10) % 12;
+                if (dominant || subtonic)
+                    section.cadences[strongestIndex] +=
+                        Math.Min(section.previousChordStrength, strongestChord) *
+                        (dominant ? 1.0 : .45);
+            }
+            section.previousChord = !extra && clear ? strongestIndex : -1;
+            section.previousChordStrength = strongestChord;
+            section.previousTime = time;
+        }
+
+        // Compare credible independent section estimates, not a majority vote.
+        // Extra FFT work is only justified by an actual tonal disagreement.
+        private static int FindDisputedSections(SectionEvidence[] sections,
+            double[] globalScores, bool[] targets)
+        {
+            double globalMargin;
+            int globalKey = TopKey(globalScores, out globalMargin);
+            int[] winners = new int[SectionCount];
+            double[] margins = new double[SectionCount];
+            int credible = 0;
+            for (int i = 0; i < SectionCount; i++)
+            {
+                winners[i] = -1;
+                if (!sections[i].Reliable) continue;
+                winners[i] = TopKey(ScoreSection(sections[i]), out margins[i]);
+                if (margins[i] >= .045) credible++;
+            }
+            if (credible < 2) return 0;
+            bool disagreement = false;
+            for (int i = 0; i < SectionCount; i++)
+            {
+                if (winners[i] < 0 || margins[i] < .045) continue;
+                for (int j = i + 1; j < SectionCount; j++)
+                    if (winners[j] >= 0 && margins[j] >= .045 && winners[i] != winners[j])
+                        disagreement = true;
+            }
+            if (!disagreement) return 0;
+            int count = 0;
+            for (int i = 0; i < SectionCount; i++)
+            {
+                // Gather more data in credible sections that disagree with
+                // the overall estimate, and in the strong corroborating ones.
+                targets[i] = winners[i] >= 0 && margins[i] >= .045 &&
+                    (winners[i] != globalKey || globalMargin < .08);
+                if (targets[i]) count++;
+            }
+            // If only one challenger was flagged, sample at least one
+            // competing reliable section as a control.
+            if (count < 2)
+                for (int i = 0; i < SectionCount; i++)
+                    if (!targets[i] && winners[i] >= 0 && margins[i] >= .045)
+                    {
+                        targets[i] = true;
+                        count++;
+                        break;
+                    }
+            return count;
+        }
 
         public static IEnumerator Analyze(AudioClip sample, Action<Result> finished, Func<bool> cancelled)
         {
@@ -84,18 +291,43 @@ namespace ZPunk.DAW
             double previousChordStrength = 0;
             double[] magnitudes = new double[FftSize / 2 + 1];
             int windows = sample.samples <= required ? 1 :
-                Mathf.Min(MaxWindows, Mathf.Max(16, Mathf.CeilToInt(sample.length * 1.6f)));
+                Mathf.Min(BaseWindowCap, Mathf.Max(16, Mathf.CeilToInt(sample.length * 1.6f)));
+            // Reserve a small portion of the existing 144-window limit for
+            // disagreement-driven resampling; easy tracks use fewer FFTs.
+            int extraBudget = Math.Min(ExtraWindowCap, MaxWindows - windows);
+            int extraWindows = 0;
+            bool[] extraTargets = new bool[SectionCount];
+            int[] targetOrder = new int[SectionCount];
+            int targetCount = 0;
+            SectionEvidence[] sections = new SectionEvidence[SectionCount];
+            for (int i = 0; i < SectionCount; i++) sections[i] = new SectionEvidence();
             int accepted = 0, bassAccepted = 0, openingAccepted = 0;
             double effectiveRate = (double)sample.frequency / stride;
             int loBin = Math.Max(2, (int)Math.Ceiling(48 * FftSize / effectiveRate));
             int hiBin = Math.Min(FftSize / 2 - 2, (int)(1450 * FftSize / effectiveRate));
 
-            for (int win = 0; win < windows; win++)
+            for (int win = 0; win < windows + extraWindows; win++)
             {
                 if (cancelled != null && cancelled()) yield break;
-                // Evenly scan the body of the clip, including longer recordings.
+                bool extra = win >= windows;
+                // The first pass spreads evenly across beginning, middle, end.
+                // The optional second pass adds different offsets only in
+                // sections whose convincing estimates conflict.
+                double position;
+                if (!extra) position = (win + .5) / windows;
+                else
+                {
+                    int index = win - windows;
+                    int target = targetOrder[index % targetCount];
+                    int slot = index / targetCount;
+                    int slotsInSection = (extraWindows + targetCount - 1) / targetCount;
+                    double within = (slot + .37 + .17 * (slot % 2)) / (slotsInSection + .5);
+                    position = (target + Math.Min(.98, within)) / SectionCount;
+                }
+                int segment = Math.Min(SectionCount - 1, (int)(position * SectionCount));
+                double withinSegment = position * SectionCount - segment;
                 int start = sample.samples <= readFrames ? 0 :
-                    (int)Math.Round((double)(sample.samples - readFrames) * (win + 0.5) / windows);
+                    (int)Math.Round((double)(sample.samples - readFrames) * position);
                 bool read = false;
                 try { read = sample.GetData(interleaved, start); }
                 catch (Exception) { read = false; }
@@ -127,7 +359,21 @@ namespace ZPunk.DAW
                     im[i] = 0;
                     energy += re[i] * re[i];
                 }
-                if (energy < 0.00003) { if (win % 4 == 3) yield return null; continue; }
+                if (energy < 0.00003)
+                {
+                    if (win % 4 == 3) yield return null;
+                    if (win == windows - 1 && extraBudget > 0 && accepted >= 8)
+                    {
+                        double[] baseline = ScoreEvidence(chroma, bassChroma, openingBass,
+                            tonicTriads, bassRootedTriads, closingTriads, resolvedCadences,
+                            accepted, bassAccepted, openingAccepted);
+                        FindDisputedSections(sections, baseline, extraTargets);
+                        for (int i = 0; i < SectionCount; i++)
+                            if (extraTargets[i]) targetOrder[targetCount++] = i;
+                        if (targetCount >= 2) extraWindows = extraBudget;
+                    }
+                    continue;
+                }
 
                 Fft(re, im);
                 double highest = 0;
@@ -193,10 +439,10 @@ namespace ZPunk.DAW
                         {
                             double share = frameBass[note] / bassSum;
                             bassChroma[note] += share;
-                            if (openingAccepted < 4) openingBass[note] += share;
+                            if (!extra && openingAccepted < 4) openingBass[note] += share;
                         }
                         bassAccepted++;
-                        if (openingAccepted < 4) openingAccepted++;
+                        if (!extra && openingAccepted < 4) openingAccepted++;
                     }
 
                     // Analyze harmony in EACH window rather than only after
@@ -213,7 +459,7 @@ namespace ZPunk.DAW
                             tonicTriads[index] += triad;
                             if (bassPresent)
                                 bassRootedTriads[index] += triad * frameBass[root] / bassSum;
-                            if (win >= windows * .88)
+                            if (position >= .88)
                                 closingTriads[index] += triad;
                             chordVotes[index] = triad * (bassPresent ?
                                 1.0 + 1.5 * frameBass[root] / bassSum : 1.0);
@@ -233,7 +479,7 @@ namespace ZPunk.DAW
                     // frames are separated by an excessive time interval.
                     bool clearChord = strongestIndex >= 0 && strongestChord > .038 &&
                         strongestChord > secondChord * 1.12;
-                    if (clearChord && previousChord >= 0 && win - previousChordWindow <= 2 &&
+                    if (!extra && clearChord && previousChord >= 0 && win - previousChordWindow <= 2 &&
                         sample.length / windows < 3.5f)
                     {
                         int tonic = strongestIndex % 12;
@@ -249,12 +495,27 @@ namespace ZPunk.DAW
                                 (dominant ? 1.0 : .45);
                         }
                     }
-                    // Don't connect two chords separated by an unknown phrase.
-                    previousChord = clearChord ? strongestIndex : -1;
+                    // Don't connect extra-pass windows to the original time
+                    // series: resampling jumps backwards within the recording.
+                    previousChord = !extra && clearChord ? strongestIndex : -1;
                     previousChordStrength = strongestChord;
                     previousChordWindow = win;
+                    CollectSection(sections[segment], frameChroma, frameBass, sum,
+                        bassSum, bassPresent, strongestChord, secondChord,
+                        strongestIndex, withinSegment, position * sample.length, extra);
                 }
                 if (win % 2 == 1) yield return null;
+
+                if (win == windows - 1 && extraBudget > 0 && accepted >= 8)
+                {
+                    double[] baseline = ScoreEvidence(chroma, bassChroma, openingBass,
+                        tonicTriads, bassRootedTriads, closingTriads, resolvedCadences,
+                        accepted, bassAccepted, openingAccepted);
+                    FindDisputedSections(sections, baseline, extraTargets);
+                    for (int i = 0; i < SectionCount; i++)
+                        if (extraTargets[i]) targetOrder[targetCount++] = i;
+                    if (targetCount >= 2) extraWindows = extraBudget;
+                }
             }
             if (cancelled != null && cancelled()) yield break;
             if (accepted < Math.Max(3, windows / 6))
@@ -263,71 +524,69 @@ namespace ZPunk.DAW
                 yield break;
             }
 
-            double best = -2, next = -2;
-            int bestKey = 0;
-            bool bestMinor = false;
-            double[] candidateScores = new double[KeyCount];
-            for (int key = 0; key < 12; key++)
+            // Global estimate preserves the previously validated scoring.
+            // Section estimates are a separate cross-check, weighted by the
+            // amount of actual pitched/chordal evidence in each third.
+            double[] globalScores = ScoreEvidence(chroma, bassChroma, openingBass,
+                tonicTriads, bassRootedTriads, closingTriads, resolvedCadences,
+                accepted, bassAccepted, openingAccepted);
+            double[] candidateScores = (double[])globalScores.Clone();
+            double[] sectionWeights = new double[SectionCount];
+            double[][] localScores = new double[SectionCount][];
+            int reliableSections = 0;
+            double weightSum = 0;
+            for (int i = 0; i < SectionCount; i++)
             {
-                for (int mode = 0; mode < 2; mode++)
+                SectionEvidence section = sections[i];
+                if (!section.Reliable) continue;
+                localScores[i] = ScoreSection(section);
+                // Suppress weak/transient sections instead of forcing a vote.
+                // Capping the weight avoids a long, loud chorus dominating.
+                double weight = Math.Min(1.0, section.chordFrames / 6.0) *
+                    Math.Min(1.0, section.accepted / 12.0);
+                sectionWeights[i] = weight;
+                weightSum += weight;
+                reliableSections++;
+            }
+            if (weightSum > 0)
+            {
+                for (int key = 0; key < KeyCount; key++)
                 {
-                    bool minorCandidate = mode == 1;
-                    double score = Correlation(chroma, minorCandidate ? Minor : Major, key);
-                    if (minorCandidate)
-                        score = Math.Max(score, Correlation(chroma, MinorDorian, key) - .025);
-                    // Check the *whole scale*, not just the most audible chord.
-                    // An F-major chord inside a C-minor/Dorian song isn't by
-                    // itself evidence of the F-major scale. Treat harmonic and
-                    // Dorian minor as valid variants with small complexity costs.
-                    double scaleFit = ScaleFit(chroma, key, minorCandidate);
-                    score += .30 * (scaleFit - .65);
-                    // Relative major and minor use the same seven notes.
-                    // Favor the root actually recurring in the sample, with
-                    // a moderate bass emphasis rather than a hard minor bias.
-                    double tonicShare = chroma[key] / Math.Max(1, accepted);
-                    score += .11 * (tonicShare - 1.0 / 12.0);
-                    // The relative-major pitch set is almost identical to a
-                    // natural minor scale. An audible minor third over the
-                    // candidate root is positive minor evidence; an audible
-                    // major third is positive major evidence. Keep this a
-                    // *soft* weight so power chords / sus chords remain valid.
-                    int expectedThird = (key + (mode == 1 ? 3 : 4)) % 12;
-                    int otherThird = (key + (mode == 1 ? 4 : 3)) % 12;
-                    score += .26 * (chroma[expectedThird] - chroma[otherThird]) /
-                        Math.Max(1, accepted);
-                    if (bassAccepted >= 3)
-                    {
-                        double bassShare = bassChroma[key] / bassAccepted;
-                        score += .32 * (bassShare - 1.0 / 12.0);
-                    }
-                    if (openingAccepted >= 3)
-                        score += .09 * (openingBass[key] / openingAccepted - 1.0 / 12.0);
-                    // Complement the chroma-profile estimate with evidence
-                    // that the candidate tonic actually appears as a chord,
-                    // ideally with its own root in the bass, or as a harmonic
-                    // destination. All measures are normalized by the number
-                    // of existing tonal windows and stay bounded on phones.
-                    int index = mode * 12 + key;
-                    // A frequently repeated subdominant chord isn't proof of
-                    // tonic. Require some overall scale compatibility before
-                    // its triad / root-in-bass evidence can dominate.
-                    double scaleCompatibility = Math.Max(.30,
-                        Math.Min(1.0, (scaleFit - .40) / .38));
-                    double harmonicEvidence = 2.0 * tonicTriads[index] / accepted;
-                    if (bassAccepted >= 3)
-                        harmonicEvidence += 4.0 * bassRootedTriads[index] / bassAccepted;
-                    harmonicEvidence += .6 * closingTriads[index] / Math.Max(1.0, accepted);
-                    harmonicEvidence += 2.0 * resolvedCadences[index] / Math.Max(1.0, accepted);
-                    score += scaleCompatibility * harmonicEvidence;
-                    candidateScores[index] = score;
-                    if (score > best)
-                    {
-                        next = best;
-                        best = score;
-                        bestKey = key;
-                        bestMinor = mode == 1;
-                    }
-                    else if (score > next) next = score;
+                    double sectionScore = 0;
+                    for (int i = 0; i < SectionCount; i++)
+                        if (localScores[i] != null)
+                            sectionScore += localScores[i][key] * sectionWeights[i];
+                    sectionScore /= weightSum;
+                    // The aggregate still owns the final result: this is
+                    // evidence fusion, never a 2-out-of-3 majority vote.
+                    candidateScores[key] = .78 * globalScores[key] + .22 * sectionScore;
+                }
+            }
+            double bestMargin;
+            int bestIndex = TopKey(candidateScores, out bestMargin);
+            int bestKey = bestIndex % 12;
+            bool bestMinor = bestIndex >= 12;
+            double best = candidateScores[bestIndex];
+            double next = best - bestMargin;
+
+            int agreeing = 0, conflicts = 0;
+            double agreeingStrength = 0, conflictingStrength = 0;
+            for (int i = 0; i < SectionCount; i++)
+            {
+                if (localScores[i] == null) continue;
+                double margin;
+                int winner = TopKey(localScores[i], out margin);
+                // Weak preferences carry no agreement or conflict evidence.
+                if (margin < .045) continue;
+                if (winner == bestIndex)
+                {
+                    agreeing++;
+                    agreeingStrength += margin * sectionWeights[i];
+                }
+                else
+                {
+                    conflicts++;
+                    conflictingStrength += margin * sectionWeights[i];
                 }
             }
             // Key can be genuinely ambiguous, especially for drum-only loops,
@@ -352,15 +611,28 @@ namespace ZPunk.DAW
             // In addition to relative-key confusion, strong subdominant and
             // borrowed chords can make two *non-relative* tonics plausible.
             // An uncertain result is safer than a confidently incorrect major.
-            if (best - next < .028 && next > .40)
+            if (bestMargin < .028 && next > .40)
             {
                 finished?.Invoke(new Result { status = "KEY UNCLEAR" });
                 yield break;
             }
+            // Agreement affects confidence, not the key's identity. When a
+            // credible section contradicts another, don't report HIGH even
+            // if the whole-song histogram is otherwise very strong.
+            double corroboration = agreeing >= 2 && conflicts == 0 ? .04 : 0;
+            double contradiction = conflictingStrength > agreeingStrength * .6 ?
+                Math.Min(.14, conflictingStrength * .3) : 0;
             float confidence = Mathf.Clamp01((float)((best - .25) * 1.1 +
-                Math.Min(best - next, relativeGap) * 3.0));
-            string grade = best >= .68 && best - next >= .10 && relativeGap >= .08 ? "HIGH" :
-                           best >= .48 && best - next >= .045 && relativeGap >= .045 ? "MED" : "LOW";
+                Math.Min(bestMargin, relativeGap) * 3.0 +
+                corroboration - contradiction));
+            string grade = best >= .68 && bestMargin >= .10 && relativeGap >= .08 ? "HIGH" :
+                           best >= .48 && bestMargin >= .045 && relativeGap >= .045 ? "MED" : "LOW";
+            if (conflicts > 0 || reliableSections < 2 || agreeing < 2)
+            {
+                if (grade == "HIGH") grade = "MED";
+            }
+            if (conflicts >= 2 && conflictingStrength > agreeingStrength)
+                grade = "LOW";
             if (accepted < 8 || bassAccepted < 3 || sample.length < 6f) grade = "LOW";
             finished?.Invoke(new Result { found = true, tonic = bestKey, minor = bestMinor,
                 confidence = confidence, status = grade });
