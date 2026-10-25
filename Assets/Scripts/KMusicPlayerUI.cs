@@ -366,7 +366,7 @@ public class KMusicPlayerUI : MonoBehaviour
             Mathf.Max(0f, Time.unscaledTime - _hitAnalysisStartedAt);
         RefreshGuidesFromOriginal(fromCache);
         // Tempo detection uses the original coordinates even after warp switches.
-        if (!_sourceBpmManual)
+        if (!_sourceBpmManual && !_restoredSourceTempo)
             StartCoroutine(EstimateLoadedSourceTempo(source, revision));
     }
 
@@ -412,12 +412,14 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         // Leave a frame for the hit-guide completion UI before heavier analysis.
         yield return null;
-        if (source == null || _clip != source || _transientRevision != revision || _sourceBpmManual)
+        if (source == null || _clip != source || _transientRevision != revision ||
+            _sourceBpmManual || _restoredSourceTempo)
             yield break;
         float confidence;
         float estimate = ZPunkSampleWarp.EstimateRhythmicBpm(_originalTransientHints,
             source.length, CurrentSongTempo(), out confidence);
-        if (source != _clip || _transientRevision != revision || _sourceBpmManual)
+        if (source != _clip || _transientRevision != revision ||
+            _sourceBpmManual || _restoredSourceTempo)
             yield break;
         if (estimate <= 0f) yield break;
         _sourceBpm = estimate;
@@ -893,6 +895,106 @@ public class KMusicPlayerUI : MonoBehaviour
     // Position refers to the original, unwarped clip timeline.
     private bool _beatAlignFromHead;
     private float _beatAlignStart01;
+
+    // 2.1.1: Restore source-based warp settings after the original PCM is ready.
+    // Never serialize the warped AudioClip: the renderer rebuilds it from the source.
+    [Serializable]
+    public sealed class WarpProjectState
+    {
+        public string sampleId;
+        public bool warpEnabled;
+        public float sourceBpm;
+        public bool sourceBpmManual;
+        public bool sourceBpmRhythmic;
+        public float sourceBpmConfidence;
+        public bool beatAlignFromHead;
+        public float beatAlignStart01;
+    }
+
+    private WarpProjectState _pendingProjectWarp;
+    private string _pendingProjectWarpSampleId;
+    private bool _hasPendingProjectWarp;
+    private bool _restoredSourceTempo;
+
+    public WarpProjectState CaptureProjectWarpState()
+    {
+        // A project may be saved while its media is still loading. Do not
+        // replace a restored warp snapshot with zero/default values.
+        if (_hasPendingProjectWarp && _pendingProjectWarp != null)
+            return _pendingProjectWarp;
+        if (_clip == null || string.IsNullOrEmpty(_clipResourcesPath)) return null;
+        return new WarpProjectState
+        {
+            sampleId = CanonicalSampleId(_clipResourcesPath),
+            warpEnabled = _autoWarpEnabled,
+            sourceBpm = _sourceBpm,
+            sourceBpmManual = _sourceBpmManual,
+            sourceBpmRhythmic = _sourceBpmRhythmic,
+            sourceBpmConfidence = _sourceBpmConfidence,
+            beatAlignFromHead = _beatAlignFromHead,
+            beatAlignStart01 = _beatAlignStart01
+        };
+    }
+
+    // Called AFTER SetLastTrackId by the project loader. It handles both
+    // already-loaded samples and asynchronous iOS/Android file decodes.
+    public void SetProjectWarpState(WarpProjectState state, string sampleId)
+    {
+        _pendingProjectWarp = state;
+        _pendingProjectWarpSampleId = CanonicalSampleId(sampleId);
+        _hasPendingProjectWarp = !string.IsNullOrEmpty(_pendingProjectWarpSampleId);
+        TryApplyPendingProjectWarp();
+    }
+
+    private void TryApplyPendingProjectWarp()
+    {
+        if (!_hasPendingProjectWarp || _clip == null ||
+            !string.Equals(CanonicalSampleId(_clipResourcesPath),
+                _pendingProjectWarpSampleId, StringComparison.Ordinal)) return;
+
+        WarpProjectState saved = _pendingProjectWarp;
+        _pendingProjectWarp = null;
+        _pendingProjectWarpSampleId = null;
+        _hasPendingProjectWarp = false;
+        _restoredSourceTempo = false;
+
+        if (saved != null && string.Equals(CanonicalSampleId(saved.sampleId),
+            CanonicalSampleId(_clipResourcesPath), StringComparison.Ordinal))
+        {
+            _autoWarpEnabled = saved.warpEnabled;
+            bool validBpm = !float.IsNaN(saved.sourceBpm) &&
+                !float.IsInfinity(saved.sourceBpm) && saved.sourceBpm >= 30f &&
+                saved.sourceBpm <= 300f;
+            if (validBpm)
+            {
+                _sourceBpm = saved.sourceBpm;
+                _sourceBpmManual = saved.sourceBpmManual;
+                _sourceBpmRhythmic = saved.sourceBpmRhythmic;
+                _sourceBpmConfidence = Mathf.Clamp01(saved.sourceBpmConfidence);
+                // An automatic scan completing after project load must not
+                // silently change its restored warp result.
+                _restoredSourceTempo = true;
+            }
+            _beatAlignFromHead = saved.beatAlignFromHead;
+            _beatAlignStart01 = Mathf.Clamp(saved.beatAlignStart01, 0f, .99999f);
+        }
+        else
+        {
+            // Older projects had no warp snapshot. Never inherit the previous
+            // project's anchor/tempo when loading the same sample into a slot.
+            _autoWarpEnabled = ProjectPrefs.GetInt(WarpEnabledKey, 0) != 0;
+            _sourceBpm = ZPunkSampleWarp.EstimateLoopBpm(_clip, CurrentSongTempo());
+            _sourceBpmRhythmic = false;
+            _sourceBpmManual = false;
+            _sourceBpmConfidence = 0f;
+            _beatAlignFromHead = false;
+            _beatAlignStart01 = 0f;
+        }
+        _appliedWarpSignature = null;
+        UpdateBeatGrid();
+        QueueWarp(true);
+        Debug.Log("[ZPUNK Project] Restored sampler warp state for " + _clipResourcesPath);
+    }
     private int _tempoDetectionRevision;
     private bool _tempoDetectionRunning;
     private string _tempoDetectionStatus = "";
@@ -901,6 +1003,7 @@ public class KMusicPlayerUI : MonoBehaviour
     public void DawDetectSourceBpm()
     {
         if (_clip == null || _tempoDetectionRunning) return;
+        _restoredSourceTempo = false;
         int revision = ++_tempoDetectionRevision;
         _tempoDetectionRunning = true;
         _tempoDetectionStatus = "";
@@ -1117,6 +1220,10 @@ public class KMusicPlayerUI : MonoBehaviour
     {
         _sampleRequestSerial++;
         _pendingProjectId = null;
+        _pendingProjectWarp = null;
+        _pendingProjectWarpSampleId = null;
+        _hasPendingProjectWarp = false;
+        _restoredSourceTempo = false;
         if (_importedLoadJob != null)
         {
             StopCoroutine(_importedLoadJob);
@@ -2123,6 +2230,7 @@ public class KMusicPlayerUI : MonoBehaviour
         if (_clip == null) return;
         _sourceBpm = Mathf.Clamp((_sourceBpm > 0 ? _sourceBpm : CurrentSongTempo()) + delta, 40f, 240f);
         _sourceBpmManual = true;
+        _restoredSourceTempo = false;
         _sourceBpm = Mathf.Round(_sourceBpm * 10f) / 10f;
         QueueWarp(); // debounce repeated +/- taps; only render final tempo
     }
@@ -2132,6 +2240,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _sourceBpm = Mathf.Round(Mathf.Clamp(_sourceBpm * scale,
             40f, 240f) * 10f) / 10f;
         _sourceBpmManual = true;
+        _restoredSourceTempo = false;
         _tempoDetectionStatus = "SOURCE BPM ADJUSTED / CHECK BY EAR";
         QueueWarp();
     }
@@ -2185,6 +2294,19 @@ public class KMusicPlayerUI : MonoBehaviour
         _sourceBpmConfidence = 0f;
         _beatAlignFromHead = false; // a new sample needs a new first-beat anchor
         _beatAlignStart01 = 0f;
+        _restoredSourceTempo = false;
+        // The imported audio is now decoded, so project-specific BPM/anchor
+        // can replace guessed values before any warp worker starts.
+        TryApplyPendingProjectWarp();
+        if (_hasPendingProjectWarp)
+        {
+            // The user loaded a different sample before the asynchronous
+            // restore finished. Never apply the previous project's tempo to it.
+            Debug.LogWarning("[ZPUNK Project] Skipped warp settings: source ID changed.");
+            _pendingProjectWarp = null;
+            _pendingProjectWarpSampleId = null;
+            _hasPendingProjectWarp = false;
+        }
         UpdateBeatGrid();
         _lastSongBpm = -1f;
         BeginTransientAnalysis();
@@ -2197,14 +2319,15 @@ public class KMusicPlayerUI : MonoBehaviour
         {
             if (!TryWarpChopRange(SourceChopMarkers(), out _, out _))
             {
+                // Do not return: RunWarp must switch a previously warped
+                // source back to the original audio after markers are removed.
                 _warpStatus = "SLICE HITS FIRST / SET END MARKER";
                 _warpProcessing = false;
-                return;
             }
-            _warpStatus = "WAITING TO WARP";
+            else _warpStatus = "WAITING TO WARP";
             _warpProgress = 0f;
             _warpStage = "QUEUED";
-            _warpProcessing = true;
+            _warpProcessing = TryWarpChopRange(SourceChopMarkers(), out _, out _);
         }
     }
     private void Update()

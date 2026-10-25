@@ -112,7 +112,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
         // Startup load if a project file exists.
         string path = SlotPath(CurrentSlot);
-        if (File.Exists(path))
+        if (SlotHasSavedData(CurrentSlot))
             LoadProject(CurrentSlot, silent: true);
         else
             ResetToBlank();
@@ -337,7 +337,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         // DO NOT overwrite/delete an old project, any imported samples, or exports.
         // Always move to a free slot first; old files can be backed up externally.
         int next = FindNextFreeSlot(rejectedSlot);
-        if (File.Exists(SlotPath(next)))
+        if (SlotHasSavedData(next))
         {
             ShowProjectNotice("Incompatible project. No free slot available. Your previous file was left untouched.");
             return;
@@ -354,7 +354,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         SaveProject(CurrentSlot);
 
         int next = FindNextFreeSlot(CurrentSlot);
-        if (File.Exists(SlotPath(next)))
+        if (SlotHasSavedData(next))
         {
             ShowProjectNotice("All project slots are full. No files were overwritten.");
             return;
@@ -382,7 +382,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         for (int i = 1; i < 1000; i++)
         {
             int slot = (start + i) % 1000;
-            if (!File.Exists(SlotPath(slot))) return slot;
+            if (!SlotHasSavedData(slot)) return slot;
         }
         return start; // callers must check before writing
     }
@@ -398,6 +398,151 @@ public sealed class KMusicProjectManager : MonoBehaviour
     }
 
     private string SlotPath(int slot) => Path.Combine(ProjectsDir, $"project_{slot:000}.json");
+
+    private bool SlotHasSavedData(int slot)
+    {
+        string path = SlotPath(slot);
+        return File.Exists(path) || File.Exists(path + ".bak") ||
+            File.Exists(path + ".rollback") || File.Exists(path + ".writing");
+    }
+
+    private static bool TryReadNativeProject(string path, out ProjectData data)
+    {
+        data = null;
+        if (!File.Exists(path)) return false;
+        try
+        {
+            var parsed = JsonUtility.FromJson<ProjectData>(File.ReadAllText(path));
+            if (!IsNativeProject(parsed)) return false;
+            data = parsed;
+            return true;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[Project] Cannot read '" + Path.GetFileName(path) + "': " + e.Message);
+            return false;
+        }
+    }
+
+    // Never initialize an empty slot while a recoverable .bak/.rollback exists.
+    // Preserve any damaged primary under a distinct filename for diagnostics.
+    private bool TryReadOrRecoverProject(int slot, out ProjectData data)
+    {
+        string path = SlotPath(slot);
+        if (TryReadNativeProject(path, out data)) return true;
+        string[] candidates = { path + ".rollback", path + ".bak", path + ".writing" };
+        foreach (string candidate in candidates)
+        {
+            if (!TryReadNativeProject(candidate, out var recovered)) continue;
+            try
+            {
+                if (File.Exists(path))
+                {
+                    string damaged = path + ".unreadable-" +
+                        DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "-" +
+                        Guid.NewGuid().ToString("N").Substring(0, 8);
+                    File.Move(path, damaged);
+                }
+                File.Copy(candidate, path, false);
+                Debug.LogWarning("[Project] Restored slot " + slot + " from " +
+                    Path.GetFileName(candidate));
+                ShowProjectNotice("Recovered PROJECT " + slot.ToString("000") +
+                    " from a previous valid save. Any unreadable file was preserved.");
+                data = recovered;
+                return true;
+            }
+            catch (Exception e)
+            {
+                // The valid backup remains readable even if repair cannot
+                // replace the primary (e.g., storage is read-only/full).
+                Debug.LogWarning("[Project] Recovery copy failed: " + e.Message);
+                ShowProjectNotice("PROJECT " + slot.ToString("000") +
+                    " loaded from backup. Could not restore the primary file.");
+                data = recovered;
+                return true;
+            }
+        }
+        data = null;
+        return false;
+    }
+
+    // Both SAVE and RENAME use the same validated, staged write. Prefer
+    // File.Replace (atomic on supported filesystems) with a recoverable
+    // rollback fallback for mobile runtimes where Replace is unsupported.
+    private static void WriteNativeProjectSafely(string path, ProjectData data)
+    {
+        if (data == null || !IsNativeProject(data))
+            throw new InvalidOperationException("Refusing to write an invalid project.");
+        string temp = path + ".writing";
+        string backup = path + ".bak";
+        string rollback = path + ".rollback";
+        string json = JsonUtility.ToJson(data);
+        try
+        {
+            // The temp file is truncated only after checking the primary
+            // exists and is compatible. It is never the live project file.
+            using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(json);
+                writer.Flush();
+                stream.Flush(true);
+            }
+            if (!TryReadNativeProject(temp, out _))
+                throw new InvalidDataException("Staged project failed JSON validation.");
+            if (!File.Exists(path))
+            {
+                File.Move(temp, path);
+                return;
+            }
+            if (!TryReadNativeProject(path, out _))
+                throw new InvalidDataException("Existing project is unreadable; it was preserved.");
+            try
+            {
+                File.Replace(temp, path, backup);
+                return;
+            }
+            catch (PlatformNotSupportedException)
+            {
+                Debug.Log("[Project] File.Replace unsupported; using recoverable move.");
+            }
+            catch (IOException e)
+            {
+                Debug.LogWarning("[Project] File.Replace unavailable: " + e.Message);
+            }
+            // Fallback: at every point there is either the original JSON or
+            // the original .rollback. LoadProject knows how to recover it.
+            if (File.Exists(rollback)) File.Delete(rollback);
+            File.Move(path, rollback);
+            try { File.Move(temp, path); }
+            catch
+            {
+                if (!File.Exists(path) && File.Exists(rollback))
+                    File.Move(rollback, path);
+                throw;
+            }
+            try
+            {
+                File.Copy(rollback, backup, true);
+                File.Delete(rollback);
+            }
+            catch (Exception e)
+            {
+                // Retain rollback if we could not successfully write a .bak.
+                Debug.LogWarning("[Project] Backup refresh incomplete: " + e.Message);
+            }
+        }
+        finally
+        {
+            // A failed staged write may be investigated or automatically
+            // recovered on next startup; only delete a temp after commit.
+            if (File.Exists(path) && TryReadNativeProject(path, out _) &&
+                File.Exists(temp))
+            {
+                try { File.Delete(temp); } catch (Exception) { }
+            }
+        }
+    }
 
     private void UpdatePresetLabel()
     {
@@ -419,21 +564,15 @@ public sealed class KMusicProjectManager : MonoBehaviour
             return cached;
 
         string path = SlotPath(slot);
-        if (!File.Exists(path))
-            return null;
-
-        try
+        string[] candidates = { path, path + ".rollback", path + ".bak", path + ".writing" };
+        foreach (string candidate in candidates)
         {
-            var json = File.ReadAllText(path);
-            var data = JsonUtility.FromJson<ProjectData>(json);
-            string value = data != null ? data.projectName : null;
+            if (!TryReadNativeProject(candidate, out var data)) continue;
+            string value = data.projectName;
             _cachedProjectNames[slot] = value;
             return value;
         }
-        catch
-        {
-            return null;
-        }
+        return null;
     }
 
     private bool RenameProject(int slot, string newName)
@@ -446,8 +585,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
         try
         {
             var data = JsonUtility.FromJson<ProjectData>(File.ReadAllText(path));
-            if (data == null)
-                data = new ProjectData();
+            if (!IsNativeProject(data))
+                return false;
 
             data.projectName = clean;
             if (data.slot <= 0 && slot != 0)
@@ -457,7 +596,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (data.utc <= 0)
                 data.utc = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-            File.WriteAllText(path, JsonUtility.ToJson(data));
+            WriteNativeProjectSafely(path, data);
             _cachedProjectNames[slot] = clean;
 
             if (slot == CurrentSlot)
@@ -513,10 +652,17 @@ public sealed class KMusicProjectManager : MonoBehaviour
         {
             if (Directory.Exists(ProjectsDir))
             {
-                foreach (var f in Directory.GetFiles(ProjectsDir, "project_*.json"))
+                // Show slots with only a recovery artifact, too. Otherwise a
+                // crash during fallback commit could hide a valid project.
+                foreach (var f in Directory.GetFiles(ProjectsDir, "project_*.json*"))
                 {
-                    var name = Path.GetFileNameWithoutExtension(f);
-                    if (name.Length >= 11 && int.TryParse(name.Substring(8), out int slot))
+                    var name = Path.GetFileName(f);
+                    if (name.Length < 16 || !name.StartsWith("project_", StringComparison.Ordinal))
+                        continue;
+                    if (!int.TryParse(name.Substring(8, 3), out int slot)) continue;
+                    string tail = name.Substring(11);
+                    if (tail == ".json" || tail == ".json.bak" ||
+                        tail == ".json.rollback" || tail == ".json.writing")
                         existing.Add(Mathf.Clamp(slot, 0, 999));
                 }
             }
@@ -529,13 +675,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
         foreach (int slot in existing)
         {
             string path = SlotPath(slot);
-            bool has = File.Exists(path);
-            bool compatible = false;
-            if (has)
-            {
-                try { compatible = IsNativeProject(JsonUtility.FromJson<ProjectData>(File.ReadAllText(path))); }
-                catch (Exception) { compatible = false; }
-            }
+            bool has = SlotHasSavedData(slot);
+            bool compatible = TryReadNativeProject(path, out _) ||
+                TryReadNativeProject(path + ".rollback", out _) ||
+                TryReadNativeProject(path + ".bak", out _) ||
+                TryReadNativeProject(path + ".writing", out _);
 
             var row = new VisualElement();
             row.AddToClassList("km-project-row");
@@ -733,8 +877,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
         string path = SlotPath(slot);
         try
         {
-            if (File.Exists(path))
-                File.Delete(path);
+            if (File.Exists(path)) File.Delete(path);
+            foreach (string suffix in new[] { ".bak", ".rollback", ".writing" })
+                if (File.Exists(path + suffix)) File.Delete(path + suffix);
             _cachedProjectNames.Remove(slot);
         }
         catch (Exception e)
@@ -787,6 +932,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
         public BassState bass = new();
         public PlayerState player = new();
         public ChopState chops = new();
+        // Optional in older 2.x saves; restored only for the matching sample.
+        public KMusicPlayerUI.WarpProjectState warp;
         public PatternBank.PatternBankSave patterns = new();
         public ChainStateSave chain = new();
         // ZPunk 2.0 song snapshot. Legacy fields remain the source of truth in phase 1.
@@ -914,7 +1061,14 @@ public sealed class KMusicProjectManager : MonoBehaviour
         public List<NativeSoundValue> nativeSound = new();
     }
     [Serializable] private class PlayerState { public string lastTrackId; }
-    [Serializable] private class ChopState { public string resourcesPath; public float[] sliceStart01; public float[] sliceEnd01; }
+    [Serializable] private class ChopState
+    {
+        public string resourcesPath;
+        public float[] sliceStart01;
+        public float[] sliceEnd01;
+        public float[] markerPositions01;
+        public bool lastMarkerIsEndOnly;
+    }
 
     private static bool IsSynthBusId(string id)
     {
@@ -1297,23 +1451,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
         // Never overwrite an old or malformed project, even via SAVE from the UI.
         string existingPath = SlotPath(slot);
-        if (File.Exists(existingPath))
+        if (SlotHasSavedData(slot) && !TryReadOrRecoverProject(slot, out _))
         {
-            try
-            {
-                var existing = JsonUtility.FromJson<ProjectData>(File.ReadAllText(existingPath));
-                if (!IsNativeProject(existing))
-                {
-                    ShowProjectNotice("Cannot overwrite incompatible project " + slot.ToString("000") +
-                        ". Open a new project slot instead. Existing data was preserved.");
-                    return;
-                }
-            }
-            catch (Exception)
-            {
-                ShowProjectNotice("Cannot overwrite an unreadable project. Existing file preserved.");
-                return;
-            }
+            ShowProjectNotice("Cannot overwrite an unreadable or incompatible project " +
+                slot.ToString("000") + ". Existing files were preserved.");
+            return;
         }
 
         if (_chainUi != null)
@@ -1403,13 +1545,22 @@ public sealed class KMusicProjectManager : MonoBehaviour
             Debug.LogWarning("[ZPUNK Project] Bass is still loading; its edited sound could not be captured in this save.");
 
         if (_player != null)
+        {
             data.player.lastTrackId = KMusicPlayerUI.CanonicalSampleId(_player.GetLastTrackId());
+            data.warp = _player.CaptureProjectWarpState();
+        }
 
         if (KMusicChopState.TryLoadApplied(out string rp, out var ss, out var ee))
         {
             data.chops.resourcesPath = KMusicPlayerUI.CanonicalSampleId(rp);
             data.chops.sliceStart01 = ss;
             data.chops.sliceEnd01 = ee;
+            if (KMusicChopState.TryLoadAppliedMarkerPositions(out var positions,
+                out bool lastIsEndOnly))
+            {
+                data.chops.markerPositions01 = positions;
+                data.chops.lastMarkerIsEndOnly = lastIsEndOnly;
+            }
         }
 
         data.patterns = PatternBank.ExportAll();
@@ -1455,21 +1606,13 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 data.song.tracks[4].instrument.sampleResourcesPath =
                     KMusicPlayerUI.CanonicalSampleId(data.song.tracks[4].instrument.sampleResourcesPath);
             string jsonPath = SlotPath(slot);
-            // Write a temporary file first, then replace: interrupted saves must
-            // not truncate the previous project. No sample/export files touched.
-            string tempPath = jsonPath + ".writing";
-            File.WriteAllText(tempPath, JsonUtility.ToJson(data));
-            if (File.Exists(jsonPath))
-            {
-                string backup = jsonPath + ".bak";
-                File.Copy(jsonPath, backup, true);
-                File.Delete(jsonPath);
-            }
-            File.Move(tempPath, jsonPath);
+            WriteNativeProjectSafely(jsonPath, data);
             Debug.Log($"[ZPUNK Project] Saved sound: BASS={data.bass.nativeSound.Count}, SYNTH={data.synth.nativeSound.Count}, PADS={data.pad.nativeSound.Count} native parameters.");
             CurrentSong = data.song;
-            KMusicMidiExporter.ExportProjectMidiBundle(jsonPath, data, TryGetProjectTempoBpm());
             _cachedProjectNames[slot] = data.projectName;
+            try { KMusicMidiExporter.ExportProjectMidiBundle(jsonPath, data, TryGetProjectTempoBpm()); }
+            catch (Exception midiError)
+            { Debug.LogWarning("[Project] JSON saved; optional MIDI export failed: " + midiError.Message); }
         }
         catch (Exception e)
         {
@@ -1481,28 +1624,10 @@ public sealed class KMusicProjectManager : MonoBehaviour
         EnsureProjectsDir();
         FindRuntimeRefs();
 
-        string path = SlotPath(slot);
-        if (!File.Exists(path))
+        if (!TryReadOrRecoverProject(slot, out ProjectData data))
         {
-            if (!silent) Debug.LogWarning("[Project] No project file for slot " + slot);
-            return;
-        }
-
-        ProjectData data;
-        try
-        {
-            data = JsonUtility.FromJson<ProjectData>(File.ReadAllText(path));
-        }
-        catch (Exception e)
-        {
-            Debug.LogWarning("[Project] Load failed: " + e.Message);
-            StartFreshAfterIncompatible(slot);
-            return;
-        }
-
-        if (!IsNativeProject(data))
-        {
-            StartFreshAfterIncompatible(slot);
+            if (SlotHasSavedData(slot)) StartFreshAfterIncompatible(slot);
+            else if (!silent) Debug.LogWarning("[Project] No project file for slot " + slot);
             return;
         }
 
@@ -1674,7 +1799,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (!string.IsNullOrEmpty(chopsSampleId))
                 KMusicChopState.SetAppliedRaw(chopsSampleId,
                     data.chops != null ? data.chops.sliceStart01 : CurrentSong.tracks[4].instrument.sliceStart01,
-                    data.chops != null ? data.chops.sliceEnd01 : CurrentSong.tracks[4].instrument.sliceEnd01);
+                    data.chops != null ? data.chops.sliceEnd01 : CurrentSong.tracks[4].instrument.sliceEnd01,
+                    data.chops != null ? data.chops.markerPositions01 : null,
+                    data.chops != null && data.chops.lastMarkerIsEndOnly);
             else
                 KMusicChopState.ClearApplied();
 
@@ -1685,6 +1812,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 string projectSample = !string.IsNullOrEmpty(chopsSampleId) ? chopsSampleId :
                     (data.player != null ? data.player.lastTrackId : null);
                 _player.SetLastTrackId(projectSample);
+                _player.SetProjectWarpState(data.warp, projectSample);
                 _player.RefreshAppliedMarkersFromState();
             }
 

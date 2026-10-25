@@ -267,7 +267,8 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
         /// Directly set applied chops (used by project load).
         /// Bumps AppliedRevision so samplers refresh.
         /// </summary>
-        public static void SetAppliedRaw(string resourcesPath, float[] sliceStart01, float[] sliceEnd01)
+        public static void SetAppliedRaw(string resourcesPath, float[] sliceStart01, float[] sliceEnd01,
+            float[] exactMarkers01 = null, bool exactClosingMarker = false)
         {
             if (string.IsNullOrEmpty(resourcesPath)) return;
 
@@ -291,12 +292,28 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
                     finalPlayable = i;
                 }
             }
-            // Project snapshots carry start/end arrays, not the end-only flag.
-            // Recover the last boundary even for 1..15 auto-sliced pads.
+            // 2.1.1 snapshots preserve the exact user marker list and its
+            // closing-boundary flag. Legacy snapshots still reconstruct it.
             bool closing = finalPlayable >= 0 &&
                 ends[finalPlayable] > starts[finalPlayable] + 0.0001f &&
                 ends[finalPlayable] < 0.9999f;
-            if (closing) markers.Add(Mathf.Clamp01(ends[finalPlayable]));
+            if (exactMarkers01 != null)
+            {
+                markers.Clear();
+                foreach (float position in exactMarkers01)
+                {
+                    if (float.IsNaN(position) || float.IsInfinity(position)) continue;
+                    float clamped = Mathf.Clamp01(position);
+                    if (clamped >= .9999f) continue;
+                    markers.Add(clamped);
+                }
+                markers.Sort();
+                for (int i = markers.Count - 1; i > 0; i--)
+                    if (Mathf.Abs(markers[i] - markers[i - 1]) < .0001f)
+                        markers.RemoveAt(i);
+                closing = exactClosingMarker && markers.Count >= 2;
+            }
+            else if (closing) markers.Add(Mathf.Clamp01(ends[finalPlayable]));
 
             var save = new ChopSave
             {
