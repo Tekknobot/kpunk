@@ -47,6 +47,8 @@ namespace ZPunk.DAW
         private bool playing;
         private bool paused;
         private bool exportingOneShot;
+        private SongData pendingExportSnapshot;
+        private int isolatedExportTrack = -1;
         private long pausedAtTick;
         private int prefetchedLoopSamples;
 
@@ -129,6 +131,27 @@ namespace ZPunk.DAW
             RefreshButton();
         }
 
+        /// <summary>Play an immutable snapshot with one track isolated, or -1 for the master.
+        /// Overrides solo/mute only for isolated stems; the master keeps the real mix.</summary>
+        public bool PlayExportSnapshot(SongData snapshot, int trackIndex)
+        {
+            if (snapshot == null || trackIndex < -1 || trackIndex >= 5)
+                throw new ArgumentException("Invalid song snapshot or stem index.");
+            pendingExportSnapshot = SongData.FromJson(snapshot.ToJson());
+            isolatedExportTrack = trackIndex;
+            try
+            {
+                bool success = PlaySong(0, true);
+                if (!success) StopSong();
+                return success;
+            }
+            catch
+            {
+                StopSong(); // Restore original gains even after a partial export start.
+                throw;
+            }
+        }
+
         public bool PlaySong(long fromTick = -1, bool oneShotExport = false)
         {
             Resolve();
@@ -145,7 +168,9 @@ namespace ZPunk.DAW
             if (drums.IsPlaying) drums.StopPlayback();
             // Live groove edits become a temporary preview, without requiring SAVE.
             // Authored DAW arrangements are returned unchanged by the project manager.
-            try { song = projects.GetSongForPlayback(); }
+            try { song = pendingExportSnapshot != null && oneShotExport
+                ? pendingExportSnapshot : projects.GetSongForPlayback();
+                pendingExportSnapshot = null; }
             catch (Exception e)
             {
                 Debug.LogError("[ZPunk DAW] Cannot capture current song: " + e.Message);
@@ -185,6 +210,7 @@ namespace ZPunk.DAW
                 plan = null;
                 return false;
             }
+            exportingOneShot = oneShotExport;
             ResolveControllers();
             ApplyAllTrackGains();
             bpm = Mathf.Clamp(song.bpm, 1f, 400f);
@@ -209,7 +235,6 @@ namespace ZPunk.DAW
                 clock.pause = false; // Keep native synth output alive; old HelmSequencers are disabled.
             }
             playing = true;
-            exportingOneShot = oneShotExport;
             if (verbose)
                 Debug.Log($"[ZPunk DAW] PLAY events: {plan.samples.Count} samples, {plan.midi.Count} MIDI, from tick {startTick}");
             return true;
@@ -454,6 +479,8 @@ namespace ZPunk.DAW
         {
             if (song == null || song.tracks == null || index < 0 || index >= song.tracks.Count) return false;
             var track = song.tracks[index];
+            if (exportingOneShot && isolatedExportTrack >= 0)
+                return index == isolatedExportTrack && track != null && track.volume > 0;
             if (track == null || track.mute || track.volume <= 0) return false;
             bool anySolo = false;
             foreach (TrackData t in song.tracks)
@@ -586,11 +613,14 @@ namespace ZPunk.DAW
             // It must always silence native notes and cancel pre-scheduled sample
             // voices, even when a second stop arrives after playing is cleared.
             Resolve();
+            bool wasExporting = exportingOneShot;
             playing = false;
             meterNoteVelocities.Clear();
             meterEnvelope.Clear();
             meterLastTime.Clear();
             exportingOneShot = false;
+            isolatedExportTrack = -1;
+            pendingExportSnapshot = null;
             paused = false;
             StopAllSynthNotes();
             if (drums != null)
@@ -600,6 +630,12 @@ namespace ZPunk.DAW
             }
             if (clock != null) clock.pause = true;
             CurrentTick = 0;
+            // Undo isolated mixer attenuation at the end of a bounce.
+            if (wasExporting && projects != null)
+            {
+                try { song = projects.GetSongForPlayback(); ApplyAllTrackGains(); }
+                catch (Exception e) { Debug.LogWarning("[ZPUNK Export] Mix restore: " + e.Message); }
+            }
         }
 
         public void Seek(long tick)

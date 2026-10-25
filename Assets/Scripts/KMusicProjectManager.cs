@@ -579,16 +579,14 @@ public sealed class KMusicProjectManager : MonoBehaviour
     {
         string clean = string.IsNullOrWhiteSpace(newName) ? DefaultProjectName(slot) : newName.Trim();
         string path = SlotPath(slot);
-        if (!File.Exists(path))
-            return false;
+        if (!TryReadOrRecoverProject(slot, out var data)) return false;
 
         try
         {
-            var data = JsonUtility.FromJson<ProjectData>(File.ReadAllText(path));
-            if (!IsNativeProject(data))
-                return false;
 
             data.projectName = clean;
+            if (string.IsNullOrEmpty(data.projectId)) data.projectId = Guid.NewGuid().ToString("N");
+            if (data.song != null) data.song.title = clean;
             if (data.slot <= 0 && slot != 0)
                 data.slot = slot;
             if (data.ver <= 0)
@@ -598,6 +596,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
 
             WriteNativeProjectSafely(path, data);
             _cachedProjectNames[slot] = clean;
+            if (slot == CurrentSlot && CurrentSong != null)
+                CurrentSong.title = clean;
 
             if (slot == CurrentSlot)
                 UpdatePresetLabel();
@@ -922,6 +922,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
         public int slot;
         public long utc;
         public string projectName;
+        // Persistent identity unrelated to slot number or mutable display name.
+        public string projectId;
 
         public List<BusPair> bus = new();
         public DrumState drums = new();
@@ -1444,7 +1446,10 @@ public sealed class KMusicProjectManager : MonoBehaviour
         return count;
     }
 
-    public void SaveProject(int slot)
+    // Preserve the existing void signature for scene bindings and legacy callers.
+    public void SaveProject(int slot) { TrySaveProject(slot); }
+
+    public bool TrySaveProject(int slot)
     {
         EnsureProjectsDir();
         FindRuntimeRefs();
@@ -1455,14 +1460,20 @@ public sealed class KMusicProjectManager : MonoBehaviour
         {
             ShowProjectNotice("Cannot overwrite an unreadable or incompatible project " +
                 slot.ToString("000") + ". Existing files were preserved.");
-            return;
+            return false;
         }
 
         if (_chainUi != null)
             _chainUi.FlushLiveStateToPattern();
 
+        // Retain a stable ID when saving or renaming, even on recovered slots.
+        string stableId = null;
+        if (TryReadOrRecoverProject(slot, out var previous))
+            stableId = previous.projectId;
+        if (string.IsNullOrEmpty(stableId)) stableId = Guid.NewGuid().ToString("N");
         var data = new ProjectData
         {
+            projectId = stableId,
             ver = ProjectVer,
             projectFormat = NativeFormat,
             slot = slot,
@@ -1601,6 +1612,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 data.song.tracks[1].instrument.presetIndex = _rack != null ? _rack.BassPresetIndex :
                     data.song.tracks[1].instrument.presetIndex;
             }
+            data.song.title = data.projectName;
             if (data.song.tracks != null && data.song.tracks.Count > 4 &&
                 data.song.tracks[4] != null && data.song.tracks[4].instrument != null)
                 data.song.tracks[4].instrument.sampleResourcesPath =
@@ -1610,15 +1622,38 @@ public sealed class KMusicProjectManager : MonoBehaviour
             Debug.Log($"[ZPUNK Project] Saved sound: BASS={data.bass.nativeSound.Count}, SYNTH={data.synth.nativeSound.Count}, PADS={data.pad.nativeSound.Count} native parameters.");
             CurrentSong = data.song;
             _cachedProjectNames[slot] = data.projectName;
-            try { KMusicMidiExporter.ExportProjectMidiBundle(jsonPath, data, TryGetProjectTempoBpm()); }
-            catch (Exception midiError)
-            { Debug.LogWarning("[Project] JSON saved; optional MIDI export failed: " + midiError.Message); }
+            // 2.2.0: MIDI is created on explicit export, never beside every save.
+            return true;
         }
         catch (Exception e)
         {
             Debug.LogWarning("[Project] Save failed: " + e.Message);
+            return false;
         }
     }
+
+    /// <summary>Freeze a validated, saved copy for export. No edits to the live song.</summary>
+    public bool TryCreateCollectedSnapshot(out string projectJson, out SongData song,
+        out string title, out string identity, out string error)
+    {
+        projectJson = null; song = null; title = null; identity = null; error = null;
+        if (!TrySaveProject(CurrentSlot))
+        {
+            error = "Project could not be saved safely. Collection was canceled.";
+            return false;
+        }
+        if (!TryReadOrRecoverProject(CurrentSlot, out var saved) || saved.song == null)
+        {
+            error = "Saved project could not be verified.";
+            return false;
+        }
+        projectJson = JsonUtility.ToJson(saved, true);
+        song = SongData.FromJson(saved.song.ToJson());
+        title = string.IsNullOrWhiteSpace(saved.projectName) ? DefaultProjectName(CurrentSlot) : saved.projectName.Trim();
+        identity = saved.projectId;
+        return true;
+    }
+
     public void LoadProject(int slot, bool silent = false)
     {
         EnsureProjectsDir();

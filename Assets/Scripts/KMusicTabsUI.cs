@@ -21,8 +21,13 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private Label tempoDisplay;
     private Coroutine menuAnimation;
     private Coroutine wavExportRoutine;
+    private Coroutine collectRoutine;
+    private ZPunkCollectPackage collectSession;
+    private ZPunkWavCapture collectRecorder;
+    private bool cancelCollect;
     private Label exportStatus;
-    private Button exportWavButton, exportMidiButton;
+    private Button exportWavButton, exportMidiButton, collectButton;
+    private Button collectGuardNew, collectGuardOpen, collectGuardSave;
     private bool menuIsOpen;
     private Button arrangeButton, createButton, soundButton, mixButton, menuToggle, headerSave, headerPlay, headerStop;
     private ZPunkArrangementUI arrangement;
@@ -56,6 +61,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private void Awake(){if(doc==null)doc=GetComponent<UIDocument>();}
     private void OnEnable()
     {
+        ZPunkCollectPackage.CleanupInterruptedCollections();
         // The old workspace created the pad Audio Helm controller dynamically.
         // Keep that runtime service even though its legacy UI is hidden.
         if(GetComponent<ZPunkInstrumentRack>()==null)
@@ -66,6 +72,16 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void OnDisable()
     {
+        cancelCollect = true;
+        if (collectRoutine != null)
+        {
+            StopCoroutine(collectRoutine);
+            collectRoutine = null;
+            if (collectRecorder != null) collectRecorder.Abort();
+            if (transport != null && transport.IsPlaying) transport.StopSong();
+            if (collectSession != null) { collectSession.Dispose(); collectSession = null; }
+            collectRecorder = null;
+        }
         if(headerStop!=null)
         {
             headerStop.clicked -= StopFromHeader;
@@ -209,7 +225,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         headerRow.style.minWidth=0;
         header.Add(headerRow);
         headerTitle=existingTitle!=null?existingTitle:Label("ZPUNK 2.0",18);
-        headerTitle.text="ZPUNK 2.0";
+        headerTitle.text="ZPUNK 2.2";
         headerTitle.style.fontSize=18;
         headerTitle.style.unityFontStyleAndWeight=FontStyle.Bold;
         headerTitle.style.color=Ink;
@@ -332,6 +348,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(newer!=null)
         {
             newer.RemoveFromHierarchy();newer.text="NEW";
+            collectGuardNew = newer;
             StyleMenuItem(newer);
             newer.clicked+=()=>SetMenuOpen(false);
             newer.style.flexGrow=1;
@@ -342,6 +359,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(open!=null)
         {
             open.RemoveFromHierarchy();open.text="OPEN";
+            collectGuardOpen = open;
             StyleMenuItem(open);
             open.clicked+=()=>SetMenuOpen(false);
             open.style.flexGrow=1;
@@ -350,6 +368,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         }
         menuBody.Add(projectActions);
         var saveItem=Button("SAVE PROJECT",()=>{Save();SetMenuOpen(false);});
+        collectGuardSave = saveItem;
         StyleMenuItem(saveItem);menuBody.Add(saveItem);
         // The header grows to reveal this panel. It does not overlay music controls.
         var exportRow=new VisualElement{name="ZPunkExportActions"};
@@ -373,6 +392,12 @@ public sealed class KMusicTabsUI : MonoBehaviour
         exportMidiButton.style.fontSize=12;
         exportRow.Add(exportWavButton); exportRow.Add(exportMidiButton);
         menuBody.Add(exportRow);
+        collectButton=Button("COLLECT & EXPORT ZIP",OnCollectClicked);
+        StyleMenuItem(collectButton);
+        collectButton.style.height=45;
+        collectButton.style.minHeight=45;
+        collectButton.style.unityFontStyleAndWeight=FontStyle.Bold;
+        menuBody.Add(collectButton);
         exportStatus=Label("WAV: real-time playback  /  MIDI: arrangement notes",11,Dim);
         exportStatus.style.height=27;
         exportStatus.style.whiteSpace=WhiteSpace.Normal;
@@ -564,6 +589,12 @@ public sealed class KMusicTabsUI : MonoBehaviour
 
     private void StopFromHeader()
     {
+        if (collectRoutine != null)
+        {
+            cancelCollect = true;
+            ExportMessage("COLLECT: cancel requested; clearing temporary files.", false);
+            return;
+        }
         // Idempotent: pointer-down and click may both arrive for one gesture.
         if (transport == null) transport = GetComponent<ZPunkSongTransport>();
         if (transport == null) transport = FindObjectOfType<ZPunkSongTransport>();
@@ -613,6 +644,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void ExportMidi()
     {
+        if (collectRoutine != null) { ExportMessage("Finish or cancel Collect first.", true); return; }
         if(wavExportRoutine!=null){ExportMessage("Wait until WAV export finishes.",true);return;}
         try
         {
@@ -629,6 +661,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void ExportWav()
     {
+        if (collectRoutine != null) { ExportMessage("Finish or cancel Collect first.", true); return; }
         if(wavExportRoutine!=null){ExportMessage("WAV export already in progress.",true);return;}
         wavExportRoutine=StartCoroutine(ExportWavRoutine());
     }
@@ -733,6 +766,174 @@ public sealed class KMusicTabsUI : MonoBehaviour
             wavExportRoutine=null;
         }
     }
+    // Uses a saved, immutable 2.2.0 project snapshot for every pass.
+    // One pass is the exact master mix; five isolated passes retain original
+    // volumes and effects but bypass solo/mute on the isolated track.
+    private void OnCollectClicked()
+    {
+        if (collectRoutine != null)
+        {
+            cancelCollect = true;
+            ExportMessage("COLLECT: cancel requested...", false);
+            return;
+        }
+        if (wavExportRoutine != null) { ExportMessage("Finish WAV export first.", true); return; }
+        cancelCollect = false;
+        collectRoutine = StartCoroutine(CollectRoutine());
+    }
+
+    private void SetCollectBusy(bool busy)
+    {
+        if (collectButton != null) collectButton.text = busy ? "CANCEL COLLECTION" : "COLLECT & EXPORT ZIP";
+        if (exportWavButton != null) exportWavButton.SetEnabled(!busy);
+        if (exportMidiButton != null) exportMidiButton.SetEnabled(!busy);
+        // Normal transport playback could contaminate listener-based stems.
+        if (headerPlay != null) headerPlay.SetEnabled(!busy);
+        if (headerSave != null) headerSave.SetEnabled(!busy);
+        if (collectGuardNew != null) collectGuardNew.SetEnabled(!busy);
+        if (collectGuardOpen != null) collectGuardOpen.SetEnabled(!busy);
+        if (collectGuardSave != null) collectGuardSave.SetEnabled(!busy);
+        if (arrangeButton != null) arrangeButton.SetEnabled(!busy);
+        if (createButton != null) createButton.SetEnabled(!busy);
+        if (soundButton != null) soundButton.SetEnabled(!busy);
+        if (mixButton != null) mixButton.SetEnabled(!busy);
+    }
+
+    private IEnumerator CollectRoutine()
+    {
+        // First yield makes the routine handle consistently non-null if setup fails.
+        yield return null;
+        string error = null;
+        string zipPath = null;
+        SongData snapshot = null;
+        ZPunkCollectPackage bundle = null;
+        ZPunkWavCapture recorder = null;
+        KMusicPlayerUI samplePlayer = FindObjectOfType<KMusicPlayerUI>();
+        SetCollectBusy(true);
+        float warpDeadline = Time.realtimeSinceStartup + 180f;
+        while (!cancelCollect && samplePlayer != null && samplePlayer.DawWarpPendingForCollection &&
+            Time.realtimeSinceStartup < warpDeadline)
+        {
+            ExportMessage("COLLECT: finishing sample warp before packaging...", false);
+            yield return null;
+        }
+        if (cancelCollect) { collectRoutine = null; SetCollectBusy(false); yield break; }
+        if (samplePlayer != null && samplePlayer.DawWarpPendingForCollection)
+        {
+            ExportMessage("COLLECT: warp did not finish; export canceled.", true);
+            collectRoutine = null; SetCollectBusy(false); yield break;
+        }
+        try
+        {
+            try
+            {
+                if (projects == null) projects = FindObjectOfType<KMusicProjectManager>();
+                if (transport == null) transport = FindObjectOfType<ZPunkSongTransport>();
+                if (projects == null || transport == null) throw new InvalidOperationException("Project/transport not available.");
+                if (transport.IsPlaying) throw new InvalidOperationException("Stop playback before collection.");
+                if (!projects.TryCreateCollectedSnapshot(out string json, out snapshot, out string title,
+                    out string id, out string saveError))
+                    throw new IOException(saveError);
+                if (!SongEventPlanner.HasEvents(snapshot))
+                    throw new InvalidOperationException("Create an arrangement before collection.");
+                double seconds = snapshot.lengthTicks * 60.0 /
+                    (Mathf.Clamp(snapshot.bpm, 1f, 400f) * SongData.TicksPerQuarter);
+                if (seconds > 900 || seconds < 0.001)
+                    throw new InvalidOperationException("Collection supports songs up to 15 minutes.");
+                bundle = new ZPunkCollectPackage(json, snapshot, title, id, projects.CurrentSlot);
+                collectSession = bundle;
+                ExportMessage("COLLECT: locating samples and drum kit...", false);
+                bundle.CollectDependencies(samplePlayer);
+                var listener = FindObjectOfType<AudioListener>();
+                if (listener == null || !listener.isActiveAndEnabled)
+                    throw new InvalidOperationException("Active AudioListener not available.");
+                recorder = listener.GetComponent<ZPunkWavCapture>();
+                if (recorder == null) recorder = listener.gameObject.AddComponent<ZPunkWavCapture>();
+                collectRecorder = recorder;
+                if (samplePlayer != null) samplePlayer.DawStopSample();
+            }
+            catch (Exception e) { error = e.Message; Debug.LogWarning("[ZPUNK Collect] " + e); }
+
+            if (error == null) yield return null;
+            // Master then DRUMS, BASS, SYNTH, PADS, CHOPS: same start anchor.
+            for (int pass = -1; pass < 5 && error == null && !cancelCollect; pass++)
+            {
+                double endDsp = 0;
+                float deadline = 0;
+                string dest = null;
+                string trackName = pass < 0 ? "MASTER" : new[] {"DRUMS", "BASS", "SYNTH", "PADS", "CHOPS"}[pass];
+                try
+                {
+                    dest = pass < 0 ? bundle.MasterFile : bundle.StemFile(pass);
+                    if (!transport.PlayExportSnapshot(snapshot, pass))
+                        throw new InvalidOperationException("Could not start " + trackName + " bounce.");
+                    double seconds = snapshot.lengthTicks * 60.0 /
+                        (Mathf.Clamp(snapshot.bpm, 1f, 400f) * SongData.TicksPerQuarter);
+                    endDsp = transport.SongAnchorDsp + seconds;
+                    recorder.Begin(dest, transport.SongAnchorDsp, seconds + 0.25);
+                    deadline = Time.realtimeSinceStartup + (float)seconds + 30f;
+                }
+                catch (Exception e) { error = trackName + ": " + e.Message; Debug.LogWarning("[ZPUNK Collect] " + e); }
+                if (error != null) break;
+
+                float lastProgressAt = -1f;
+                while (!cancelCollect && recorder.IsActive && !recorder.HasOverflow &&
+                    AudioSettings.dspTime < endDsp + 0.30 && Time.realtimeSinceStartup < deadline)
+                {
+                    if (Time.realtimeSinceStartup - lastProgressAt >= 0.8f)
+                    {
+                        lastProgressAt = Time.realtimeSinceStartup;
+                        int progress = Mathf.Clamp(Mathf.RoundToInt((float)
+                            ((AudioSettings.dspTime - transport.SongAnchorDsp) /
+                            Math.Max(.01, endDsp - transport.SongAnchorDsp) * 100f)), 0, 100);
+                        ExportMessage("COLLECT: " + trackName + " " + progress + "% (" + (pass + 2) + "/6) — keep ZPUNK open.", false);
+                    }
+                    yield return null;
+                }
+                try
+                {
+                    if (cancelCollect) throw new OperationCanceledException("Canceled by user.");
+                    if (recorder.HasOverflow) throw new IOException("Audio capture overrun.");
+                    if (Time.realtimeSinceStartup >= deadline) throw new TimeoutException("Audio engine stalled.");
+                    if (AudioSettings.dspTime < endDsp + 0.24) throw new IOException("Incomplete audio pass.");
+                    if (!recorder.Complete()) throw new IOException("No WAV data captured.");
+                }
+                catch (Exception e)
+                {
+                    error = trackName + ": " + e.Message;
+                    Debug.LogWarning("[ZPUNK Collect] " + e);
+                    recorder.Abort();
+                }
+                finally { if (transport != null) transport.StopSong(); }
+                yield return null;
+            }
+
+            if (error == null && !cancelCollect)
+            {
+                ExportMessage("COLLECT: compressing the project package...", false);
+                yield return null;
+                try
+                {
+                    zipPath = bundle.FinalizeZip();
+                    ExportMessage("COLLECT: " + ZPunkMobileFileExport.Publish(zipPath), false);
+                }
+                catch (Exception e) { error = e.Message; Debug.LogWarning("[ZPUNK Collect] " + e); }
+            }
+        }
+        finally
+        {
+            if (recorder != null && recorder.IsActive) recorder.Abort();
+            if (transport != null && transport.IsPlaying) transport.StopSong();
+            if (bundle != null) bundle.Dispose();
+            collectSession = null;
+            collectRecorder = null;
+            collectRoutine = null;
+            SetCollectBusy(false);
+            if (cancelCollect) ExportMessage("COLLECT: canceled; temporary files removed.", false);
+            else if (error != null) ExportMessage("COLLECT: " + error, true);
+        }
+    }
+
     private void ExportMessage(string message,bool error)
     {
         if(exportStatus!=null)

@@ -1299,6 +1299,25 @@ public class KMusicPlayerUI : MonoBehaviour
     // Project save/load hooks
     public string GetLastTrackId() => LoadLastTrackId();
 
+    /// <summary>Collection accesses the ORIGINAL decoded audio, never a warped preview.
+    /// Android content-URI sources remain private and are exported as PCM WAV.</summary>
+    public AudioClip GetOriginalSampleForCollection(string canonicalId)
+    {
+        return _clip != null && string.Equals(
+            CanonicalSampleId(_clipResourcesPath), CanonicalSampleId(canonicalId),
+            StringComparison.Ordinal) ? _clip : null;
+    }
+
+    public bool DawWarpPendingForCollection => _warpProcessing || _warpPendingAt >= 0f;
+
+    public AudioClip GetRenderedWarpForCollection(string canonicalId)
+    {
+        return _autoWarpEnabled && _warpedClip != null &&
+            string.Equals(CanonicalSampleId(_clipResourcesPath), CanonicalSampleId(canonicalId),
+                StringComparison.Ordinal) ? _warpedClip : null;
+    }
+
+
     private KMusicApp PitchApp()
     {
         if (_pitchApp == null) _pitchApp = FindObjectOfType<KMusicApp>();

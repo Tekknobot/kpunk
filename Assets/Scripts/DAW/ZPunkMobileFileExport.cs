@@ -31,7 +31,8 @@ namespace ZPunk.DAW
             using (var activity = unity.GetStatic<AndroidJavaObject>("currentActivity"))
             using (var bridge = new AndroidJavaClass("com.zillatronics.kmusic.MediaStoreBridge"))
             {
-                string mime = filePath.EndsWith(".mid", StringComparison.OrdinalIgnoreCase) ? "audio/midi" : "audio/wav";
+                string mime = filePath.EndsWith(".mid", StringComparison.OrdinalIgnoreCase) ? "audio/midi" :
+                    filePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? "application/zip" : "audio/wav";
                 string result = bridge.CallStatic<string>("exportToDownloads", activity, filePath,
                     Path.GetFileName(filePath), mime);
                 if (string.IsNullOrEmpty(result) || result.StartsWith("ERROR:", StringComparison.Ordinal))
