@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_26
+  m_EditorClassIdentifier: Assembly-CSharp::DrumKit
+  kitName: Electro Funk
+  kick: {fileID: 8300000, guid: c140a0402c6d74ba8a5b6bb1bd98a978, type: 3}
+  snare: {fileID: 8300000, guid: 691c510bf7db54ceabd0c1d832153b07, type: 3}
+  clap: {fileID: 8300000, guid: 971335850db71452191751b5b6e67bd9, type: 3}
+  hatClosed: {fileID: 8300000, guid: 4e6e69a64237a4b9b8c2a12f7fdc6952, type: 3}
+  hatOpen: {fileID: 8300000, guid: 22a0b25c28d5b4ff48870786dd46e682, type: 3}
+  ride: {fileID: 8300000, guid: f75aee805e9b646048287ad1d2c908c2, type: 3}
+  rim: {fileID: 8300000, guid: 726323bd2c4e345f99a8f9ec480d422f, type: 3}
+  crash: {fileID: 8300000, guid: dd548e67d0d6d4c86968566877ffa4e0, type: 3}

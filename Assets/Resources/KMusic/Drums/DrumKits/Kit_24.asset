@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_24
+  m_EditorClassIdentifier: Assembly-CSharp::DrumKit
+  kitName: Industrial Techno
+  kick: {fileID: 8300000, guid: 87035e5a8000f4f17b76329bb9b15370, type: 3}
+  snare: {fileID: 8300000, guid: 5211528af540545b5828af962cce691e, type: 3}
+  clap: {fileID: 8300000, guid: 19dfa7b563ba44d92ba4615cbaaab7ab, type: 3}
+  hatClosed: {fileID: 8300000, guid: 965a108f81d3547f2b0317fe04aa78a9, type: 3}
+  hatOpen: {fileID: 8300000, guid: 8663104fd72614a2388d717443491b42, type: 3}
+  ride: {fileID: 8300000, guid: ae3bb4b335e214331ae8a5e9f0c04821, type: 3}
+  rim: {fileID: 8300000, guid: a8fb511286b094183a3f7fd1952a6197, type: 3}
+  crash: {fileID: 8300000, guid: d9c04b9b753ad40b68164ab940baf46e, type: 3}

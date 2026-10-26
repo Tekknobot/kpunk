@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_15
+  m_EditorClassIdentifier: Assembly-CSharp::DrumKit
+  kitName: Acid 606
+  kick: {fileID: 8300000, guid: b0029a94be03f490e83c6f07fa6b15ee, type: 3}
+  snare: {fileID: 8300000, guid: 7a12528de2c054d799fdabe394469264, type: 3}
+  clap: {fileID: 8300000, guid: 8381f610b055b4d7aaf81d461eecd999, type: 3}
+  hatClosed: {fileID: 8300000, guid: a258567a37d5146c69b996739835c1c2, type: 3}
+  hatOpen: {fileID: 8300000, guid: 50f909481891c4168ac1fc413c0da525, type: 3}
+  ride: {fileID: 8300000, guid: d1a65334673d24810b6522373eb185a2, type: 3}
+  rim: {fileID: 8300000, guid: 726323bd2c4e345f99a8f9ec480d422f, type: 3}
+  crash: {fileID: 8300000, guid: 3f8fd7e66a6d846af8a988960f986462, type: 3}

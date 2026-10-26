@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_20
+  m_EditorClassIdentifier: Assembly-CSharp::DrumKit
+  kitName: CR78 Vintage
+  kick: {fileID: 8300000, guid: f94e2d0fefe91403ab3b311e354a32ee, type: 3}
+  snare: {fileID: 8300000, guid: 7a01d397b71c54de6bccd4db773ce3ca, type: 3}
+  clap: {fileID: 8300000, guid: 971335850db71452191751b5b6e67bd9, type: 3}
+  hatClosed: {fileID: 8300000, guid: d555ef670c4b141acb4718971376977f, type: 3}
+  hatOpen: {fileID: 8300000, guid: 48325b7aa8e29404cb39ad38e73df6de, type: 3}
+  ride: {fileID: 8300000, guid: b193ed4faf49446f880a7301f4fcdfeb, type: 3}
+  rim: {fileID: 8300000, guid: 5eb2a110ca46e4044adc659a92b90071, type: 3}
+  crash: {fileID: 8300000, guid: 307ca1cf7c49f4616b8bf310615de713, type: 3}

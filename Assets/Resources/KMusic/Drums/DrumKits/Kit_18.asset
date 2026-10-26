@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_18
+  m_EditorClassIdentifier: Assembly-CSharp::DrumKit
+  kitName: SP12 Boom Bap
+  kick: {fileID: 8300000, guid: b32ed20384c5f465291e1bac51032db6, type: 3}
+  snare: {fileID: 8300000, guid: bf45c6ac400244b718729609da7c96e0, type: 3}
+  clap: {fileID: 8300000, guid: 19dfa7b563ba44d92ba4615cbaaab7ab, type: 3}
+  hatClosed: {fileID: 8300000, guid: 69ab5edb373344bba8a768ae9208c5cb, type: 3}
+  hatOpen: {fileID: 8300000, guid: 41c224b1273e24feb889a272031d65df, type: 3}
+  ride: {fileID: 8300000, guid: b193ed4faf49446f880a7301f4fcdfeb, type: 3}
+  rim: {fileID: 8300000, guid: 5b1370a7170be46e4a415358510d681d, type: 3}
+  crash: {fileID: 8300000, guid: 6b149c057d09e460e8d968c709a8afd1, type: 3}

@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_22
+  m_EditorClassIdentifier: Assembly-CSharp::DrumKit
+  kitName: 90s Eurodance
+  kick: {fileID: 8300000, guid: dcc6e18ce3e24448b83b1f428ba76df0, type: 3}
+  snare: {fileID: 8300000, guid: 0c602fb0aa1394ed69ed67f08c71836a, type: 3}
+  clap: {fileID: 8300000, guid: 8381f610b055b4d7aaf81d461eecd999, type: 3}
+  hatClosed: {fileID: 8300000, guid: a17257a4da08046a88c16332fc33e5bd, type: 3}
+  hatOpen: {fileID: 8300000, guid: 22a0b25c28d5b4ff48870786dd46e682, type: 3}
+  ride: {fileID: 8300000, guid: ae3bb4b335e214331ae8a5e9f0c04821, type: 3}
+  rim: {fileID: 8300000, guid: 94bf0072709c2416b9da2bbcbe5b4d88, type: 3}
+  crash: {fileID: 8300000, guid: 307ca1cf7c49f4616b8bf310615de713, type: 3}

@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_21
+  m_EditorClassIdentifier: Assembly-CSharp::DrumKit
+  kitName: Simmons Electronic
+  kick: {fileID: 8300000, guid: 0ec412ad94973452eaac2294e3709e55, type: 3}
+  snare: {fileID: 8300000, guid: e8c515b2aeb934619a51e7c799f44dbe, type: 3}
+  clap: {fileID: 8300000, guid: 19dfa7b563ba44d92ba4615cbaaab7ab, type: 3}
+  hatClosed: {fileID: 8300000, guid: 965a108f81d3547f2b0317fe04aa78a9, type: 3}
+  hatOpen: {fileID: 8300000, guid: 50f909481891c4168ac1fc413c0da525, type: 3}
+  ride: {fileID: 8300000, guid: 3ae3203b87aa545de8be4b6e04f581ce, type: 3}
+  rim: {fileID: 8300000, guid: 726323bd2c4e345f99a8f9ec480d422f, type: 3}
+  crash: {fileID: 8300000, guid: 6b149c057d09e460e8d968c709a8afd1, type: 3}

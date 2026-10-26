@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_12
+  m_EditorClassIdentifier: Assembly-CSharp::DrumKit
+  kitName: Classic 909
+  kick: {fileID: 8300000, guid: d06bd9790d2fb4eea8118e2c7cb2e0db, type: 3}
+  snare: {fileID: 8300000, guid: d25e7c1c2dfd94442b02b7b1e5d40de9, type: 3}
+  clap: {fileID: 8300000, guid: 4603b7c1a58e44ba6be006fb991ae5bd, type: 3}
+  hatClosed: {fileID: 8300000, guid: 1181e01df35624827bad096adc91df60, type: 3}
+  hatOpen: {fileID: 8300000, guid: 3c52bf3a441b6409389c372e13b482e4, type: 3}
+  ride: {fileID: 8300000, guid: ae3bb4b335e214331ae8a5e9f0c04821, type: 3}
+  rim: {fileID: 8300000, guid: fa7bfbce85b1b49e0b4ca90f19c641ef, type: 3}
+  crash: {fileID: 8300000, guid: 6639fb4b10a1a46ef816a298a87c7489, type: 3}

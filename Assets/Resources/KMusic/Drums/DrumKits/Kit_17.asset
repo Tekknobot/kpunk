@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
+  m_Name: Kit_17
+  m_EditorClassIdentifier: Assembly-CSharp::DrumKit
+  kitName: DMX Electro
+  kick: {fileID: 8300000, guid: 44f45e1a10a054e4c9ef0b7204a98a11, type: 3}
+  snare: {fileID: 8300000, guid: ee5d24aac73854d65a520b617120bb39, type: 3}
+  clap: {fileID: 8300000, guid: 19dfa7b563ba44d92ba4615cbaaab7ab, type: 3}
+  hatClosed: {fileID: 8300000, guid: 4840a6083d8a74ae28680b2621b419cd, type: 3}
+  hatOpen: {fileID: 8300000, guid: ea38ab42924e54f90a4ab4eeb31f34ba, type: 3}
+  ride: {fileID: 8300000, guid: 3b5b20907ff18425bb2afc48f76c0bb8, type: 3}
+  rim: {fileID: 8300000, guid: a8fb511286b094183a3f7fd1952a6197, type: 3}
+  crash: {fileID: 8300000, guid: 6b149c057d09e460e8d968c709a8afd1, type: 3}
