@@ -38,6 +38,7 @@ public class KMusicDrumSequencer : MonoBehaviour
     private const string PrefKey_DrumMutes = "kmusic.drum.mutes";
     private const string PrefKey_DrumActive = "kmusic.drum.active";
     private const string PrefKey_DrumKitIndex = "kmusic.drum.kitIndex";
+    private const string PrefKey_DrumKitId = "kmusic.drum.kitId";
     private const string PrefKey_SampleStepGrid = "kmusic.sample.stepgrid";
 
 
@@ -404,6 +405,8 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private DrumKit[] _kits;
     private int _kitIndex = 0;
+    // The asset name (Kit_01, Kit_12, ...) is stable across Resources reordering.
+    private string _kitId = "";
 
     // UI
     private UnityEngine.UIElements.Label _kitNameLabel;
@@ -668,13 +671,15 @@ public class KMusicDrumSequencer : MonoBehaviour
         // Restore saved kit index before loading kits.
         if (ProjectPrefs.HasKey(PrefKey_DrumKitIndex))
             _kitIndex = Mathf.Max(0, ProjectPrefs.GetInt(PrefKey_DrumKitIndex, 0));
+        _kitId = ProjectPrefs.GetString(PrefKey_DrumKitId, "");
 
         LoadKits();
 
 #if UNITY_EDITOR
-        // Editor convenience: try to scan the first kit folder if present.
-        // NOTE: This does not exist in builds.
-        TryLoadFirstKitFromAssets();
+        // The old editor-only folder scan overwrote the selected DrumKit's clips.
+        // It is strictly a fallback when no DrumKit assets are installed.
+        if (_kits == null || _kits.Length == 0)
+            TryLoadFirstKitFromAssets();
 #endif
 
         // Always ensure runtime drums are available (Android/iOS/Standalone).
@@ -1127,6 +1132,7 @@ private void ApplySamplePitch()
 
             ProjectPrefs.SetInt(PrefKey_DrumActive, _activeDrumId);
             ProjectPrefs.SetInt(PrefKey_DrumKitIndex, _kitIndex);
+            ProjectPrefs.SetString(PrefKey_DrumKitId, CaptureKitId());
             ProjectPrefs.Save();
 
             if (verbose)
@@ -1235,8 +1241,11 @@ private void ApplySamplePitch()
         // --- restore active drum ---
         _activeDrumId = Mathf.Clamp(ProjectPrefs.GetInt(PrefKey_DrumActive, 1), 1, 8);
 
-        // --- restore kit index ---
-        _kitIndex = Mathf.Max(0, ProjectPrefs.GetInt(PrefKey_DrumKitIndex, 0));
+        // The active project's selection is mirrored into these preferences by
+        // ApplyKitSelection() during project load. Re-resolve by asset ID, not
+        // Resources.LoadAll's unspecified enumeration order.
+        _kitId = ProjectPrefs.GetString(PrefKey_DrumKitId, "");
+        _kitIndex = ResolveKitIndex(ProjectPrefs.GetInt(PrefKey_DrumKitIndex, 0), _kitId);
 
         if (verbose)
         {
@@ -1289,38 +1298,67 @@ private void ApplySamplePitch()
         }
     }
 
+    // Resources.LoadAll does not guarantee kit ordering, especially after
+    // adding new ScriptableObject assets. All consumers must use the same catalog.
+    public static DrumKit[] LoadKitsInStableOrder(string resourcesPath = "KMusic/Drums/DrumKits")
+    {
+        var kits = Resources.LoadAll<DrumKit>(resourcesPath);
+        Array.Sort(kits, (a, b) => StringComparer.OrdinalIgnoreCase.Compare(
+            a != null ? a.name : "", b != null ? b.name : ""));
+        return kits;
+    }
+
+    public static int FindKitIndexById(DrumKit[] kits, string kitId)
+    {
+        if (kits == null || string.IsNullOrEmpty(kitId)) return -1;
+        for (int i = 0; i < kits.Length; i++)
+            if (kits[i] != null && string.Equals(kits[i].name, kitId, StringComparison.OrdinalIgnoreCase))
+                return i;
+        return -1;
+    }
+
+    private int ResolveKitIndex(int fallbackIndex, string kitId)
+    {
+        if (_kits == null || _kits.Length == 0) return Mathf.Max(0, fallbackIndex);
+        int byId = FindKitIndexById(_kits, kitId);
+        return byId >= 0 ? byId : Mathf.Clamp(fallbackIndex, 0, _kits.Length - 1);
+    }
+
     private void LoadKits()
     {
-        _kits = Resources.LoadAll<DrumKit>(drumKitResourcesPath);
-        if (_kits == null || _kits.Length == 0)
+        _kits = LoadKitsInStableOrder(drumKitResourcesPath);
+        if (_kits.Length == 0 && drumKitResourcesPath != "KMusic/Drums/DrumKits")
+            _kits = LoadKitsInStableOrder("KMusic/Drums/DrumKits");
+        if (_kits.Length == 0)
         {
-            Debug.LogWarning($"[KMusicDrumSequencer] No DrumKits found in Resources/{drumKitResourcesPath}");
+            Debug.LogWarning($"[KMusicDrumSequencer] No DrumKits found at Resources/{drumKitResourcesPath} or Resources/KMusic/Drums/DrumKits");
             return;
         }
 
-        _kitIndex = Mathf.Clamp(_kitIndex, 0, _kits.Length - 1);
+        _kitIndex = ResolveKitIndex(_kitIndex, _kitId);
         ApplyKit(_kitIndex);
     }
 
     private void NextKit()
     {
         if (_kits == null || _kits.Length == 0) return;
-        _kitIndex = (_kitIndex + 1) % _kits.Length;
-        ApplyKit(_kitIndex);
+        ApplyKitSelection((_kitIndex + 1) % _kits.Length, null);
     }
 
     private void PrevKit()
     {
         if (_kits == null || _kits.Length == 0) return;
-        _kitIndex = (_kitIndex - 1 + _kits.Length) % _kits.Length;
-        ApplyKit(_kitIndex);
+        ApplyKitSelection((_kitIndex - 1 + _kits.Length) % _kits.Length, null);
     }
 
     private void ApplyKit(int index)
     {
         if (_kits == null || _kits.Length == 0) return;
+        if (index < 0 || index >= _kits.Length) return;
         var kit = _kits[index];
         if (kit == null) return;
+        _kitIndex = index;
+        _kitId = kit.name;
 
         // (Optional) stop currently playing voices so you don’t hear old kit tails
         _sampler.AllNotesOff();
@@ -2589,12 +2627,31 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
     }
 
     public int CaptureKitIndex() => _kitIndex;
+    public string CaptureKitId() => _kits != null && _kitIndex >= 0 &&
+        _kitIndex < _kits.Length && _kits[_kitIndex] != null
+        ? _kits[_kitIndex].name : (_kitId ?? "");
 
-    public void ApplyKitIndex(int kitIndex)
+    // Use this for project restoration. "kitId" is authoritative for new saves;
+    // the numeric index is retained only for older project JSON.
+    public void ApplyKitSelection(int kitIndex, string kitId)
     {
-        _kitIndex = Mathf.Max(0, kitIndex);
-        try { ApplyKit(_kitIndex); } catch { }
+        int byId = FindKitIndexById(_kits, kitId);
+        if (!string.IsNullOrEmpty(kitId) && byId < 0 && _kits != null && _kits.Length > 0)
+            Debug.LogWarning($"[ZPUNK Drums] Saved kit '{kitId}' is missing. Falling back to kit index {kitIndex}.");
+        _kitIndex = byId >= 0 ? byId : ResolveKitIndex(kitIndex, null);
+        _kitId = _kits != null && _kitIndex < _kits.Length && _kits[_kitIndex] != null
+            ? _kits[_kitIndex].name : (kitId ?? "");
+        if (_kits != null && _kits.Length > 0)
+            ApplyKit(_kitIndex);
+
+        // Persist only the kit choice, even when loading a project with pattern
+        // saving disabled. Late BindUI()/LoadDrumState() must not undo the load.
+        ProjectPrefs.SetInt(PrefKey_DrumKitIndex, _kitIndex);
+        ProjectPrefs.SetString(PrefKey_DrumKitId, _kitId);
+        ProjectPrefs.Save();
     }
+
+    public void ApplyKitIndex(int kitIndex) => ApplyKitSelection(kitIndex, null);
 
     /// <summary>
     /// Diagnostic only: counts occupied cells currently displayed for the selected drum.

@@ -77,6 +77,8 @@ namespace ZPunk.DAW
         public string presetRelPath;
         public int presetIndex;
         public int drumKitIndex;
+        // Optional for old projects: stable DrumKit asset ID (e.g. Kit_12).
+        public string drumKitId;
         public string sampleResourcesPath;
         public float[] sliceStart01;
         public float[] sliceEnd01;

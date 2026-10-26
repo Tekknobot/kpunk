@@ -146,11 +146,20 @@ namespace ZPunk.DAW
                 if (e.type == SongEventPlanner.EventType.Drum) { usesDrums = true; break; }
             if (usesDrums)
             {
-                var kits = Resources.LoadAll<DrumKit>(
-                    "KMusic/Drums/DrumKits"
-                );
+                var kits = KMusicDrumSequencer.LoadKitsInStableOrder(
+                    "KMusic/Drums/DrumKits");
                 int index = src != null && src.drums != null ? src.drums.kitIndex :
                     song.tracks[0].instrument != null ? song.tracks[0].instrument.drumKitIndex : 0;
+                string kitId = src != null && src.drums != null && !string.IsNullOrEmpty(src.drums.kitId)
+                    ? src.drums.kitId
+                    : song.tracks[0].instrument != null ? song.tracks[0].instrument.drumKitId : null;
+                if (!string.IsNullOrEmpty(kitId))
+                {
+                    int byId = KMusicDrumSequencer.FindKitIndexById(kits, kitId);
+                    if (byId < 0)
+                        throw new FileNotFoundException("Saved drum kit '" + kitId + "' is not installed.");
+                    index = byId;
+                }
                 if (kits == null || kits.Length == 0)
                     throw new FileNotFoundException(
                         "No drum kits found in Resources/KMusic/Drums/DrumKits."
@@ -181,7 +190,7 @@ namespace ZPunk.DAW
             public SourceRef player;
             public DrumRef drums;
         }
-        [Serializable] private sealed class DrumRef { public int kitIndex; }
+        [Serializable] private sealed class DrumRef { public int kitIndex; public string kitId; }
         [Serializable] private sealed class SourceRef
         {
             public string resourcesPath;

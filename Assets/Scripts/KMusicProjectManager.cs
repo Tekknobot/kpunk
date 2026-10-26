@@ -1028,6 +1028,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
         public bool[] mutes;
         public int activeDrumId;
         public int kitIndex;
+        // Stable ScriptableObject asset name; optional for older saves.
+        public string kitId;
         public int[] sampleSteps;
     }
 
@@ -1335,6 +1337,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             frame.drums.stepVelocityB64 = velocity == null ? "" : Convert.ToBase64String(velocity);
             frame.drums.sampleSteps = _drums.CaptureSampleStepsFlat();
             frame.drums.kitIndex = _drums.CaptureKitIndex();
+            frame.drums.kitId = _drums.CaptureKitId();
         }
         if (_samplerUi != null)
             frame.sampler.stepGrid = _samplerUi.CaptureSampleStepsFlat();
@@ -1497,6 +1500,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
             data.drums.mutes = _drums.CaptureDrumMutes();
             data.drums.activeDrumId = _drums.CaptureActiveDrumId();
             data.drums.kitIndex = _drums.CaptureKitIndex();
+            data.drums.kitId = _drums.CaptureKitId();
         }
 
         if (_samplerUi != null)
@@ -1604,6 +1608,14 @@ public sealed class KMusicProjectManager : MonoBehaviour
             // format is always an explicitly native, editable 2.0 arrangement.
             data.song.migratedFromLegacy = false;
             data.song.arrangementAuthored = true;
+            // Keep the authoritative DAW document and legacy drum snapshot in sync.
+            // Otherwise later saves/exports can carry an older kit selection.
+            if (_drums != null && data.song.tracks != null && data.song.tracks.Count > 0 &&
+                data.song.tracks[0] != null && data.song.tracks[0].instrument != null)
+            {
+                data.song.tracks[0].instrument.drumKitIndex = data.drums.kitIndex;
+                data.song.tracks[0].instrument.drumKitId = data.drums.kitId;
+            }
             if (!string.IsNullOrEmpty(data.bass.presetRelPath) &&
                 data.song.tracks != null && data.song.tracks.Count > 1 &&
                 data.song.tracks[1] != null && data.song.tracks[1].instrument != null)
@@ -1786,7 +1798,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 _drums.ApplyDrumVelocityData(vel);
                 _drums.ApplySampleStepsFlat(data.drums.sampleSteps);
                 _drums.ApplyDrumMutes(data.drums.mutes);
-                _drums.ApplyKitIndex(data.drums.kitIndex);
+                string savedKitId = !string.IsNullOrEmpty(data.drums.kitId) ? data.drums.kitId :
+                    (data.song.tracks != null && data.song.tracks.Count > 0 &&
+                     data.song.tracks[0] != null && data.song.tracks[0].instrument != null
+                        ? data.song.tracks[0].instrument.drumKitId : null);
+                _drums.ApplyKitSelection(data.drums.kitIndex, savedKitId);
             }
 
             if (_samplerUi != null && data.sampler != null)
@@ -1907,6 +1923,8 @@ public sealed class KMusicProjectManager : MonoBehaviour
             _drums.ApplyDrumMask(null);
             _drums.ApplySampleStepsFlat(null);
             _drums.ApplyDrumMutes(null);
+            // Newly created slots must not inherit the previous project's kit.
+            _drums.ApplyKitIndex(0);
         }
 
         if (_samplerUi != null)

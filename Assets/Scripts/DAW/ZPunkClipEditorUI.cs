@@ -1452,6 +1452,7 @@ namespace ZPunk.DAW
                     if (!ReferenceEquals(projects.CurrentSong, edited))
                         edited = ArrangementEditing.IndependentCopy(edited);
                     edited.tracks[0].instrument.drumKitIndex = drumEngine.CaptureKitIndex();
+                    edited.tracks[0].instrument.drumKitId = drumEngine.CaptureKitId();
                     projects.AcceptArrangementEdit(edited);
                     song = edited;
                 }
