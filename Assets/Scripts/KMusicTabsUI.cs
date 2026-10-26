@@ -29,6 +29,17 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private Button exportWavButton, exportMidiButton, collectButton;
     private Button collectGuardNew, collectGuardOpen, collectGuardSave;
     private bool menuIsOpen;
+    // Arrangement-only master scope. The trigger and drawer live inside the
+    // Arrangement page's own vertical ScrollView, never above the other pages.
+    private VisualElement scopeDrawer;
+    private ZPunkMasterWaveformView masterWaveform;
+    private ZPunkMasterAudioTap masterAudioTap;
+    private Button scopeToggle;
+    private Label scopeStatus;
+    private Coroutine scopeAnimation;
+    private bool scopeIsOpen;
+    private float nextScopeFrame;
+    private float nextTapSearch;
     private Button arrangeButton, createButton, soundButton, mixButton, menuToggle, headerSave, headerPlay, headerStop;
     private ZPunkArrangementUI arrangement;
     private ZPunkClipEditorUI editor;
@@ -95,6 +106,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
             if(capture!=null)capture.Abort();
             if(transport!=null && transport.IsPlaying)transport.StopSong();
         }
+        if (scopeAnimation != null) { StopCoroutine(scopeAnimation); scopeAnimation = null; }
+        if (masterAudioTap != null) masterAudioTap.CaptureEnabled = false;
+        masterAudioTap = null;
+        masterWaveform = null;
+        scopeDrawer = null;
+        scopeToggle = null;
+        scopeStatus = null;
+        scopeIsOpen = false;
         if(uiRoot!=null)uiRoot.UnregisterCallback<GeometryChangedEvent>(GeometryChanged);
         previousWidth=-1f;
         previousHeight=-1f;
@@ -435,8 +454,17 @@ public sealed class KMusicTabsUI : MonoBehaviour
         heading.style.unityFontStyleAndWeight=FontStyle.Bold;
         subheading=Label("  /  SONG TIMELINE",10,Dim);
         context.Add(heading);
+        subheading.style.flexShrink = 1;
+        subheading.style.minWidth = 0;
+        subheading.style.whiteSpace = WhiteSpace.NoWrap;
+        subheading.style.textOverflow = TextOverflow.Ellipsis;
+        subheading.style.overflow = Overflow.Hidden;
         context.Add(subheading);
         content.Add(context);
+        // Create the master scope inside ARRANGE's scrolling document. It is
+        // below the clip/zoom actions (and above TEMPO), not in the fixed
+        // section header, so expanding it never compresses any workspace.
+        BuildScopeDrawer();
         pages.RemoveFromHierarchy();
         pages.style.flexGrow=1;
         pages.style.minHeight=0;
@@ -469,6 +497,184 @@ public sealed class KMusicTabsUI : MonoBehaviour
         uiRoot.style.paddingBottom=9;
         uiRoot.style.minHeight=0;
     }
+    // This inline module is a child of ARRANGE's native ScrollView, alongside
+    // its regular tools and timeline. The entire module scrolls as one piece.
+    // Because it belongs to PageArrangement, it never appears on other pages.
+    private void BuildScopeDrawer()
+    {
+        var arrangementScroll = pageArrangement != null
+            ? pageArrangement.Q<ScrollView>("ZPunkArrangementPageScroll") : null;
+        if (arrangementScroll == null)
+        {
+            Debug.LogWarning("[ZPUNK Scope] Arrangement ScrollView was not found; scope not mounted.");
+            return;
+        }
+
+        var scopeBar = new VisualElement { name = "ZPunkMasterScopeBar" };
+        scopeBar.style.height = 54;
+        scopeBar.style.flexDirection = FlexDirection.Row;
+        scopeBar.style.alignItems = Align.Center;
+        scopeBar.style.flexShrink = 0;
+        scopeBar.style.minWidth = 0;
+        scopeBar.style.paddingLeft = 10;
+        scopeBar.style.paddingRight = 5;
+        scopeBar.style.marginTop = 7;
+        scopeBar.style.marginBottom = 3;
+        scopeBar.style.backgroundColor = new Color(.082f, .117f, .16f);
+        scopeBar.style.borderTopLeftRadius = 7;
+        scopeBar.style.borderTopRightRadius = 7;
+        scopeBar.style.borderBottomLeftRadius = 7;
+        scopeBar.style.borderBottomRightRadius = 7;
+
+        var scopeTitle = Label("MASTER / SCOPE", 11, Accent);
+        scopeTitle.style.unityFontStyleAndWeight = FontStyle.Bold;
+        scopeTitle.style.flexGrow = 1;
+        scopeTitle.style.flexShrink = 1;
+        scopeTitle.style.minWidth = 0;
+        scopeBar.Add(scopeTitle);
+
+        scopeToggle = Button("OPEN SCOPE", ToggleScope);
+        scopeToggle.name = "ZPunkMasterScopeToggle";
+        scopeToggle.tooltip = "Expand or collapse the master waveform";
+        scopeToggle.style.height = 44;
+        scopeToggle.style.minWidth = 97;
+        scopeToggle.style.flexShrink = 0;
+        scopeToggle.style.fontSize = 11;
+        scopeToggle.style.unityFontStyleAndWeight = FontStyle.Bold;
+        scopeToggle.style.paddingLeft = 7;
+        scopeToggle.style.paddingRight = 7;
+        scopeToggle.style.borderTopWidth = 1;
+        scopeToggle.style.borderRightWidth = 1;
+        scopeToggle.style.borderBottomWidth = 1;
+        scopeToggle.style.borderLeftWidth = 1;
+        scopeToggle.style.borderTopColor = Accent;
+        scopeToggle.style.borderRightColor = Accent;
+        scopeToggle.style.borderBottomColor = Accent;
+        scopeToggle.style.borderLeftColor = Accent;
+        scopeBar.Add(scopeToggle);
+
+        scopeDrawer = new VisualElement { name = "ZPunkMasterScopeDrawer" };
+        scopeDrawer.style.display = DisplayStyle.None;
+        scopeDrawer.style.flexDirection = FlexDirection.Column;
+        scopeDrawer.style.flexShrink = 0;
+        scopeDrawer.style.height = 0;
+        scopeDrawer.style.minHeight = 0;
+        scopeDrawer.style.minWidth = 0;
+        scopeDrawer.style.width = Length.Percent(100);
+        scopeDrawer.style.overflow = Overflow.Hidden;
+        scopeDrawer.style.paddingLeft = 9;
+        scopeDrawer.style.paddingRight = 9;
+        scopeDrawer.style.paddingTop = 6;
+        scopeDrawer.style.paddingBottom = 7;
+        scopeDrawer.style.marginBottom = 3;
+        scopeDrawer.style.backgroundColor = new Color(.058f, .085f, .123f);
+        var scopeHeading = new VisualElement();
+        scopeHeading.style.flexDirection = FlexDirection.Row;
+        scopeHeading.style.alignItems = Align.Center;
+        scopeHeading.style.flexShrink = 0;
+        scopeHeading.style.height = 27;
+        var name = Label("MASTER / OUTPUT", 11, Accent);
+        name.style.unityFontStyleAndWeight = FontStyle.Bold;
+        scopeHeading.Add(name);
+        var fill = new VisualElement();
+        fill.style.flexGrow = 1;
+        scopeHeading.Add(fill);
+        scopeStatus = Label("NO SIGNAL", 10, Dim);
+        scopeStatus.style.unityTextAlign = TextAnchor.MiddleRight;
+        scopeHeading.Add(scopeStatus);
+        scopeDrawer.Add(scopeHeading);
+        masterWaveform = new ZPunkMasterWaveformView();
+        scopeDrawer.Add(masterWaveform);
+
+        // Title, clip-action row, zoom/loop-action row, then SCOPE.
+        // Use the actual ScrollView content container to ensure the drawer
+        // participates in vertical scrolling on Unity UI Toolkit.
+        var scrollContent = arrangementScroll.contentContainer;
+
+        // MASTER SCOPE appears first in ARRANGE.
+        scrollContent.Insert(0, scopeBar);
+        scrollContent.Insert(1, scopeDrawer);
+
+        RefreshScopeToggle();
+    }
+
+    private void ToggleScope() { SetScopeOpen(!scopeIsOpen); }
+
+    private void RefreshScopeToggle()
+    {
+        if (scopeToggle == null) return;
+        scopeToggle.text = scopeIsOpen ? "HIDE SCOPE" : "OPEN SCOPE";
+        scopeToggle.style.backgroundColor = scopeIsOpen ? Selected : NavBg;
+        scopeToggle.style.color = scopeIsOpen ? Accent : Ink;
+    }
+
+    private void SetScopeOpen(bool open)
+    {
+        if (scopeDrawer == null) return;
+        scopeIsOpen = open;
+        RefreshScopeToggle();
+        if (scopeAnimation != null) { StopCoroutine(scopeAnimation); scopeAnimation = null; }
+        if (open && workspace == "arrange")
+        {
+            nextTapSearch = 0f;
+            nextScopeFrame = 0f;
+            EnsureMasterTap();
+        }
+        else if (masterAudioTap != null) masterAudioTap.CaptureEnabled = false;
+        scopeAnimation = StartCoroutine(AnimateScope(open));
+    }
+
+    // The whole drawer is inside ARRANGE's vertical ScrollView, so it can
+    // have a sampler-sized viewport without shrinking the timeline/editor.
+    private float ScopeHeight()
+    {
+        float screenHeight = uiRoot != null ? uiRoot.resolvedStyle.height : 0f;
+        if (screenHeight <= 0f) screenHeight = 700f;
+        return Mathf.Clamp(screenHeight * .45f, 220f, 390f);
+    }
+
+    private IEnumerator AnimateScope(bool open)
+    {
+        if (scopeDrawer == null) yield break;
+        float start = scopeDrawer.resolvedStyle.height;
+        if (float.IsNaN(start) || start < 0f) start = 0f;
+        if (open) scopeDrawer.style.display = DisplayStyle.Flex;
+        float target = open ? ScopeHeight() : 0f;
+        float time = 0f;
+        const float duration = .19f;
+        while (time < duration)
+        {
+            time += Time.unscaledDeltaTime;
+            float t = Mathf.Clamp01(time / duration);
+            t = t * t * (3f - 2f * t);
+            scopeDrawer.style.height = Mathf.Lerp(start, target, t);
+            yield return null;
+        }
+        scopeDrawer.style.height = target;
+        if (!open) scopeDrawer.style.display = DisplayStyle.None;
+        scopeAnimation = null;
+    }
+
+    private void EnsureMasterTap()
+    {
+        if (!scopeIsOpen || workspace != "arrange") return;
+        if (masterAudioTap == null || !masterAudioTap.isActiveAndEnabled)
+        {
+            // Match the existing WAV export capture point: listen to the master
+            // output, not individual sound generators or post-fader proxies.
+            var listeners = FindObjectsOfType<AudioListener>();
+            for (int i = 0; i < listeners.Length; i++)
+                if (listeners[i].isActiveAndEnabled)
+                {
+                    masterAudioTap = listeners[i].GetComponent<ZPunkMasterAudioTap>();
+                    if (masterAudioTap == null)
+                        masterAudioTap = listeners[i].gameObject.AddComponent<ZPunkMasterAudioTap>();
+                    break;
+                }
+        }
+        if (masterAudioTap != null) masterAudioTap.CaptureEnabled = true;
+    }
+
     private void StyleMenuItem(Button b)
     {
         ZPunkOverlaySkin.Button(b);
@@ -979,6 +1185,16 @@ public sealed class KMusicTabsUI : MonoBehaviour
         StyleNav(createButton,workspace=="create");
         StyleNav(soundButton,workspace=="sound");
         StyleNav(mixButton,workspace=="mix");
+        // Scope belongs exclusively to the ARRANGE page. Preserve its expanded
+        // state between tabs, but stop sampling while another page is visible.
+        if (masterAudioTap != null)
+            masterAudioTap.CaptureEnabled = scopeIsOpen && workspace == "arrange";
+        if (scopeIsOpen && workspace == "arrange")
+        {
+            nextScopeFrame = 0f;
+            nextTapSearch = 0f;
+            EnsureMasterTap();
+        }
         if(menuIsOpen)SetMenuOpen(false);
     }
     private void StyleNav(Button b,bool active)
@@ -1027,6 +1243,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
             header.style.minHeight=shortViewport?56:61;
         }
         if(context!=null) context.style.height=shortViewport?37:43;
+        if (scopeIsOpen && scopeDrawer != null && scopeAnimation == null)
+            scopeDrawer.style.height = ScopeHeight();
 
         shell.style.flexDirection=compact?FlexDirection.Column:FlexDirection.Row;
         dock.RemoveFromHierarchy();
@@ -1051,6 +1269,29 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private void Update()
     {
         if(!isReady)return;
+        if (workspace == "arrange" && scopeIsOpen && masterWaveform != null && Time.unscaledTime >= nextScopeFrame)
+        {
+            nextScopeFrame = Time.unscaledTime + 1f / 20f;
+            if (scopeAnimation == null && scopeDrawer != null)
+            {
+                float targetHeight = ScopeHeight();
+                if (Mathf.Abs(scopeDrawer.resolvedStyle.height - targetHeight) > 4f)
+                    scopeDrawer.style.height = targetHeight;
+            }
+            if ((masterAudioTap == null || !masterAudioTap.isActiveAndEnabled) &&
+                Time.unscaledTime >= nextTapSearch)
+            {
+                nextTapSearch = Time.unscaledTime + 1.5f;
+                EnsureMasterTap();
+            }
+            masterWaveform.Sample(masterAudioTap, Time.unscaledTime);
+            if (scopeStatus != null)
+            {
+                string status = masterWaveform.HasSignal ? "LIVE SIGNAL" : "NO SIGNAL";
+                if (scopeStatus.text != status) scopeStatus.text = status;
+                scopeStatus.style.color = masterWaveform.HasSignal ? Accent : Dim;
+            }
+        }
         if(projects==null)return;
         if(pendingLiveEdit && Time.unscaledTime>=nextLiveEditApply)
         {

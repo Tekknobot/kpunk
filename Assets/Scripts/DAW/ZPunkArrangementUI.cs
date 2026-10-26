@@ -305,12 +305,6 @@ namespace ZPunk.DAW
             arrangementPageScroll.contentContainer.style.flexShrink = 0;
             page.Add(arrangementPageScroll);
 
-            var title = Label("SONG ARRANGEMENT", 14, Text);
-            title.name = "ZPunkSongTitle";
-            title.style.unityFontStyleAndWeight = FontStyle.Bold;
-            title.style.marginBottom = 5;
-            arrangementPageScroll.Add(title);
-
             // Equal-width, fully visible command rows; no hidden horizontal scrolling.
             var editing = MakeCommandStrip("ZPunkClipActions");
             editing.Add(CommandButton("+ CLIP", AddClip));
@@ -439,6 +433,13 @@ namespace ZPunk.DAW
             increase.style.paddingRight = 0;
             loopRow.Add(increase);
             arrangementPageScroll.Add(loopRow);
+
+            var title = Label("SONG ARRANGEMENT", 14, Text);
+            title.name = "ZPunkSongTitle";
+            title.style.unityFontStyleAndWeight = FontStyle.Bold;
+            title.style.marginBottom = 5;
+            arrangementPageScroll.Add(title);
+            title.style.marginTop = 8 * uiScale;
 
             var arrangement = new VisualElement { name = "ZPunkArrangementBoard" };
             arrangement.style.flexDirection = FlexDirection.Row;
