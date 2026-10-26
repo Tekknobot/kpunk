@@ -1,5 +1,5 @@
 # ninja log v5
-0	525	1793010675110565704	FramePacing/CMakeFiles/swappywrapper.dir/UnitySwappyWrapper.cpp.o	6102ae475a7cbc66
-525	722	1793010675289685518	/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/4d2x4v1r/obj/arm64-v8a/libswappywrapper.so	fa5f592b3375edb3
-6	515	1793018394970737898	FramePacing/CMakeFiles/swappywrapper.dir/UnitySwappyWrapper.cpp.o	6102ae475a7cbc66
 515	799	1793018395214597873	/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/4d2x4v1r/obj/arm64-v8a/libswappywrapper.so	fa5f592b3375edb3
+6	515	1793018394970737898	FramePacing/CMakeFiles/swappywrapper.dir/UnitySwappyWrapper.cpp.o	6102ae475a7cbc66
+0	400	1793022993817911279	FramePacing/CMakeFiles/swappywrapper.dir/UnitySwappyWrapper.cpp.o	6102ae475a7cbc66
+400	617	1793022994018660524	/Users/machome/Unity/Projects/kpunk-ios.worktrees/unity6-upgrade/Library/Bee/Android/Prj/IL2CPP/Gradle/unityLibrary/build/intermediates/cxx/RelWithDebInfo/4d2x4v1r/obj/arm64-v8a/libswappywrapper.so	fa5f592b3375edb3
