@@ -66,8 +66,10 @@ namespace ZPunk.DAW
         private Label title, info, selectedInfo;
         private VisualElement velocityFill, velocityThumb;
         private readonly List<VelocityDisplay> velocityDisplays = new List<VelocityDisplay>();
-        private VisualElement kitSelector;
-        private Label kitName;
+        private VisualElement kitSelector, trackScopeRow;
+        private Label kitName, trackScopeTitle, trackScopeStatus;
+        private ZPunkTrackScope trackScope;
+        private float nextTrackScopeSample;
         private KMusicDrumSequencer drumEngine;
         private ScrollView trackScroller;
         private KMusicProjectManager projects;
@@ -305,6 +307,43 @@ namespace ZPunk.DAW
             kitSelector.Add(nextKit);
             root.Add(kitSelector);
 
+            // Use the very same 50-point slot as the drum-kit selector, so
+            // switching tracks never shifts the note grid or changes touch areas.
+            // One audio-reactive identity display per BASS/SYNTH/PADS/CHOPS;
+            // the selected track alone is visible, each with its own history.
+            trackScopeRow = new VisualElement { name = "ZPunkCreateTrackSignal" };
+            trackScopeRow.style.height = 50;
+            trackScopeRow.style.minHeight = 50;
+            trackScopeRow.style.maxHeight = 50;
+            trackScopeRow.style.flexShrink = 0;
+            trackScopeRow.style.flexDirection = FlexDirection.Row;
+            trackScopeRow.style.alignItems = Align.Center;
+            trackScopeRow.style.marginTop = 2;
+            trackScopeRow.style.paddingLeft = 7;
+            trackScopeRow.style.paddingRight = 7;
+            trackScopeRow.style.backgroundColor = new Color(.061f, .084f, .122f);
+            trackScopeRow.style.borderTopLeftRadius = 6;
+            trackScopeRow.style.borderTopRightRadius = 6;
+            trackScopeRow.style.borderBottomLeftRadius = 6;
+            trackScopeRow.style.borderBottomRightRadius = 6;
+            trackScopeRow.pickingMode = PickingMode.Ignore;
+            var scopeLegend = new VisualElement();
+            scopeLegend.style.width = 74;
+            scopeLegend.style.flexShrink = 0;
+            scopeLegend.style.justifyContent = Justify.Center;
+            scopeLegend.pickingMode = PickingMode.Ignore;
+            trackScopeTitle = Txt("BASS", 10, colors[1]);
+            trackScopeTitle.style.unityFontStyleAndWeight = FontStyle.Bold;
+            trackScopeTitle.pickingMode = PickingMode.Ignore;
+            scopeLegend.Add(trackScopeTitle);
+            trackScopeStatus = Txt("SIGNAL", 10, Muted);
+            trackScopeStatus.pickingMode = PickingMode.Ignore;
+            scopeLegend.Add(trackScopeStatus);
+            trackScopeRow.Add(scopeLegend);
+            trackScope = new ZPunkTrackScope();
+            trackScopeRow.Add(trackScope);
+            root.Add(trackScopeRow);
+
             // Six equally sized controls fit a portrait phone on ONE row.
             // Never make the last buttons inaccessible through a hidden scroller.
             var controls = new VisualElement { name = "ZPunkNoteCommands" };
@@ -321,8 +360,8 @@ namespace ZPunk.DAW
             var lengthUp = EqualButton("LEN +", () => ChangeLength(1));
             var deleteNote = EqualButton("DEL", DeleteSelectedNote);
             generatorQuickButton = EqualButton("GEN", () => OpenGenerator(trackIndex));
-            ZPunkUIIcons.Apply(octaveDown, "down", "OCT -", 17f);
-            ZPunkUIIcons.Apply(octaveUp, "up", "OCT +", 17f);
+            ZPunkUIIcons.Apply(octaveDown, "up", "OCT -", 17f);
+            ZPunkUIIcons.Apply(octaveUp, "down", "OCT +", 17f);
             ZPunkUIIcons.Apply(lengthDown, "minus", "LEN -", 17f);
             ZPunkUIIcons.Apply(lengthUp, "plus", "LEN +", 17f);
             ZPunkUIIcons.Apply(deleteNote, "delete", "DEL", 17f);
@@ -1468,8 +1507,24 @@ namespace ZPunk.DAW
         private void RefreshKitSelector()
         {
             if (kitSelector == null) return;
-            // Visibility.Hidden reserves layout, unlike Display.None.
-            kitSelector.style.visibility = trackIndex == 0 ? Visibility.Visible : Visibility.Hidden;
+            // Exactly one slot remains visible at a time. Display.None prevents
+            // the inactive slot from taking another 50 points of screen height.
+            kitSelector.style.display = trackIndex == 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            if (trackScopeRow != null)
+                trackScopeRow.style.display = trackIndex > 0 && trackIndex < 5
+                    ? DisplayStyle.Flex : DisplayStyle.None;
+            if (trackScope != null && trackIndex > 0 && trackIndex < 5)
+            {
+                var color = colors[trackIndex];
+                trackScope.Select(trackIndex, color);
+                if (trackScopeTitle != null)
+                {
+                    trackScopeTitle.text = trackIndex == 1 ? "BASS" :
+                        trackIndex == 2 ? "SYNTH" : trackIndex == 3 ? "PADS" : "CHOPS";
+                    trackScopeTitle.style.color = color;
+                }
+            }
+            if (trackIndex != 0) return;
             FindDrumEngine();
             if (kitName != null) kitName.text = drumEngine != null ? drumEngine.DawKitName : "KIT UNAVAILABLE";
         }
@@ -1631,7 +1686,7 @@ namespace ZPunk.DAW
                 child.style.display = child == generatorPanel ? DisplayStyle.None :
                     child == samplerPage ? (value ? DisplayStyle.Flex : DisplayStyle.None) :
                     (value ? DisplayStyle.None : DisplayStyle.Flex);
-            if (!value) return;
+            if (!value) { RefreshKitSelector(); return; }
             FindSampler();
             samplePlayer?.DawPrepareSliceLab();
             if (samplerWave != null && samplerWave.childCount == 0)
@@ -3138,8 +3193,27 @@ namespace ZPunk.DAW
             if (!visible) lastPlayheadX = -1f;
         }
 
+        private void UpdateTrackScope()
+        {
+            if (!ready || trackScope == null || root == null || root.panel == null ||
+                root.resolvedStyle.display == DisplayStyle.None || showingSampler ||
+                song == null || song.tracks == null || trackIndex < 1 || trackIndex > 4 ||
+                Time.unscaledTime < nextTrackScopeSample) return;
+            nextTrackScopeSample = Time.unscaledTime + 1f / 24f;
+            if (songTransport == null) songTransport = FindObjectOfType<ZPunkSongTransport>();
+            if (drumEngine == null) FindDrumEngine();
+            // Reuse the identical audio-derived meter sources used by MIX.
+            // No native audio callbacks, DSP changes or generated motion.
+            float bass = songTransport != null ? songTransport.GetTrackPeak(1) : 0f;
+            float synth = songTransport != null ? songTransport.GetTrackPeak(2) : 0f;
+            float pads = songTransport != null ? songTransport.GetTrackPeak(3) : 0f;
+            float chops = drumEngine != null ? drumEngine.GetDAWChopPeak() : 0f;
+            trackScope.PushLevels(bass, synth, pads, chops);
+        }
+
         private void Update()
         {
+            UpdateTrackScope();
             KeepMidiDragViewportLocked();
             // Sample-key guidance must continue updating when the transport is stopped.
             FollowPitchedSampleKey();

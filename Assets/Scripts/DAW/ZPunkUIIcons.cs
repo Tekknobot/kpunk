@@ -28,10 +28,11 @@ namespace ZPunk.DAW
             button.style.flexDirection = stacked ? FlexDirection.Column : FlexDirection.Row;
             button.style.alignItems = Align.Center;
             button.style.justifyContent = Justify.Center;
-            // Give icon buttons a little more top breathing room so the icon+label
-            // stack sits more evenly inside the rounded button shell.
-            button.style.paddingTop = stacked && hasCaption ? 4 : 2;
-            button.style.paddingBottom = stacked && hasCaption ? 4 : 2;
+            // The label's glyph ascenders/descenders make a mathematically
+            // centred stack look high. Bias the WHOLE stack down slightly so the
+            // visible gap above the icon matches the gap below the caption.
+            button.style.paddingTop = stacked && hasCaption ? 7 : 2;
+            button.style.paddingBottom = stacked && hasCaption ? 1 : 2;
             button.style.whiteSpace = WhiteSpace.NoWrap;
             var icon = new Image
             {
@@ -44,7 +45,7 @@ namespace ZPunk.DAW
             icon.style.height = iconSize;
             icon.style.flexShrink = 0;
             icon.style.marginRight = stacked ? 0 : 5;
-            if (stacked && hasCaption) icon.style.marginTop = 1;
+            // No independent icon offset: centre the icon and caption as a unit.
             button.Add(icon);
             if (hasCaption)
             {
