@@ -65,6 +65,7 @@ namespace KMusic
         {
             get
             {
+                if (!string.IsNullOrEmpty(_legacyPresetRelPath)) return _legacyPresetRelPath;
                 if (_all != null && _all.Count > 0 && _index >= 0 && _index < _all.Count)
                     return _all[_index].relPath;
                 return ProjectPrefs.GetString(PrefKey_SynthPresetRelPath, "");
@@ -74,13 +75,23 @@ namespace KMusic
         private int _pendingPresetIndex = -1;
         private string _pendingPresetRelPath = null;
         private int _loadRevision; // latest selection wins over in-flight disk/APK reads
+        private string _legacyPresetRelPath; // Old Lead/Keys sound used by an existing project; not in curated browser.
+
+        private static bool IsLegacySynthPath(string path)
+        {
+            if (string.IsNullOrEmpty(path) || path.Contains("..") || path.Contains("\\") || path.StartsWith("/")) return false;
+            return path.EndsWith(".helm", StringComparison.OrdinalIgnoreCase) &&
+                (path.StartsWith("Lead/", StringComparison.OrdinalIgnoreCase) ||
+                 path.StartsWith("Keys/", StringComparison.OrdinalIgnoreCase));
+        }
 
         private void SaveCurrentPresetChoice()
         {
             if (_all == null || _all.Count == 0) return;
 
             ProjectPrefs.SetInt(PrefKey_SynthPresetIndex, _index);
-            ProjectPrefs.SetString(PrefKey_SynthPresetRelPath, _all[_index].relPath ?? "");
+            ProjectPrefs.SetString(PrefKey_SynthPresetRelPath, !string.IsNullOrEmpty(_legacyPresetRelPath)
+                ? _legacyPresetRelPath : (_all[_index].relPath ?? ""));
             ProjectPrefs.Save();
         }
 
@@ -90,6 +101,11 @@ namespace KMusic
 
             // Prefer relPath (stable if index file changes order)
             string want = ProjectPrefs.GetString(PrefKey_SynthPresetRelPath, "");
+            if (IsLegacySynthPath(want))
+            {
+                _legacyPresetRelPath = want;
+                return;
+            }
             if (!string.IsNullOrEmpty(want))
             {
                 for (int i = 0; i < _all.Count; i++)
@@ -185,11 +201,24 @@ namespace KMusic
             // Prefer relPath if provided.
             if (!string.IsNullOrEmpty(_pendingPresetRelPath))
             {
+                // Projects using older Lead/Keys presets retain the original sound.
+                // Bass/Pad paths are intentionally not permitted for the SYNTH engine.
+                if (IsLegacySynthPath(_pendingPresetRelPath))
+                {
+                    _legacyPresetRelPath = _pendingPresetRelPath;
+                    _pendingPresetIndex = -1;
+                    _pendingPresetRelPath = null;
+                    UpdatePatchUI();
+                    SaveCurrentPresetChoice();
+                    StartCoroutine(LoadAndApplyPreset(_legacyPresetRelPath));
+                    return;
+                }
                 for (int i = 0; i < _all.Count; i++)
                 {
                     if (string.Equals(_all[i].relPath, _pendingPresetRelPath, StringComparison.OrdinalIgnoreCase))
                     {
                         _index = i;
+                        _legacyPresetRelPath = null;
                         _pendingPresetIndex = -1;
                         _pendingPresetRelPath = null;
                         UpdatePatchUI();
@@ -206,6 +235,7 @@ namespace KMusic
 
             _pendingPresetIndex = -1;
             _pendingPresetRelPath = null;
+            _legacyPresetRelPath = null;
             UpdatePatchUI();
             SaveCurrentPresetChoice();
             StartCoroutine(LoadAndApplyPreset(_all[_index].relPath));
@@ -286,9 +316,9 @@ namespace KMusic
                 var clean = relLine.Trim().Replace("\\", "/");
                 if (string.IsNullOrEmpty(clean)) continue;
                 if (!clean.EndsWith(".helm", StringComparison.OrdinalIgnoreCase)) continue;
-                if (clean.StartsWith("SFX/", StringComparison.OrdinalIgnoreCase) ||
-                    clean.StartsWith("Percussion/", StringComparison.OrdinalIgnoreCase) ||
-                    clean.StartsWith("Harsh/", StringComparison.OrdinalIgnoreCase)) continue;
+                // Dedicated curated SYNTH bank only. The shared index still lists
+                // Bass/ and Pad/ for their independent synth engines.
+                if (!clean.StartsWith("Synth/", StringComparison.OrdinalIgnoreCase)) continue;
 
                 _all.Add(new PresetEntry
                 {
@@ -320,12 +350,14 @@ namespace KMusic
             UpdatePatchUI();
 
             // auto-load current
-            yield return LoadAndApplyPreset(_all[_index].relPath);
+            yield return LoadAndApplyPreset(!string.IsNullOrEmpty(_legacyPresetRelPath)
+                ? _legacyPresetRelPath : _all[_index].relPath);
         }
 
         private void OnPrev()
         {
             if (_all.Count == 0) return;
+            _legacyPresetRelPath = null;
             _index = (_index - 1 + _all.Count) % _all.Count;
             UpdatePatchUI();
             SaveCurrentPresetChoice();
@@ -335,6 +367,7 @@ namespace KMusic
         private void OnNext()
         {
             if (_all.Count == 0) return;
+            _legacyPresetRelPath = null;
             _index = (_index + 1) % _all.Count;
             UpdatePatchUI();
             SaveCurrentPresetChoice();
@@ -344,7 +377,8 @@ namespace KMusic
         private void OnReload()
         {
             if (_all.Count == 0) return;
-            StartCoroutine(LoadAndApplyPreset(_all[_index].relPath));
+            StartCoroutine(LoadAndApplyPreset(!string.IsNullOrEmpty(_legacyPresetRelPath)
+                ? _legacyPresetRelPath : _all[_index].relPath));
         }
 
         private void UpdatePatchUI()
@@ -358,8 +392,16 @@ namespace KMusic
                 return;
             }
 
-            _patchNameLabel.text = _all[_index].display;
-            _indexLabel.text = $"{_index + 1} / {_all.Count}";
+            if (!string.IsNullOrEmpty(_legacyPresetRelPath))
+            {
+                _patchNameLabel.text = NiceNameFromPath(_legacyPresetRelPath) + " (Legacy)";
+                _indexLabel.text = "LEGACY";
+            }
+            else
+            {
+                _patchNameLabel.text = _all[_index].display;
+                _indexLabel.text = $"{_index + 1} / {_all.Count}";
+            }
         }
 
         private IEnumerator LoadAndApplyPreset(string relPath)
@@ -472,7 +514,8 @@ namespace KMusic
                 ? relPath.Substring(0, relPath.Length - 5)
                 : relPath;
 
-            return noExt.Replace("/", " / ");
+            return noExt.StartsWith("Synth/", StringComparison.OrdinalIgnoreCase)
+                ? noExt.Substring(6) : noExt.Replace("/", " / ");
         }
 
         private static string StreamingAssetPath(string relativePath)

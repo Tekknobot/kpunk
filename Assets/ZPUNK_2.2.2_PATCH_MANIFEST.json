@@ -1,0 +1,256 @@
+{
+  "synth_existing_balanced": 30,
+  "synth_added": 15,
+  "synth_total": 45,
+  "bass_added": 24,
+  "pad_added": 20,
+  "total_indexed": 397,
+  "synth_gain_changes": [
+    [
+      "ZOR 90s Arcade Poly.helm",
+      0.62,
+      0.75,
+      0.892
+    ],
+    [
+      "ZOR 90s Dream Trance Keys.helm",
+      0.62,
+      0.75,
+      0.696
+    ],
+    [
+      "ZOR 90s Funk Clav.helm",
+      0.62,
+      0.75,
+      0.927
+    ],
+    [
+      "ZOR 90s Synth Trumpet.helm",
+      0.62,
+      0.75,
+      1.045
+    ],
+    [
+      "ZOR Breakbeat Keys.helm",
+      0.62,
+      0.79,
+      0.59
+    ],
+    [
+      "ZOR Chicago Organ House.helm",
+      0.62,
+      0.75,
+      1.0
+    ],
+    [
+      "ZOR Classic Digital Organ.helm",
+      0.62,
+      0.75,
+      0.656
+    ],
+    [
+      "ZOR Dancefloor Poly Brass.helm",
+      0.62,
+      0.75,
+      0.752
+    ],
+    [
+      "ZOR Deep House Poly.helm",
+      0.62,
+      0.68,
+      1.165
+    ],
+    [
+      "ZOR Detroit Stab.helm",
+      0.62,
+      0.68,
+      1.195
+    ],
+    [
+      "ZOR Dream House Pluck.helm",
+      0.62,
+      0.75,
+      0.77
+    ],
+    [
+      "ZOR Early Rave Stab.helm",
+      0.62,
+      0.75,
+      0.691
+    ],
+    [
+      "ZOR Euro Pop Glass.helm",
+      0.62,
+      0.79,
+      0.36
+    ],
+    [
+      "ZOR Euro Rave Chime.helm",
+      0.62,
+      0.75,
+      0.804
+    ],
+    [
+      "ZOR Eurodance Brass.helm",
+      0.62,
+      0.75,
+      0.825
+    ],
+    [
+      "ZOR FM Glass Keys.helm",
+      0.62,
+      0.68,
+      1.213
+    ],
+    [
+      "ZOR Happy Hardcore Keys.helm",
+      0.62,
+      0.75,
+      0.762
+    ],
+    [
+      "ZOR Italo Disco Poly.helm",
+      0.62,
+      0.75,
+      1.052
+    ],
+    [
+      "ZOR Juno Poly Chords.helm",
+      0.62,
+      0.68,
+      1.255
+    ],
+    [
+      "ZOR M1 Dance Keys.helm",
+      0.68,
+      0.75,
+      0.653
+    ],
+    [
+      "ZOR Old School Digital Pluck.helm",
+      0.62,
+      0.75,
+      1.14
+    ],
+    [
+      "ZOR Old School House Keys.helm",
+      0.62,
+      0.75,
+      0.961
+    ],
+    [
+      "ZOR Rave Bell Stab.helm",
+      0.62,
+      0.75,
+      0.705
+    ],
+    [
+      "ZOR Rave Organ Stab.helm",
+      0.62,
+      0.75,
+      0.676
+    ],
+    [
+      "ZOR Rave Piano House.helm",
+      0.62,
+      0.75,
+      0.762
+    ],
+    [
+      "ZOR Rave Supersaw Stack.helm",
+      0.58,
+      0.68,
+      1.187
+    ],
+    [
+      "ZOR Rhodes Style Poly.helm",
+      0.62,
+      0.75,
+      1.128
+    ],
+    [
+      "ZOR Trance Poly Hook.helm",
+      0.56,
+      0.75,
+      0.894
+    ],
+    [
+      "ZOR UK Garage Chords.helm",
+      0.62,
+      0.75,
+      0.947
+    ],
+    [
+      "ZOR Warehouse Chords.helm",
+      0.62,
+      0.68,
+      1.237
+    ]
+  ],
+  "bass_new_paths": [
+    "Bass/ZOR Techno 909 Rubber.helm",
+    "Bass/ZOR Techno Warehouse Pulse.helm",
+    "Bass/ZOR Techno Detroit Sub.helm",
+    "Bass/ZOR Techno Acid 303.helm",
+    "Bass/ZOR Techno Motor City FM.helm",
+    "Bass/ZOR Techno Berlin Resonance.helm",
+    "Bass/ZOR HipHop Boom Bap Sub.helm",
+    "Bass/ZOR HipHop Dusty Moog.helm",
+    "Bass/ZOR HipHop 90s Round.helm",
+    "Bass/ZOR HipHop West Coast Glide.helm",
+    "Bass/ZOR HipHop Soft 808 Tail.helm",
+    "Bass/ZOR HipHop East Coast Pluck.helm",
+    "Bass/ZOR French House Disco Filter.helm",
+    "Bass/ZOR French House Saturated Pick.helm",
+    "Bass/ZOR French House Funk Octave.helm",
+    "Bass/ZOR French House Chic Pulse.helm",
+    "Bass/ZOR French House Rubber Disco.helm",
+    "Bass/ZOR French House Analog Funk.helm",
+    "Bass/ZOR Classic House Deep Rounded.helm",
+    "Bass/ZOR Classic House Jackin Bounce.helm",
+    "Bass/ZOR Classic House Chicago Organ Bass.helm",
+    "Bass/ZOR Classic House NYC Garage.helm",
+    "Bass/ZOR Classic House Octave Pulse.helm",
+    "Bass/ZOR Classic House Diva Pluck.helm"
+  ],
+  "pad_new_paths": [
+    "Pad/ZOR Techno Industrial Haze.helm",
+    "Pad/ZOR Techno Detroit Strings.helm",
+    "Pad/ZOR Techno Hypnotic Pulse.helm",
+    "Pad/ZOR Techno Acid Atmosphere.helm",
+    "Pad/ZOR Techno Midnight Drone.helm",
+    "Pad/ZOR HipHop Dusty Tape Keys.helm",
+    "Pad/ZOR HipHop Vinyl Dreams.helm",
+    "Pad/ZOR HipHop Neo Soul Clouds.helm",
+    "Pad/ZOR HipHop Boom Bap Strings.helm",
+    "Pad/ZOR HipHop West Coast Sunset.helm",
+    "Pad/ZOR French House Disco Strings.helm",
+    "Pad/ZOR French House Filtered Air.helm",
+    "Pad/ZOR French House Paris Chorus.helm",
+    "Pad/ZOR French House Analog Champagne.helm",
+    "Pad/ZOR French House Funk Machine.helm",
+    "Pad/ZOR Classic House Garage Velvet.helm",
+    "Pad/ZOR Classic House 90s Warm Strings.helm",
+    "Pad/ZOR Classic House Chicago Organ Bed.helm",
+    "Pad/ZOR Classic House Deep Mist.helm",
+    "Pad/ZOR Classic House Piano Afterglow.helm"
+  ],
+  "synth_new_paths": [
+    "Synth/ZOR 90s Piano Chord Stab.helm",
+    "Synth/ZOR French Touch Filter Keys.helm",
+    "Synth/ZOR Progressive House Organ.helm",
+    "Synth/ZOR Eurodance Pulse Chords.helm",
+    "Synth/ZOR Trance Anthem Poly.helm",
+    "Synth/ZOR Acid House Poly Stab.helm",
+    "Synth/ZOR Garage Hollow Keys.helm",
+    "Synth/ZOR Rave Orchestra Hit.helm",
+    "Synth/ZOR Digital Marimba 1995.helm",
+    "Synth/ZOR FM Electric Rain.helm",
+    "Synth/ZOR Detroit Minor Ninth.helm",
+    "Synth/ZOR Breakbeat Chord Punch.helm",
+    "Synth/ZOR Italo Chorus Chords.helm",
+    "Synth/ZOR Chicago Gospel Organ.helm",
+    "Synth/ZOR Jungle Atmospheric Keys.helm"
+  ],
+  "display_label_update": "Bass/ and Pad/ directory names removed from UI labels; ZOR retained; file paths unchanged"
+}

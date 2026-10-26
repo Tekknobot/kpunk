@@ -66,6 +66,17 @@ namespace KMusic
         private Label _indexLabel;
         private readonly List<PresetEntry> _all = new();
         private int _index;
+        // An older project may refer to an original Pad/ file. Keep its sound
+        // without including factory patches in the curated Patch +/- browsing list.
+        private string _legacyPresetRelPath;
+        private static bool IsLegacyPadPath(string relPath)
+        {
+            if (string.IsNullOrEmpty(relPath) || relPath.Contains("..") ||
+                relPath.Contains("\\") || relPath.StartsWith("/")) return false;
+            return relPath.StartsWith("Pad/", StringComparison.OrdinalIgnoreCase) &&
+                relPath.EndsWith(".helm", StringComparison.OrdinalIgnoreCase) &&
+                !relPath.StartsWith("Pad/ZOR ", StringComparison.OrdinalIgnoreCase);
+        }
         private HelmPatch _runtimePatch;
 
         public event Action<int, string> PresetApplied;
@@ -78,6 +89,7 @@ namespace KMusic
         {
             get
             {
+                if (!string.IsNullOrEmpty(_legacyPresetRelPath)) return _legacyPresetRelPath;
                 if (_all != null && _all.Count > 0 && _index >= 0 && _index < _all.Count)
                     return _all[_index].relPath;
 
@@ -671,6 +683,8 @@ public void ApplyMasterVolume(float normalized)
         private void OnPrev()
         {
             if (_all.Count == 0) return;
+            if (!string.IsNullOrEmpty(_legacyPresetRelPath)) _index = 1;
+            _legacyPresetRelPath = null;
             _index = (_index - 1 + _all.Count) % _all.Count;
             UpdatePatchUI();
             SaveCurrentPresetChoice();
@@ -680,6 +694,8 @@ public void ApplyMasterVolume(float normalized)
         private void OnNext()
         {
             if (_all.Count == 0) return;
+            if (!string.IsNullOrEmpty(_legacyPresetRelPath)) _index = _all.Count - 1;
+            _legacyPresetRelPath = null;
             _index = (_index + 1) % _all.Count;
             UpdatePatchUI();
             SaveCurrentPresetChoice();
@@ -691,7 +707,8 @@ public void ApplyMasterVolume(float normalized)
             if (_all == null || _all.Count == 0) return;
 
             ProjectPrefs.SetInt(PrefKey_PadPresetIndex, _index);
-            ProjectPrefs.SetString(PrefKey_PadPresetRelPath, _all[_index].relPath ?? "");
+            ProjectPrefs.SetString(PrefKey_PadPresetRelPath, !string.IsNullOrEmpty(_legacyPresetRelPath)
+                ? _legacyPresetRelPath : (_all[_index].relPath ?? ""));
             ProjectPrefs.Save();
         }
 
@@ -702,7 +719,9 @@ public void ApplyMasterVolume(float normalized)
                 Debug.LogWarning("[ZPunk Pads] No preset index loaded yet; check HelmPresets/presets_index.txt.");
                 return;
             }
-            int next = ((_index + delta) % _all.Count + _all.Count) % _all.Count;
+            int next = !string.IsNullOrEmpty(_legacyPresetRelPath)
+                ? (delta >= 0 ? 0 : _all.Count - 1)
+                : ((_index + delta) % _all.Count + _all.Count) % _all.Count;
             ApplyPresetChoice(next, null);
         }
 
@@ -721,11 +740,22 @@ public void ApplyMasterVolume(float normalized)
 
             if (!string.IsNullOrEmpty(_pendingPresetRelPath))
             {
+                if (IsLegacyPadPath(_pendingPresetRelPath))
+                {
+                    _legacyPresetRelPath = _pendingPresetRelPath;
+                    _pendingPresetIndex = -1;
+                    _pendingPresetRelPath = null;
+                    UpdatePatchUI();
+                    SaveCurrentPresetChoice();
+                    StartCoroutine(LoadAndApplyPreset(_legacyPresetRelPath));
+                    return;
+                }
                 for (int i = 0; i < _all.Count; i++)
                 {
                     if (string.Equals(_all[i].relPath, _pendingPresetRelPath, StringComparison.OrdinalIgnoreCase))
                     {
                         _index = i;
+                        _legacyPresetRelPath = null;
                         _pendingPresetIndex = -1;
                         _pendingPresetRelPath = null;
                         UpdatePatchUI();
@@ -739,6 +769,7 @@ public void ApplyMasterVolume(float normalized)
             if (_pendingPresetIndex >= 0)
                 _index = Mathf.Clamp(_pendingPresetIndex, 0, _all.Count - 1);
 
+            _legacyPresetRelPath = null;
             _pendingPresetIndex = -1;
             _pendingPresetRelPath = null;
             UpdatePatchUI();
@@ -751,6 +782,11 @@ public void ApplyMasterVolume(float normalized)
             if (_all.Count == 0) return;
 
             string want = ProjectPrefs.GetString(PrefKey_PadPresetRelPath, "");
+            if (IsLegacyPadPath(want))
+            {
+                _legacyPresetRelPath = want;
+                return;
+            }
             if (!string.IsNullOrEmpty(want))
             {
                 for (int i = 0; i < _all.Count; i++)
@@ -777,6 +813,12 @@ public void ApplyMasterVolume(float normalized)
                 return;
             }
 
+            if (!string.IsNullOrEmpty(_legacyPresetRelPath))
+            {
+                _patchNameLabel.text = NiceNameFromPath(_legacyPresetRelPath) + " (Legacy)";
+                _indexLabel.text = "LEGACY";
+                return;
+            }
             _patchNameLabel.text = _all[_index].display;
             _indexLabel.text = $"{_index + 1} / {_all.Count}";
         }
@@ -802,7 +844,7 @@ public void ApplyMasterVolume(float normalized)
                 // Bass, percussion, or arpeggiator patches.
                 if (string.IsNullOrEmpty(clean) ||
                     !clean.EndsWith(".helm", StringComparison.OrdinalIgnoreCase) ||
-                    !clean.StartsWith("Pad/", StringComparison.OrdinalIgnoreCase))
+                    !clean.StartsWith("Pad/ZOR ", StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 _all.Add(new PresetEntry
@@ -827,7 +869,8 @@ public void ApplyMasterVolume(float normalized)
             RestorePresetChoice();
             _index = Mathf.Clamp(_index, 0, _all.Count - 1);
             UpdatePatchUI();
-            yield return LoadAndApplyPreset(_all[_index].relPath);
+            yield return LoadAndApplyPreset(!string.IsNullOrEmpty(_legacyPresetRelPath)
+                ? _legacyPresetRelPath : _all[_index].relPath);
         }
 
         private IEnumerator LoadAndApplyPreset(string relPath)
@@ -890,7 +933,10 @@ public void ApplyMasterVolume(float normalized)
             string noExt = relPath.EndsWith(".helm", StringComparison.OrdinalIgnoreCase)
                 ? relPath.Substring(0, relPath.Length - 5)
                 : relPath;
-            return noExt.Replace("/", " / ");
+            // Display the filename, not the folder. Keep its ZOR brand prefix.
+            // Example: Pad/ZOR Techno Detroit Strings.helm -> ZOR Techno Detroit Strings
+            int slash = noExt.LastIndexOf('/');
+            return slash >= 0 ? noExt.Substring(slash + 1) : noExt;
         }
 
         private static string StreamingAssetPath(string relativePath)
