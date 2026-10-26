@@ -1,0 +1,54 @@
+ZPUNK 2.2.0 - MIDI GENERATION PATCH
+==================================
+
+REPLACE
+  Assets/Scripts/DAW/ZPunkGenreGenerator.cs
+with the included ZPunkGenreGenerator.cs.
+Keep a backup of the existing file.
+
+WHAT CHANGED
+- New deterministic, multi-candidate MIDI generation path (12 candidates ranked
+  before the chosen phrase is humanized).
+- Common, variation-independent chord-degree plan shared by BASS, SYNTH and PADS.
+  Existing progression choices 0-8 and optional external harmony inputs preserved.
+- Six distinct melodic contour vocabularies, genre/style-specific rhythms and
+  two-/four-bar question-answer phrase development.
+- BASS-specific phrase generation with genre/style-specific rhythmic patterns,
+  restrained chromatic lead-ins, rests, fifths, octaves and chord tones.
+- New whole-chord voicing search and varying PADS/chord articulation. Long pad
+  holds may cross bar boundaries when the same harmony continues.
+- MIDI now preserves intended offbeat placements. Short opening notes are
+  inserted where needed instead of shifting the entire phrase to tick zero.
+- Bass anticipates the chord actually reached by the looping 1-, 2- or 4-bar
+  clip, not an unreachable next chord in a longer progression.
+- The DRUMS generation method remains byte-for-byte unchanged, and its original
+  humanization/alignment path is preserved.
+- Public Fill method signature and existing generation tag format maintained.
+
+CHECKS PERFORMED
+- C# lexical/bracket structural checks passed.
+- Verified DRUMS method byte-for-byte against the supplied original.
+- Validated all extracted SYNTH, BASS and chord rhythm preset step arrays.
+- Inspected key loop, tick-zero and chord-progression integration paths.
+
+NOT YET VERIFIED
+- No Unity project or its SongData definitions were included with the single
+  generator source file. This patch has NOT been built in Unity or run in IL2CPP.
+- Audible quality and runtime responsiveness still require testing on devices.
+- Integration with the saved-variation UI must be checked in your application.
+
+RECOMMENDED SMOKE TESTS
+1. Build in Unity 6 and confirm no C# compile errors.
+2. For each genre and style, generate 10 variations of SYNTH melody, SYNTH
+   chords, BASS and PADS at 4 bars. Compare phrase diversity and musical fit.
+3. In HOUSE CLASSIC, verify chord stabs remain offbeat after Generate and reload.
+4. Choose the same explicit progression for BASS/SYNTH/PADS; check chord
+   synchronization even if their variation numbers are different.
+5. Try 1-, 2-, 4-bar loops: make sure bass pickups lead to the actual loop root.
+6. Check a long TECHNO MINIMAL pad in a two-bar repeated-chord loop.
+7. Verify saved generations, MIDI export, manual note edits and clip duplication.
+8. Verify original DRUMS feel is unaffected, particularly HOUSE kick/hats.
+9. Measure generation latency on a lower-end Android device before release.
+
+Design note: This is an expanded deterministic MIDI composer with rule-based
+candidate ranking, not a learned music model or a measured Unison-equivalent.

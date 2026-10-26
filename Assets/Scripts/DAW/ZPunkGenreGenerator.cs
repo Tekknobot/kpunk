@@ -90,40 +90,43 @@ namespace ZPunk.DAW
             clip.notes.Clear();
             if (clip.chops != null) clip.chops.Clear();
             int seed = unchecked(variation * 104729 + genre * 3659 + style * 1619 + (int)kind * 307 + key * 47 + (minor ? 173 : 97));
-            var rng = new Random(seed);
-            int[][] chordVoices = new int[bars][];
-            int[] chosenDegrees = ProgressionFor(genre, minor, progressionChoice);
-            for (int bar = 0; bar < bars; bar++)
+            if (kind == TrackKind.Drums)
             {
-                if (kind == TrackKind.Drums) { GenerateDrums(clip, genre, style, bar, bars, variation, rng); continue; }
-                int progressionBar = Mod(bar + progressionBarOffset, chosenDegrees.Length);
-                int degree = progressionChoice > 0
-                    ? chosenDegrees[progressionBar]
-                    : harmonyDegrees != null && bar < harmonyDegrees.Length && harmonyDegrees[bar] >= 0
-                        ? harmonyDegrees[bar] : chosenDegrees[bar % chosenDegrees.Length];
-                int nextDegree = progressionChoice > 0
-                    ? chosenDegrees[Mod(bar + progressionBarOffset + 1, chosenDegrees.Length)]
-                    : harmonyDegrees != null && (bar + 1) % bars < harmonyDegrees.Length && harmonyDegrees[(bar + 1) % bars] >= 0
-                        ? harmonyDegrees[(bar + 1) % bars] : chosenDegrees[((bar + 1) % bars) % chosenDegrees.Length];
-                if (kind == TrackKind.Bass) GenerateBass(clip, genre, style, bar, bars, degree, key, minor, variation, rng,
-                    nextDegree);
-                else if (kind == TrackKind.Pads || (kind == TrackKind.Synth && synthChords))
-                {
-                    // Use actual semitones of the current chord, not the tonic triad transposed
-                    // mechanically. Nearby inversion choices keep successive bars connected.
-                    int[] previous = bar > 0 ? chordVoices[bar - 1] : null;
-                    bool pads = kind == TrackKind.Pads;
-                    chordVoices[bar] = VoiceChord(degree, key, minor, genre, style, pads, previous);
-                    GenerateHarmony(clip, genre, style, bar, pads, chordVoices[bar], variation, rng);
-                }
-                else GenerateMelody(clip, genre, style, bar, degree, key, minor, variation, rng,
-                    harmonyVoices != null && bar < harmonyVoices.Length ? harmonyVoices[bar] : null);
+                // DRUMS deliberately keep the established 2.1.x generation path.
+                var drumRng = new Random(seed);
+                for (int bar = 0; bar < bars; bar++)
+                    GenerateDrums(clip, genre, style, bar, bars, variation, drumRng);
+                AlignToStart(clip);
             }
-            // Some styles begin with an intentional offbeat. Generated clip content,
-            // however, must start at local tick zero: otherwise the piano roll and
-            // the arrangement can show an unwanted empty lead-in. Shift the whole
-            // phrase, preserving every note's relative timing and duration.
-            AlignToStart(clip);
+            else
+            {
+                int[] harmony = MakeHarmonyPlan(bars, genre, minor, progressionChoice,
+                                                 progressionBarOffset, harmonyDegrees);
+                List<NoteEvent> bestNotes = null;
+                double bestScore = double.MinValue;
+                // All candidates are deterministic and editable. Score BEFORE
+                // humanization; expressive jitter should not dictate composition.
+                const int CandidateCount = 12;
+                for (int candidate = 0; candidate < CandidateCount; candidate++)
+                {
+                    clip.notes.Clear();
+                    var candidateRng = new Random(CandidateSeed(seed, candidate, harmony, bars));
+                    GenerateMidiCandidate(clip, kind, genre, style, bars, key, minor,
+                                          harmony, synthChords, harmonyVoices, candidateRng);
+                    double score = ScoreCandidate(clip, kind, genre, style, minor, key,
+                                                  harmony, synthChords && kind == TrackKind.Synth,
+                                                  harmonyVoices);
+                    if (bestNotes == null || score > bestScore)
+                    {
+                        bestScore = score;
+                        bestNotes = CopyNotes(clip.notes);
+                    }
+                }
+                clip.notes.Clear();
+                if (bestNotes != null) clip.notes.AddRange(bestNotes);
+                // IMPORTANT: Never call AlignToStart for new MIDI. Moving a whole
+                // phrase makes HOUSE offbeat stabs land on kick downbeats.
+            }
             // Apply expressive timing after the quantized musical patterns are built.
             // The seed keeps rerendering, Undo/history and exported MIDI repeatable.
             HumanizePhrase(clip, kind, genre, style, variation, seed);
@@ -247,9 +250,9 @@ namespace ZPunk.DAW
             if (g == 1) return minor ? new[] { 0, 3, 5, 4 } : new[] { 0, 3, 5, 4 };
             if (g == 2) return new[] { 0, 0, 0, 4 };
             if (g == 3) return minor ? new[] { 0, 5, 3, 4 } : new[] { 0, 5, 1, 4 };
-            // Funk stays close to the tonic; the last bar turns toward the dominant.
-            if (g == 5) return minor ? new[] { 0, 5, 3, 4 } : new[] { 0, 3, 4, 3 };
-            return minor ? new[] { 0, 0, 3, 4 } : new[] { 0, 0, 3, 4 };
+            // FUNK holds a tonic-centered pocket, FRENCH HOUSE moves like disco.
+            if (g == 4) return minor ? new[] { 0, 0, 3, 4 } : new[] { 0, 0, 3, 4 };
+            return minor ? new[] { 0, 5, 3, 4 } : new[] { 0, 3, 4, 3 };
         }
         private static int Scale(int degree, bool minor)
         {
@@ -379,377 +382,595 @@ namespace ZPunk.DAW
             }
         }
 
-        private static void Note(ClipContentData c, int bar, int step, int duration,
-                                 int pitch, int velocity, Random r)
+        // 2.2.0: A single harmonic plan feeds three different MIDI composers. The plan is
+        // independent of track kind and variation, so separately generated tracks agree.
+        private static int[] MakeHarmonyPlan(int bars, int g, bool minor, int choice,
+                                             int offset, int[] supplied)
         {
-            if (step < 0 || step > 15 || duration < 1) return;
-            long tick = bar * SongData.TicksPerBar4 + step * SongData.TicksPerSixteenth;
-            // Prevent doubled same-pitch MIDI notes when a turnaround and the
-            // underlying style both schedule the same sixteenth.
-            foreach (var existing in c.notes)
-                if (existing.startTick == tick && existing.pitch == pitch) return;
-            c.notes.Add(new NoteEvent {
-                startTick = tick,
-                durationTicks = Math.Min(16 - step, duration) * SongData.TicksPerSixteenth,
-                pitch = Clamp(pitch, 0, 127), velocity = Clamp(velocity + r.Next(-5, 6), 25, 127)
-            });
+            int[] selected = ProgressionFor(g, minor, choice);
+            int[] plan = new int[bars];
+            for (int bar = 0; bar < bars; bar++)
+            {
+                if (choice == 0 && supplied != null && bar < supplied.Length && supplied[bar] >= 0)
+                    plan[bar] = Mod(supplied[bar], 7);
+                else
+                    plan[bar] = selected[Mod(bar + offset, selected.Length)];
+            }
+            return plan;
         }
-        // Expressive, playable funk/disco-inspired bass. Style templates keep the
-        // original genres recognisable; variation changes accents, fills and octave
-        // choices rather than scattering unmusical random notes across the scale.
-        private static int ApproachBass(int nextRoot, int currentRoot)
+
+        private static int CandidateSeed(int originalSeed, int candidate, int[] harmony, int bars)
         {
-            // Leading chromatic pickup, kept in the normal bass register.
-            int target = nextRoot;
-            while (target - currentRoot > 7) target -= 12;
-            while (currentRoot - target > 7) target += 12;
-            int approach = target - 1;
-            return approach < 35 ? approach + 12 : approach;
+            unchecked
+            {
+                int h = originalSeed ^ (candidate + 1) * 0x45d9f3b ^ bars * 1013;
+                for (int i = 0; i < harmony.Length; i++) h = h * 16777619 ^ harmony[i];
+                return h;
+            }
+        }
+
+        private static List<NoteEvent> CopyNotes(List<NoteEvent> notes)
+        {
+            var copy = new List<NoteEvent>(notes.Count);
+            foreach (var n in notes)
+                copy.Add(new NoteEvent { startTick = n.startTick, durationTicks = n.durationTicks,
+                    pitch = n.pitch, velocity = n.velocity });
+            return copy;
+        }
+
+        private static void GenerateMidiCandidate(ClipContentData clip, TrackKind kind, int g, int s,
+                                                  int bars, int key, bool minor,
+                                                  int[] harmony, bool synthChords,
+                                                  int[][] harmonyVoices, Random r)
+        {
+            int motif = r.Next(0, 16);
+            int rhythm = r.Next(0, 4);
+            int character = r.Next(0, 5);
+            int[] previousVoicing = null;
+            for (int bar = 0; bar < bars; bar++)
+            {
+                int degree = harmony[bar];
+                int nextDegree = harmony[(bar + 1) % bars]; // Actual loop destination.
+                if (kind == TrackKind.Bass)
+                    ComposeBass(clip, g, s, bar, bars, key, minor, degree, nextDegree,
+                                motif, rhythm, character, r);
+                else if (kind == TrackKind.Pads || (kind == TrackKind.Synth && synthChords))
+                {
+                    bool pads = kind == TrackKind.Pads;
+                    // A two-bar held pad can span a bar line when the harmony stays put.
+                    if (pads && bar > 0 && bar % 2 == 1 && harmony[bar - 1] == degree &&
+                        character % 2 == 0)
+                        continue;
+                    int[] chord = ComposeVoicing(degree, key, minor, g, s, pads, character,
+                                                 previousVoicing, r);
+                    ComposeChordRhythm(clip, g, s, bar, bars, degree, harmony, pads,
+                                       chord, rhythm, character, r);
+                    previousVoicing = chord;
+                }
+                else
+                    ComposeMelody(clip, g, s, bar, bars, key, minor, degree, motif, rhythm,
+                                  character, harmonyVoices != null && bar < harmonyVoices.Length
+                                  ? harmonyVoices[bar] : null, r);
+            }
+            // The first event is at tick zero without moving offbeat hits to the kick.
+            // Use a short, harmonically valid opening pickup if a genre begins later.
+            EnsureLocalStart(clip, kind, harmony[0], key, minor, g, synthChords, r);
+        }
+
+        private static void AddMidi(ClipContentData clip, int bar, int step, int stepsLong,
+                                    int pitch, int velocity, Random r)
+        {
+            if (bar < 0 || step < 0 || step >= 16 || stepsLong < 1) return;
+            long start = (long)bar * SongData.TicksPerBar4 + (long)step * SongData.TicksPerSixteenth;
+            if (start >= clip.lengthTicks) return;
+            pitch = Clamp(pitch, 0, 127);
+            foreach (var n in clip.notes)
+                if (n.pitch == pitch && n.startTick == start) return;
+            long duration = Math.Min((long)stepsLong * SongData.TicksPerSixteenth,
+                                     clip.lengthTicks - start);
+            if (duration <= 0) return;
+            clip.notes.Add(new NoteEvent { startTick = start, durationTicks = duration,
+                pitch = pitch, velocity = Clamp(velocity + r.Next(-4, 5), 25, 127) });
+        }
+
+        private static void EnsureLocalStart(ClipContentData c, TrackKind kind, int degree,
+                                             int key, bool minor, int g, bool synthChords, Random r)
+        {
+            if (c.notes.Count == 0) return;
+            foreach (var n in c.notes) if (n.startTick == 0) return;
+            int pitch;
+            int velocity;
+            if (kind == TrackKind.Bass)
+            {
+                pitch = BassRoot(key, degree, minor);
+                velocity = 81;
+            }
+            else if (kind == TrackKind.Pads || synthChords)
+            {
+                // Keep the original offbeat stabs, inserting only a quiet anticipation.
+                pitch = Pitch(kind == TrackKind.Pads ? 48 : 60, key, degree + 2, minor);
+                pitch = FoldPitch(pitch, kind == TrackKind.Pads ? 62 : 69, 53, 79);
+                velocity = kind == TrackKind.Pads ? 49 : 54;
+            }
+            else
+            {
+                pitch = FoldPitch(Pitch(60, key, degree, minor), 69, 60, 82);
+                velocity = 67;
+            }
+            AddMidi(c, 0, 0, 1, pitch, velocity, r);
+        }
+
+        private static int FoldPitch(int note, int target, int low, int high)
+        {
+            int best = Clamp(note, low, high), bestDist = int.MaxValue;
+            for (int shift = -48; shift <= 48; shift += 12)
+            {
+                int candidate = note + shift;
+                if (candidate < low || candidate > high) continue;
+                int d = Math.Abs(candidate - target);
+                if (d < bestDist) { best = candidate; bestDist = d; }
+            }
+            return best;
         }
 
         private static int BassRoot(int key, int degree, bool minor)
         {
             int pitch = Pitch(36, key, degree, minor);
-            while (pitch > 59) pitch -= 12;
+            while (pitch >= 48) pitch -= 12;
             while (pitch < 36) pitch += 12;
-            // Prefer nearby low-mid inversions of progression notes rather than
-            // dropping back to the sub octave at each chord change.
-            if (pitch >= 48) pitch -= 12;
             return pitch;
         }
 
-        private static void GenerateBass(ClipContentData c, int g, int s, int bar, int bars,
-                                         int degree, int key, bool minor, int variation, Random r, int nextHarmonyDegree = -1)
+        private static int BassApproach(int current, int target)
         {
-            // MIDI note 36 is C2 (60 is C4). Keep the main bass around
-            // C2-B2; A2 is MIDI 45 / 110 Hz. Lower octaves remain available
-            // when the user edits a clip for dedicated sub-bass parts.
-            int root = BassRoot(key, degree, minor);
-            int fifth = Scale(degree + 4, minor) - Scale(degree, minor);
-            int seventh = Scale(degree + 6, minor) - Scale(degree, minor);
-            int family = Mod(variation - 1, 4);
-            bool answer = (bar & 1) != 0;
-            // Approach the chord which actually follows in THIS clip, including
-            // the return to its beginning when 1/2/4-bar clips loop.
-            int nextDegree = nextHarmonyDegree >= 0 ? nextHarmonyDegree : Progression(g, minor)[(bar + 1) % bars];
-            int nextRoot = BassRoot(key, nextDegree, minor);
-            if (g == 0) // BOOM BAP: warm, behind-the-beat syncopation and small pickups.
+            while (target - current > 7) target -= 12;
+            while (current - target > 7) target += 12;
+            return Clamp(target + (target > current ? -1 : 1), 35, 59);
+        }
+
+        // Rhythm vocabularies define genre, while seed, register, contour and phrase
+        // development make *different compositions*, not four recycled templates.
+        private static int[][] MelodyRhythms(int g, int s)
+        {
+            if (g == 0) return s == 1
+                ? new[] { new[] { 0, 8, 13 }, new[] { 0, 6, 12 }, new[] { 0, 7, 11, 14 }, new[] { 0, 5, 10 } }
+                : new[] { new[] { 0, 5, 10, 14 }, new[] { 0, 3, 8, 13 }, new[] { 0, 6, 11, 14 }, new[] { 0, 7, 10, 15 } };
+            if (g == 1)
             {
-                int[] steps = s == 1 ? new[] { 0, 7, 10 } :
-                              s == 2 ? new[] { 0, 3, 6, 10, 14 } : new[] { 0, 6, 10, 14 };
-                for (int i = 0; i < steps.Length; i++)
-                {
-                    int step = steps[i];
-                    int pitch = step == 14 ? (family == 2 ? ApproachBass(nextRoot, root) : root + fifth) :
-                                step == 10 && family == 1 ? root + 12 :
-                                step == 6 && family == 3 ? root + fifth : root;
-                    Note(c, bar, step, step == 0 ? 4 : s == 1 ? 3 : 2,
-                         pitch, step == 0 ? 112 : i % 2 == 0 ? 94 : 82, r);
-                }
-                if (s == 2 && family == 3) Note(c, bar, 15, 1, ApproachBass(nextRoot, root), 66, r);
+                if (s == 1) return new[] { new[] { 0, 6, 12 }, new[] { 0, 7, 14 }, new[] { 0, 5, 11 }, new[] { 0, 8, 14 } };
+                if (s == 2) return new[] { new[] { 0, 2, 6, 9, 14 }, new[] { 0, 3, 7, 10, 15 }, new[] { 0, 2, 5, 10, 13 }, new[] { 0, 3, 6, 11, 14 } };
+                if (s == 3) return new[] { new[] { 0, 3, 4, 7, 10, 14 }, new[] { 0, 2, 4, 8, 11, 14 }, new[] { 0, 3, 6, 8, 12, 15 }, new[] { 0, 4, 6, 10, 12, 14 } };
+                return new[] { new[] { 0, 2, 6, 10, 14 }, new[] { 0, 3, 6, 11, 14 }, new[] { 0, 2, 7, 10, 15 }, new[] { 0, 4, 6, 10, 14 } };
             }
-            else if (g == 1) // HOUSE: tight disco-funk bounce between the kicks.
-            {
-                int[] steps = s == 3 ? (answer ? new[] { 0, 3, 6, 10, 12, 15 } : new[] { 0, 3, 7, 10, 14 }) :
-                               s == 1 ? new[] { 0, 3, 7, 10, 14 } :
-                              s == 2 ? new[] { 0, 2, 5, 7, 10, 13, 15 } :
-                                       new[] { 0, 3, 6, 10, 14 };
-                for (int i = 0; i < steps.Length; i++)
+            if (g == 2) return s == 1
+                ? new[] { new[] { 0, 8 }, new[] { 0, 10 }, new[] { 0, 6, 12 }, new[] { 0, 7 } }
+                : s == 2
+                ? new[] { new[] { 0, 3, 7, 11, 14 }, new[] { 0, 2, 6, 9, 13 }, new[] { 0, 4, 7, 11, 15 }, new[] { 0, 3, 8, 12, 14 } }
+                : new[] { new[] { 0, 4, 6, 10, 12, 14 }, new[] { 0, 3, 6, 8, 12 }, new[] { 0, 4, 8, 10, 14 }, new[] { 0, 2, 6, 10, 12, 15 } };
+            if (g == 3) return s == 2
+                ? new[] { new[] { 0, 8, 13 }, new[] { 0, 7, 14 }, new[] { 0, 10, 14 }, new[] { 0, 6, 12 } }
+                : s == 1
+                ? new[] { new[] { 0, 3, 6, 9, 12, 15 }, new[] { 0, 2, 5, 8, 11, 14 }, new[] { 0, 3, 7, 10, 13 }, new[] { 0, 2, 6, 9, 13, 15 } }
+                : new[] { new[] { 0, 3, 7, 10, 14 }, new[] { 0, 2, 7, 11, 14 }, new[] { 0, 5, 8, 11, 15 }, new[] { 0, 3, 6, 10, 13 } };
+            if (g == 4) return s == 1
+                ? new[] { new[] { 0, 7, 10, 14 }, new[] { 0, 5, 11 }, new[] { 0, 3, 10, 15 }, new[] { 0, 7, 12 } }
+                : s == 2
+                ? new[] { new[] { 0, 2, 5, 7, 10, 13 }, new[] { 0, 3, 6, 9, 12, 15 }, new[] { 0, 2, 6, 10, 14 }, new[] { 0, 3, 7, 11, 15 } }
+                : new[] { new[] { 0, 3, 6, 10, 14 }, new[] { 0, 2, 7, 10, 13 }, new[] { 0, 3, 8, 11, 14 }, new[] { 0, 5, 7, 10, 15 } };
+            return s == 0
+                ? new[] { new[] { 0, 3, 6, 10, 14 }, new[] { 0, 2, 6, 11, 14 }, new[] { 0, 3, 8, 10, 15 }, new[] { 0, 5, 7, 11, 14 } }
+                : s == 1
+                ? new[] { new[] { 0, 2, 6, 10, 14 }, new[] { 0, 4, 7, 10, 13 }, new[] { 0, 3, 6, 9, 14 }, new[] { 0, 2, 7, 11, 15 } }
+                : new[] { new[] { 0, 3, 5, 10, 13, 15 }, new[] { 0, 2, 6, 9, 12, 14 }, new[] { 0, 3, 7, 10, 14 }, new[] { 0, 5, 8, 11, 15 } };
+        }
+
+        private static int[][] MelodicContours(int g)
+        {
+            if (g == 0) return new[] { new[] { 0, 2, 3, 2, 0, -1 }, new[] { 2, 1, 0, -2, 0, 1 },
+                new[] { 0, -1, 2, 1, -2, 0 }, new[] { 0, 2, 4, 3, 2, 0 } };
+            if (g == 1) return new[] { new[] { 0, 2, 4, 2, 1, 0 }, new[] { 4, 3, 2, 0, 2, 1 },
+                new[] { 0, 1, 2, 4, 3, 2 }, new[] { 2, 4, 5, 4, 2, 0 } };
+            if (g == 2) return new[] { new[] { 0, 0, 1, 0, -1, 0 }, new[] { 0, 4, 0, 1, 0, -1 },
+                new[] { 0, -1, 0, 2, 1, 0 }, new[] { 0, 0, 4, 0, 2, 0 } };
+            if (g == 3) return new[] { new[] { 0, -1, 2, 0, -2, 1 }, new[] { 0, 2, 1, -1, 0, -2 },
+                new[] { 4, 2, 0, 1, -1, 0 }, new[] { 0, 0, 3, 2, -1, 0 } };
+            if (g == 4) return new[] { new[] { 0, 2, 3, 2, -1, 0 }, new[] { 0, 0, 4, 2, 1, -1 },
+                new[] { 2, 4, 2, 0, -1, 0 }, new[] { 0, 3, 2, 4, 2, 0 } };
+            return new[] { new[] { 0, 2, 4, 2, 0, 2 }, new[] { 2, 1, 0, 2, 4, 3 },
+                new[] { 0, 4, 2, 1, 2, 0 }, new[] { 0, 2, 3, 4, 2, 0 } };
+        }
+
+        private static int NearestHarmonyNote(int pitch, int key, int degree, bool minor,
+                                              int[] externalChord, int reference, int low, int high)
+        {
+            int best = pitch, bestCost = int.MaxValue;
+            int[] pitches = externalChord != null && externalChord.Length > 0
+                ? externalChord
+                : new[] { Pitch(60, key, degree, minor), Pitch(60, key, degree + 2, minor),
+                          Pitch(60, key, degree + 4, minor) };
+            foreach (int chordPitch in pitches)
+                for (int shift = -48; shift <= 48; shift += 12)
                 {
-                    int step = steps[i];
-                    int pitch = step == 15 ? ApproachBass(nextRoot, root) :
-                                 s == 3 && step == 12 ? root + 12 :
-                                step == 7 && family != 0 ? root + 12 :
-                                step == 10 && (family == 1 || s == 2) ? root + fifth :
-                                step == 14 && family == 3 ? root + 12 : root;
-                    int length = step == 0 && s == 1 ? 3 : step == 10 && s == 1 ? 3 : 1 + (step % 4 == 2 ? 1 : 0);
-                    Note(c, bar, step, length, pitch,
-                         step == 0 ? 111 : step % 4 == 2 ? 102 : 84, r);
+                    int candidate = chordPitch + shift;
+                    if (candidate < low || candidate > high) continue;
+                    int cost = Math.Abs(candidate - pitch) * 2 + Math.Abs(candidate - reference);
+                    if (cost < bestCost) { bestCost = cost; best = candidate; }
                 }
-                if (family == 2 && s != 2) Note(c, bar, 15, 1, ApproachBass(nextRoot, root), 69, r);
-            }
-            else if (g == 2) // TECHNO: repetitive machine pulse with small funky skips.
+            return best;
+        }
+
+        private static void ComposeMelody(ClipContentData c, int g, int s, int bar, int bars,
+                                          int key, bool minor, int degree, int motif, int rhythm,
+                                          int character, int[] externalChord, Random r)
+        {
+            int[][] grids = MelodyRhythms(g, s);
+            // A-A'-B-A'' form in four bars; call/reply on short phrases.
+            int variant = Mod(rhythm + (bar % 2 == 1 ? 1 : 0) + (bar == 2 ? 2 : 0), grids.Length);
+            int[] steps = grids[variant];
+            int[][] contours = MelodicContours(g);
+            int[] shape = contours[Mod(motif / 4 + s, contours.Length)];
+            int previous = 68 + Mod(key, 5);
+            for (int i = 0; i < steps.Length; i++)
             {
-                int[] steps = s == 1 ? new[] { 0, 7, 10 } :
-                              s == 2 ? new[] { 0, 3, 6, 8, 11, 14 } :
-                                       new[] { 0, 2, 4, 6, 8, 10, 12, 14 };
-                for (int i = 0; i < steps.Length; i++)
-                {
-                    int step = steps[i];
-                    int pitch = step == 8 && family == 1 ? root + 12 :
-                                step == 11 && s == 2 ? root + fifth :
-                                step == 14 && family == 3 ? root + 12 : root;
-                    Note(c, bar, step, s == 1 ? (step == 0 ? 5 : 3) : 1, pitch,
-                         step % 4 == 0 ? 109 : 82, r);
-                }
-                if (family == 2 && s == 2) Note(c, bar, 15, 1, ApproachBass(nextRoot, root), 72, r);
-            }
-            else if (g == 3) // BREAKS: broken, syncopated low end with octave calls.
-            {
-                int[] steps = s == 2 ? new[] { 0, 7, 10, 14 } :
-                              s == 1 ? new[] { 0, 3, 6, 9, 11, 14 } :
-                                       new[] { 0, 3, 7, 10, 14 };
-                for (int i = 0; i < steps.Length; i++)
-                {
-                    int step = steps[i];
-                    int pitch = step == 14 ? (family == 2 ? ApproachBass(nextRoot, root) : root + fifth) :
-                                step == 7 && (family == 1 || s == 1) ? root + 12 :
-                                step == 10 && family == 3 ? root + fifth : root;
-                    Note(c, bar, step, step == 0 ? 3 : s == 2 && step == 7 ? 3 : 2,
-                         pitch, step == 0 ? 112 : i % 2 == 0 ? 97 : 84, r);
-                }
-            }
-            else if (g == 5) // FRENCH HOUSE: repeating filtered-disco bass hooks.
-            {
-                int[] steps = s == 0 ? new[] { 0, 3, 6, 8, 11, 14 } :
-                              s == 1 ? new[] { 0, 2, 6, 10, 12, 14 } :
-                                       new[] { 0, 3, 5, 7, 10, 13, 15 };
-                for (int i = 0; i < steps.Length; i++)
-                {
-                    int step = steps[i];
-                    int pitch = step == 15 ? ApproachBass(nextRoot, root) :
-                                (step == 6 || step == 7) ? root + 12 :
-                                (step == 10 && family != 0) ? root + fifth :
-                                (step == 14 && answer && family >= 2) ? root + fifth : root;
-                    Note(c, bar, step, s == 1 && step == 0 ? 3 : 1 + (step == 0 ? 1 : 0),
-                         pitch, step == 0 ? 113 : step % 4 == 2 ? 101 : 84, r);
-                }
-            }
-            else // FUNK: repetitive pocket, percussive rests, octave pops and pickups.
-            {
-                int[] steps = s == 0 ? new[] { 0, 3, 6, 10, 12, 14 } :
-                              s == 1 ? new[] { 0, 3, 7, 10, 14 } :
-                                       new[] { 0, 2, 5, 7, 10, 13, 15 };
-                for (int i = 0; i < steps.Length; i++)
-                {
-                    int step = steps[i];
-                    // Musical 5th, octave and approach colors instead of random leaps.
-                    int pitch = step == 15 ? ApproachBass(nextRoot, root) :
-                                step == 7 && s != 0 ? root + 12 :
-                                step == 6 && family == 1 ? root + fifth :
-                                step == 10 ? (family == 2 ? root + seventh - 12 : root + fifth) :
-                                step == 14 && family == 3 ? root + 12 : root;
-                    int length = step == 0 ? (s == 1 ? 3 : 2) :
-                                 step == 10 && s == 1 ? 3 : 1 + (step == 12 ? 1 : 0);
-                    Note(c, bar, step, length, pitch,
-                         step == 0 ? 115 : step == 10 || step == 7 ? 105 : 82, r);
-                }
-                // Only occasional turnaround notes. Let the space create groove.
-                if (answer && family == 1 && s != 2)
-                    Note(c, bar, 15, 1, ApproachBass(nextRoot, root), 68, r);
+                int step = steps[i];
+                if (bar == 3 && i == steps.Length - 1 && step == 15 && character % 2 == 0) step = 14;
+                // A phrase answers rather than copying its call note-for-note.
+                int idx = Mod(i + (bar % 2 == 1 ? 2 : 0) + (bar == 2 ? 1 : 0) + motif % 3, shape.Length);
+                int offset = shape[idx];
+                if (i == 0) offset = (motif % 2 == 0 ? 0 : 2);
+                if (i == steps.Length - 1) offset = bar == bars - 1 ? 0 :
+                    (bar % 2 == 1 ? 2 : 4);
+                int pitch = Pitch(60, key, degree + offset, minor);
+                pitch = FoldPitch(pitch, previous, g == 2 ? 55 : 60, g == 2 ? 79 : 83);
+                // Chord-tone targets are deliberate; passing notes remain free between them.
+                if (i == 0 || i == steps.Length - 1 || (step % 4 == 0 && i % 2 == 0))
+                    pitch = NearestHarmonyNote(pitch, key, degree, minor, externalChord,
+                                               previous, 60, 83);
+                else if (g == 4 && i > 0 && i < steps.Length - 1 && r.Next(6) == 0)
+                    pitch -= 1; // Occasional blues/chromatic funk color on weak notes.
+                else if (g == 2 && s == 2 && i > 0 && r.Next(7) == 0)
+                    pitch += r.Next(2) == 0 ? 1 : -1; // Industrial tension.
+                int gap = i + 1 < steps.Length ? steps[i + 1] - step : 16 - step;
+                int length = g == 0 ? 2 + r.Next(3) :
+                             g == 1 && s == 1 ? 3 + r.Next(4) :
+                             g == 1 && s == 3 ? 1 + r.Next(3) :
+                             g == 2 ? (s == 1 ? 3 : 1 + r.Next(2)) :
+                             g == 3 ? 1 + r.Next(3) : 1 + r.Next(2);
+                if (i == steps.Length - 1 && bar == bars - 1) length = Math.Max(length, 2);
+                length = Math.Max(1, Math.Min(length, Math.Max(1, gap)));
+                int vel = i == 0 ? 107 : i == steps.Length - 1 ? 97 :
+                    step % 4 == 0 ? 98 : 78 + character * 3;
+                AddMidi(c, bar, step, length, pitch, vel, r);
+                previous = pitch;
             }
         }
 
-        private static void GenerateMelody(ClipContentData c, int g, int s, int bar, int degree,
-                                           int key, bool minor, int variation, Random r, int[] sourceChord = null)
+        private static int[][] BassRhythms(int g, int s)
         {
-            // 90s HOUSE: anthemic, memorable call-and-response hooks with intentional
-            // gaps for the vocal or bass. Chord tones anchor the phrase; short scale
-            // passing notes and an end-of-pair pickup provide forward momentum.
-            if (g == 1 && s == 3)
+            if (g == 0) return s == 1
+                ? new[] { new[] { 0, 7, 10 }, new[] { 0, 6, 12 }, new[] { 0, 8, 14 }, new[] { 0, 7, 11, 15 } }
+                : new[] { new[] { 0, 6, 10, 14 }, new[] { 0, 3, 7, 11, 14 }, new[] { 0, 5, 10, 13 }, new[] { 0, 6, 9, 14 } };
+            if (g == 1) return s == 1
+                ? new[] { new[] { 0, 6, 10, 14 }, new[] { 0, 7, 12 }, new[] { 0, 5, 10, 14 }, new[] { 0, 3, 10, 14 } }
+                : s == 2
+                ? new[] { new[] { 0, 2, 5, 7, 10, 13, 15 }, new[] { 0, 3, 6, 9, 11, 14 }, new[] { 0, 2, 6, 10, 12, 15 }, new[] { 0, 3, 7, 10, 13, 15 } }
+                : s == 3
+                ? new[] { new[] { 0, 3, 6, 10, 12, 15 }, new[] { 0, 3, 7, 10, 14 }, new[] { 0, 2, 6, 9, 12, 15 }, new[] { 0, 3, 6, 11, 14 } }
+                : new[] { new[] { 0, 3, 6, 10, 14 }, new[] { 0, 2, 6, 10, 14 }, new[] { 0, 3, 7, 11, 14 }, new[] { 0, 2, 7, 10, 15 } };
+            if (g == 2) return s == 1
+                ? new[] { new[] { 0, 8 }, new[] { 0, 7, 12 }, new[] { 0, 10 }, new[] { 0, 6, 13 } }
+                : s == 2
+                ? new[] { new[] { 0, 3, 6, 8, 11, 14 }, new[] { 0, 2, 5, 8, 12, 15 }, new[] { 0, 3, 7, 10, 14 }, new[] { 0, 4, 6, 9, 13 } }
+                : new[] { new[] { 0, 2, 4, 6, 8, 10, 12, 14 }, new[] { 0, 2, 4, 7, 8, 10, 12, 15 }, new[] { 0, 3, 4, 6, 8, 11, 12, 14 }, new[] { 0, 2, 4, 6, 9, 10, 12, 14 } };
+            if (g == 3) return s == 2
+                ? new[] { new[] { 0, 7, 10, 14 }, new[] { 0, 6, 11 }, new[] { 0, 8, 13 }, new[] { 0, 5, 10, 15 } }
+                : s == 1
+                ? new[] { new[] { 0, 3, 6, 9, 11, 14 }, new[] { 0, 2, 5, 8, 12, 15 }, new[] { 0, 3, 7, 9, 12, 14 }, new[] { 0, 2, 6, 9, 13, 15 } }
+                : new[] { new[] { 0, 3, 7, 10, 14 }, new[] { 0, 2, 6, 10, 13 }, new[] { 0, 5, 7, 11, 14 }, new[] { 0, 3, 8, 10, 15 } };
+            if (g == 4) return s == 1
+                ? new[] { new[] { 0, 3, 7, 10, 14 }, new[] { 0, 6, 10, 15 }, new[] { 0, 3, 8, 11 }, new[] { 0, 5, 10, 13 } }
+                : s == 2
+                ? new[] { new[] { 0, 2, 5, 7, 10, 13, 15 }, new[] { 0, 3, 6, 9, 12, 15 }, new[] { 0, 2, 6, 10, 13 }, new[] { 0, 3, 7, 10, 12, 14 } }
+                : new[] { new[] { 0, 3, 6, 10, 12, 14 }, new[] { 0, 2, 6, 9, 12, 15 }, new[] { 0, 3, 7, 10, 14 }, new[] { 0, 5, 7, 10, 13, 15 } };
+            return s == 1
+                ? new[] { new[] { 0, 2, 6, 10, 12, 14 }, new[] { 0, 3, 6, 9, 12, 15 }, new[] { 0, 2, 7, 10, 13 }, new[] { 0, 3, 7, 10, 14 } }
+                : s == 2
+                ? new[] { new[] { 0, 3, 5, 7, 10, 13, 15 }, new[] { 0, 2, 6, 9, 12, 15 }, new[] { 0, 3, 7, 11, 14 }, new[] { 0, 2, 5, 10, 12, 15 } }
+                : new[] { new[] { 0, 3, 6, 8, 11, 14 }, new[] { 0, 2, 6, 10, 13 }, new[] { 0, 3, 7, 10, 14 }, new[] { 0, 5, 8, 11, 15 } };
+        }
+
+        private static void ComposeBass(ClipContentData c, int g, int s, int bar, int bars,
+                                        int key, bool minor, int degree, int nextDegree,
+                                        int motif, int rhythm, int character, Random r)
+        {
+            int root = BassRoot(key, degree, minor);
+            int nextRoot = BassRoot(key, nextDegree, minor);
+            int fifth = Scale(degree + 4, minor) - Scale(degree, minor);
+            int third = Scale(degree + 2, minor) - Scale(degree, minor);
+            int seventh = Scale(degree + 6, minor) - Scale(degree, minor);
+            int[][] grids = BassRhythms(g, s);
+            int[] steps = grids[Mod(rhythm + (bar == 2 ? 1 : 0) + (bar == 3 ? 2 : 0), grids.Length)];
+            for (int i = 0; i < steps.Length; i++)
             {
-                Generate90sHouseHook(c, bar, degree, key, minor, variation, r, sourceChord);
+                int step = steps[i];
+                int role = Mod(i + motif + (bar % 2 == 1 ? 2 : 0), 7);
+                int pitch = root;
+                if (i > 0)
+                {
+                    if (g == 2)
+                        pitch = (role == 0 || role == 4) ? root + 12 :
+                                (s == 2 && role == 3) ? root + fifth : root;
+                    else if (g == 4)
+                        pitch = role == 1 || role == 5 ? root + 12 :
+                                role == 3 ? root + fifth :
+                                role == 6 ? root + third : root;
+                    else if (g == 0)
+                        pitch = role == 2 ? root + 12 : role == 4 ? root + fifth :
+                                role == 6 && s == 2 ? root + third : root;
+                    else if (g == 3)
+                        pitch = role == 1 || role == 5 ? root + 12 :
+                                role == 3 ? root + fifth : root;
+                    else
+                        pitch = role == 1 || role == 4 ? root + 12 :
+                                role == 2 || role == 5 ? root + fifth :
+                                (role == 6 && s == 2) ? root + third : root;
+                    if (g == 4 && role == 6 && (bar % 2 == 1)) pitch = root + seventh - 12;
+                }
+                // One deliberately placed pickup, not a random chromatic run.
+                if (i == steps.Length - 1 && step >= 12 && (bar == bars - 1 || bar % 2 == 1) &&
+                    (motif + character + bar) % 3 != 0 && nextDegree != degree)
+                    pitch = BassApproach(root, nextRoot);
+                pitch = FoldPitch(pitch, pitch >= 48 ? 51 : 42, 35, 60);
+                int gap = i + 1 < steps.Length ? steps[i + 1] - step : 16 - step;
+                int length = g == 2 && s == 1 ? 5 :
+                             g == 0 && s == 1 ? 4 :
+                             g == 1 && s == 1 ? 3 :
+                             g == 3 && s == 2 ? 4 :
+                             g == 4 ? 1 + ((i + character) % 3) : 1 + (step % 3);
+                length = Math.Max(1, Math.Min(length, Math.Max(1, gap)));
+                int vel = i == 0 ? 112 : step % 4 == 0 ? 101 :
+                          step % 2 == 1 ? 87 : 95;
+                AddMidi(c, bar, step, length, pitch, vel, r);
+            }
+        }
+
+        // Whole-voicing search: avoid crossing, congestion and large jumps between
+        // chord changes. Select from valid inversions, not independent voice indices.
+        private static int[] ComposeVoicing(int degree, int key, bool minor, int g, int s,
+                                            bool pads, int character, int[] previous, Random r)
+        {
+            int[] offsets;
+            if (g == 2)
+                offsets = s == 1 ? new[] { 0, 4, 8 } :
+                    character % 2 == 0 ? new[] { 0, 2, 4 } : new[] { 0, 4, 6 };
+            else if (g == 0)
+                offsets = character % 3 == 0 ? new[] { 2, 6, 8 } : new[] { 0, 2, 6, 8 };
+            else if (g == 4)
+                offsets = character % 2 == 0 ? new[] { 2, 6, 8 } : new[] { 0, 2, 6, 8 };
+            else if (g == 1 && s == 3)
+                offsets = character % 2 == 0 ? new[] { 0, 2, 4, 6 } : new[] { 2, 4, 6, 8 };
+            else if (g == 3)
+                offsets = character % 2 == 0 ? new[] { 0, 2, 4, 6 } : new[] { 2, 4, 6, 8 };
+            else
+                offsets = character % 3 == 0 ? new[] { 2, 4, 6, 8 } : new[] { 0, 2, 6, 8 };
+            int root = Pitch(48, key, degree, minor);
+            int[][] choices = new int[offsets.Length][];
+            int low = pads ? 51 : 54, high = pads ? 81 : 83;
+            for (int i = 0; i < offsets.Length; i++)
+            {
+                var values = new List<int>(4);
+                int fundamental = root + Scale(degree + offsets[i], minor) - Scale(degree, minor);
+                for (int octave = -4; octave <= 3; octave++)
+                {
+                    int v = fundamental + octave * 12;
+                    if (v >= low && v <= high) values.Add(v);
+                }
+                choices[i] = values.ToArray();
+            }
+            int[] current = new int[offsets.Length];
+            int[] winner = null;
+            double bestCost = double.MaxValue;
+            SearchVoicings(choices, 0, current, previous, pads, character, ref winner, ref bestCost);
+            if (winner != null) return winner;
+            // Defensive fallback if the available voicing range ever changes.
+            int[] fallback = new int[offsets.Length];
+            for (int i = 0; i < offsets.Length; i++)
+                fallback[i] = FoldPitch(root + Scale(degree + offsets[i], minor) - Scale(degree, minor),
+                                        60 + 4 * i, low, high);
+            Array.Sort(fallback);
+            return fallback;
+        }
+
+        private static void SearchVoicings(int[][] choices, int depth, int[] current,
+                                           int[] previous, bool pads, int character,
+                                           ref int[] winner, ref double bestCost)
+        {
+            if (depth < choices.Length)
+            {
+                foreach (int pitch in choices[depth])
+                {
+                    current[depth] = pitch;
+                    SearchVoicings(choices, depth + 1, current, previous, pads, character,
+                                   ref winner, ref bestCost);
+                }
                 return;
             }
-            // Motifs repeat on bar pairs; answer bars vary the end, not every note.
-            int family = Mod(variation - 1, 4);
-            bool answer = (bar & 1) != 0;
-            int[] starts = g == 0 ? (s == 1 ? new[] { 0, 8, 13 } : new[] { 0, 5, 10, 14 }) :
-                           g == 1 ? (s == 3 ? new[] { 0, 3, 6, 10, 14 } : s == 1 ? new[] { 2, 10 } : new[] { 2, 6, 10, 14 }) :
-                           g == 2 ? (s == 1 ? new[] { 0, 8 } : s == 2 ? new[] { 0, 3, 7, 11, 14 } : new[] { 0, 4, 6, 10, 12, 14 }) :
-                           g == 3 ? (s == 2 ? new[] { 0, 8, 13 } : s == 1 ? new[] { 0, 3, 6, 10, 13, 15 } : new[] { 0, 3, 7, 10, 14 }) :
-                                    (s == 0 ? new[] { 0, 3, 6, 10, 14 } : s == 1 ? new[] { 0, 7, 10, 14 } : new[] { 0, 2, 6, 9, 12, 15 });
-            int[] motif = g == 1 && s == 3 ? new[] { 0, 2, 4, 3, 2, 0 } : new[] { 0, 2, 4, 2, 1, 0 };
-            for (int i = 0; i < starts.Length; i++)
+            int[] sorted = (int[])current.Clone();
+            Array.Sort(sorted);
+            int spread = sorted[sorted.Length - 1] - sorted[0];
+            double cost = Math.Abs(spread - (pads ? 20 : 17)) * 1.5;
+            for (int i = 0; i < sorted.Length; i++)
             {
-                int position = starts[i];
-                // Answer bar stays recognisable but breathes slightly differently.
-                if (answer && i == starts.Length - 1 && position > 0 && family == 1)
-                    position--;
-                int chordOffset = motif[(i + (family == 2 ? 2 : 0)) % motif.Length];
-                int melodicDegree = degree + chordOffset;
-                if (answer && i == starts.Length - 1) melodicDegree = degree + (family == 3 ? 1 : 0);
-                else if (family == 1 && i == 1) melodicDegree = degree + 4;
-                else if (family == 3 && i == 2) melodicDegree = degree - 1;
-                if (family == 2 && i == starts.Length - 2 && !answer) melodicDegree += 1;
-                int pitch = Pitch(g == 2 ? 60 : 60, key, melodicDegree, minor);
-                // Fold into the same playable 1-2 octave register.
-                while (pitch > 83) pitch -= 12;
-                while (pitch < 58) pitch += 12;
-                int length = g == 1 && s == 3 ? (i == 0 ? 3 : 2) : g == 1 && s == 1 ? 4 : g == 0 && s == 1 ? 3 : g == 2 ? 1 : 2;
-                if (sourceChord != null && sourceChord.Length > 0 && (i == 0 || i == starts.Length - 1 || position % 4 == 0))
-                {
-                    // Land on a nearby real chord tone at phrase anchors.
-                    int best = pitch, distance = int.MaxValue;
-                    foreach (int tone in sourceChord)
-                        for (int shift = -12; shift <= 24; shift += 12)
-                        {
-                            int candidate = tone + shift;
-                            if (candidate < 58 || candidate > 84) continue;
-                            int d = Math.Abs(candidate - pitch);
-                            if (d < distance) { best = candidate; distance = d; }
-                        }
-                    pitch = best;
-                }
-                if (answer && i == starts.Length - 1) length = Math.Max(1, length - 1);
-                Note(c, bar, position, length, pitch, i == 0 ? 98 : 79 + (i % 2) * 9, r);
+                if (i > 0 && sorted[i] - sorted[i - 1] < 3) return;
+                int aim = pads ? 55 + i * 5 : 60 + i * 5;
+                cost += Math.Abs(sorted[i] - aim) * .42;
+                if (previous != null)
+                    cost += Math.Abs(sorted[i] - previous[Math.Min(i, previous.Length - 1)]) * 2.5;
+                if (pads && sorted[i] < 55) cost += 9;
             }
+            // An initial voicing may be different for each generation without
+            // deliberately sacrificing smoothness on later chord changes.
+            if (previous == null) cost += Math.Abs(sorted[0] - (pads ? 54 + character : 58 + character));
+            if (cost < bestCost) { bestCost = cost; winner = sorted; }
         }
 
-        private static void Generate90sHouseHook(ClipContentData c, int bar, int degree,
-                                                  int key, bool minor, int variation, Random r,
-                                                  int[] sourceChord)
+        private static int[] ChordRhythms(int g, int s, bool pads, int choice, int bar)
         {
-            int variant = Mod(variation - 1, 4);
-            bool response = (bar % 2) == 1;
-            // Snappy eighth/sixteenth-note phrasing: strong hook, a breath, then an
-            // answering pickup. Each two-bar pair repeats its rhythmic identity.
-            int[][] callSteps = { new[] { 0, 3, 4, 7, 10, 12, 14 },
-                                  new[] { 0, 2, 4, 7, 10, 12, 15 },
-                                  new[] { 0, 3, 6, 8, 11, 12, 14 },
-                                  new[] { 0, 4, 6, 7, 10, 13, 15 } };
-            int[][] replySteps = { new[] { 0, 2, 4, 6, 10, 11, 14 },
-                                   new[] { 0, 3, 4, 8, 10, 13, 15 },
-                                   new[] { 0, 2, 6, 8, 10, 12, 15 },
-                                   new[] { 0, 3, 5, 8, 11, 12, 14 } };
-            int[] starts = response ? replySteps[variant] : callSteps[variant];
-            // Repetition sells the hook: remove a few inner notes to leave
-            // breathing room for a vocal, the piano stabs and the backbeat.
-            // A two-bar call/reply retains its contour over the full clip.
-            int[] callShape = { 0, 2, 4, 2, 1, 0, 2 };
-            int[] replyShape = { 4, 2, 1, 0, 2, 1, 0 };
-            for (int i = 0; i < starts.Length; ++i)
-            {
-                if ((!response && (i == 2 || i == 5) && variant != 2) ||
-                    (response && (i == 1 || i == 4) && variant != 1)) continue;
-                int melodicDegree = degree + (response ? replyShape[i] : callShape[i]);
-                int pitch = Pitch(60, key, melodicDegree, minor);
-                while (pitch > 79) pitch -= 12;
-                while (pitch < 60) pitch += 12;
-                // Anchor downbeats and held hook notes to the actual existing chord.
-                // Use any supplied arrangement harmony, not merely the inferred scale.
-                if (sourceChord != null && sourceChord.Length > 0 && (i == 0 || i == 3 || i == 5))
-                {
-                    int best = pitch, bestDistance = int.MaxValue;
-                    foreach (int chordPitch in sourceChord)
-                        for (int octave = -2; octave <= 2; ++octave)
-                        {
-                            int candidate = chordPitch + octave * 12;
-                            if (candidate < 60 || candidate > 81) continue;
-                            int distance = Math.Abs(candidate - pitch);
-                            if (distance < bestDistance) { bestDistance = distance; best = candidate; }
-                        }
-                    pitch = best;
-                }
-                int gate = i == 0 || i == 4 ? 3 : i == 3 ? 2 : 1;
-                int accent = i == 0 || i == 3 || i == 4 ? 104 : (i == 6 ? 90 : 83);
-                Note(c, bar, starts[i], gate, pitch, accent, r);
-            }
-        }
-
-        private static int[] VoiceChord(int degree, int key, bool minor, int g, int s,
-                                         bool pads, int[] previous)
-        {
-            int root = Pitch(pads ? 48 : 48, key, degree, minor);
-            int third = Scale(degree + 2, minor) - Scale(degree, minor);
-            int fifth = Scale(degree + 4, minor) - Scale(degree, minor);
-            int seventh = Scale(degree + 6, minor) - Scale(degree, minor);
-            int ninth = Scale(degree + 8, minor) - Scale(degree, minor);
-            int[] intervals = g == 2 ? (s == 1 ? new[] { 0, fifth, ninth } : new[] { 0, third, fifth }) :
-                              g == 0 ? (s == 2 ? new[] { third, seventh, ninth } : new[] { 0, third, seventh, ninth }) :
-                              g == 1 ? (s == 3 ? new[] { third, fifth, seventh, ninth } : s == 1 ? new[] { 0, third, seventh, ninth } : new[] { 0, third, fifth, seventh }) :
-                              g == 3 ? (s == 1 ? new[] { third, fifth, seventh, ninth } : new[] { 0, third, fifth, seventh }) :
-                                       (s == 1 ? new[] { third, seventh, ninth } : new[] { 0, third, seventh, ninth });
-            int[] voices = new int[intervals.Length];
-            for (int i = 0; i < voices.Length; i++)
-            {
-                int initial = root + intervals[i];
-                // Keep lower-mid voicings for warmth, but don't let repeated inversions
-                // cause 12-semitone jumps between adjacent chords.
-                int target = previous != null ? previous[Math.Min(i, previous.Length - 1)] :
-                             (pads ? 57 + i * 5 : 55 + i * 5);
-                int best = Clamp(initial, 45, 84);
-                int score = int.MaxValue;
-                for (int octave = -3; octave <= 2; octave++)
-                {
-                    int candidate = initial + 12 * octave;
-                    if (candidate < (pads ? 48 : 50) || candidate > (pads ? 82 : 79)) continue;
-                    int distance = Math.Abs(candidate - target) + Math.Abs(candidate - (pads ? 59 + 5 * i : 56 + 5 * i)) / 4;
-                    if (distance < score) { score = distance; best = candidate; }
-                }
-                voices[i] = best;
-            }
-            // Keep pitches unique without pushing extreme inversions.
-            for (int i = 1; i < voices.Length; i++)
-                if (voices[i] == voices[i - 1] && voices[i] + 12 <= 82) voices[i] += 12;
-            return voices;
-        }
-        private static void GenerateHarmony(ClipContentData c, int g, int s, int bar,
-                                             bool pads, int[] voices, int variation, Random r)
-        {
-            int[] starts;
-            int[] lengths;
             if (pads)
             {
-                starts = g == 1 && s == 3 ? new[] { 0, 8 } :
-                         g == 0 ? new[] { 2 } : g == 3 && s != 2 ? new[] { 0, 10 } :
-                         g == 4 && s == 2 ? new[] { 0, 10 } : new[] { 0 };
-                lengths = g == 1 && s == 3 ? new[] { 7, 8 } :
-                          starts.Length == 2 ? new[] { 9, 6 } : new[] { g == 0 ? 12 : 16 };
-                if (g == 2 && s == 2) { starts = new[] { 0, 8 }; lengths = new[] { 7, 8 }; }
+                if (g == 2 && s == 1) return new[] { 0 };
+                if (g == 0 && s == 2 && choice % 2 == 1) return new[] { 0, 10 };
+                if (g == 1 && s == 3 && choice % 3 == 0) return new[] { 0, 8 };
+                return choice % 4 == 0 ? new[] { 0, 8 } :
+                       choice % 4 == 1 ? new[] { 0 } :
+                       choice % 4 == 2 ? new[] { 0, 10 } : new[] { 0, 7 };
             }
-            else if (g == 0)
+            if (g == 0) return s == 2 ?
+                (choice % 2 == 0 ? new[] { 0, 3, 7, 11, 14 } : new[] { 0, 5, 9, 13 }) :
+                (choice % 2 == 0 ? new[] { 0, 9 } : new[] { 0, 6, 12 });
+            if (g == 1)
             {
-                starts = s == 1 ? new[] { 2, 12 } : s == 2 ? new[] { 3, 7, 11, 14 } : new[] { 0, 9 };
-                lengths = s == 1 ? new[] { 8, 3 } : s == 2 ? new[] { 2, 2, 2, 2 } : new[] { 6, 4 };
+                if (s == 1) return choice % 2 == 0 ? new[] { 0, 12 } : new[] { 0, 10 };
+                if (s == 3) return bar % 2 == 0 ? new[] { 0, 6, 10, 14 } : new[] { 0, 4, 7, 11, 14 };
+                return choice % 2 == 0 ? new[] { 2, 6, 10, 14 } : new[] { 2, 7, 10, 14 };
             }
-            else if (g == 1)
+            if (g == 2) return s == 1 ? new[] { 0, 12 } :
+                choice % 2 == 0 ? new[] { 2, 6, 10, 14 } : new[] { 0, 7, 11, 14 };
+            if (g == 3) return s == 2 ? new[] { 0, 8 } :
+                choice % 2 == 0 ? new[] { 0, 7, 11 } : new[] { 0, 3, 9, 14 };
+            if (g == 4) return s == 1 ? new[] { 0, 7, 11 } :
+                choice % 2 == 0 ? new[] { 0, 6, 10, 14 } : new[] { 0, 3, 7, 11, 14 };
+            return choice % 2 == 0 ? new[] { 2, 6, 10, 14 } : new[] { 0, 5, 10, 13 };
+        }
+
+        private static void ComposeChordRhythm(ClipContentData c, int g, int s, int bar,
+                                                int bars, int degree, int[] harmony, bool pads,
+                                                int[] notes, int rhythm, int character, Random r)
+        {
+            int[] hits = ChordRhythms(g, s, pads, rhythm + character, bar);
+            bool longHold = pads && character % 2 == 0 && bar + 1 < bars &&
+                            harmony[bar + 1] == degree && bar % 2 == 0;
+            for (int hit = 0; hit < hits.Length; hit++)
             {
-                // 90s chords: alternate sustained piano punctuation with compact
-                // rave stabs. Short, rhythmically displaced answers build cadence.
-                starts = s == 3 ? (bar % 2 == 0 ? new[] { 0, 6, 10, 14 } : new[] { 0, 4, 7, 11, 14 }) : s == 1 ? new[] { 0, 12 } : s == 2 ? new[] { 2, 6, 9, 14 } : new[] { 2, 6, 10, 14 };
-                lengths = s == 3 ? (bar % 2 == 0 ? new[] { 4, 2, 3, 2 } : new[] { 3, 2, 2, 2, 2 }) : s == 1 ? new[] { 12, 4 } : s == 2 ? new[] { 2, 2, 2, 2 } : new[] { 2, 2, 2, 2 };
+                int step = hits[hit];
+                if (longHold && hit > 0) break;
+                int duration;
+                if (pads) duration = longHold ? 30 :
+                    hits.Length == 1 ? 16 - step :
+                    (hit + 1 < hits.Length ? hits[hit + 1] - step - 1 : 16 - step);
+                else duration = g == 1 && s == 1 ? 6 :
+                    g == 0 && s == 1 ? 5 : g == 3 && s == 2 ? 6 :
+                    g == 2 && s == 1 ? 7 : 1 + r.Next(2);
+                duration = Math.Max(1, duration);
+                int vel = pads ? 66 : g == 1 && s == 3 ? 103 : g == 4 ? 94 : 84;
+                for (int i = 0; i < notes.Length; i++)
+                    AddMidi(c, bar, step, duration, notes[i], vel - i * 3 - hit % 2 * 4, r);
             }
-            else if (g == 2)
+            // Movement in the top voice makes sustained pads less static; always
+            // remain within the current chord and avoid re-articulating the pad root.
+            if (pads && !longHold && hits.Length == 1 && character % 3 == 0 && g != 2)
             {
-                starts = s == 1 ? new[] { 0, 12 } : s == 2 ? new[] { 0, 7, 11 } : new[] { 2, 6, 10, 14 };
-                lengths = s == 1 ? new[] { 9, 3 } : s == 2 ? new[] { 2, 1, 2 } : new[] { 2, 2, 2, 2 };
-            }
-            else if (g == 3)
-            {
-                starts = s == 2 ? new[] { 0, 8 } : s == 1 ? new[] { 0, 3, 7, 11, 14 } : new[] { 0, 7, 11 };
-                lengths = s == 2 ? new[] { 7, 8 } : s == 1 ? new[] { 2, 1, 2, 1, 2 } : new[] { 3, 2, 3 };
-            }
-            else if (g == 5)
-            {
-                starts = s == 0 ? new[] { 2, 6, 10, 14 } : s == 1 ? new[] { 0, 6, 10, 14 } : new[] { 2, 5, 10, 13 };
-                lengths = s == 1 ? new[] { 3, 2, 2, 2 } : new[] { 2, 2, 2, 1 };
-            }
-            else // Funk chords: tight stabs that sit between the bass notes.
-            {
-                starts = s == 0 ? new[] { 0, 6, 10, 14 } :
-                         s == 1 ? new[] { 0, 7, 11 } : new[] { 0, 3, 7, 10, 14 };
-                lengths = s == 0 ? new[] { 2, 2, 2, 1 } :
-                          s == 1 ? new[] { 4, 2, 3 } : new[] { 1, 2, 1, 2, 1 };
-            }
-            int family = Mod(variation - 1, 4);
-            for (int i = 0; i < starts.Length; i++)
-            {
-                // Different variations keep the harmonic family but change timing,
-                // gates and upper-voice accents rather than becoming random clusters.
-                int step = starts[i];
-                if (!pads && family == 1 && i == starts.Length - 1 && step > 0) step--;
-                if (!pads && family == 3 && i == 1 && step < 15) step++;
-                int gate = lengths[i];
-                if (!pads && family == 2) gate = Math.Max(1, gate - 1);
-                if (pads && family == 3 && i == 0) gate = Math.Max(6, gate - 3);
-                int vel = pads ? 69 : g == 2 ? 79 : g == 1 && s == 3 ? (i == 0 || i == 2 ? 103 : 86) : g == 1 ? 84 : 77;
-                for (int voice = 0; voice < voices.Length; voice++)
-                    Note(c, bar, step, gate,
-                         voices[voice] + (!pads && family == 2 && voice == voices.Length - 1 && i > 0 ? 12 : 0),
-                         vel - voice * 3 - (i % 2) * 5, r);
+                int top = notes[notes.Length - 1];
+                AddMidi(c, bar, 11, 4, top, 52, r);
             }
         }
+
+        // Cheap deterministic ranking, with density, harmonic, rhythmic and register
+        // checks. Genre-specific preferences prevent over-penalizing minimal techno.
+        private static double ScoreCandidate(ClipContentData c, TrackKind kind, int g, int s,
+                                              bool minor, int key, int[] harmony, bool chords,
+                                              int[][] externalVoices)
+        {
+            if (c.notes.Count == 0) return double.MinValue;
+            bool harmonic = kind == TrackKind.Pads || chords;
+            long sixteenth = SongData.TicksPerSixteenth;
+            var sorted = new List<NoteEvent>(c.notes);
+            sorted.Sort((a, b) => a.startTick == b.startTick ? a.pitch.CompareTo(b.pitch) : a.startTick.CompareTo(b.startTick));
+            var starts = new HashSet<long>();
+            var pitches = new HashSet<int>();
+            int[] barNotes = new int[harmony.Length];
+            double score = 100;
+            int repeatCount = 0, jumps = 0;
+            int last = -1;
+            foreach (var n in sorted)
+            {
+                if (n.startTick < 0 || n.startTick >= c.lengthTicks || n.durationTicks < 1 ||
+                    n.durationTicks > c.lengthTicks - n.startTick) return double.MinValue;
+                int bar = Clamp((int)(n.startTick / SongData.TicksPerBar4), 0, harmony.Length - 1);
+                int step = (int)((n.startTick / sixteenth) % 16);
+                barNotes[bar]++;
+                // A held pad is active in every bar it spans; it is not a silent bar.
+                if (kind == TrackKind.Pads)
+                {
+                    int lastActive = Clamp((int)((n.startTick + n.durationTicks - 1) /
+                        SongData.TicksPerBar4), bar, harmony.Length - 1);
+                    for (int active = bar + 1; active <= lastActive; active++) barNotes[active]++;
+                }
+                starts.Add(n.startTick);
+                pitches.Add(n.pitch);
+                int[] chord = externalVoices != null && bar < externalVoices.Length &&
+                              externalVoices[bar] != null && externalVoices[bar].Length > 0 && !harmonic
+                    ? externalVoices[bar] : null;
+                bool chordTone = IsChordTone(n.pitch, key, harmony[bar], minor, chord);
+                if ((step % 4 == 0 || harmonic || kind == TrackKind.Bass) && chordTone) score += .72;
+                else if (step % 4 == 0 && !chordTone) score -= 2.5;
+                if (kind == TrackKind.Bass && (n.pitch < 35 || n.pitch > 60)) score -= 10;
+                if (kind == TrackKind.Synth && !chords && (n.pitch < 55 || n.pitch > 83)) score -= 8;
+                if (!harmonic)
+                {
+                    if (last == n.pitch) repeatCount++;
+                    if (last >= 0 && Math.Abs(n.pitch - last) > (kind == TrackKind.Bass ? 14 : 12)) jumps++;
+                    last = n.pitch;
+                }
+            }
+            foreach (int count in barNotes) if (count == 0) score -= 18;
+            int target = harmonic ? (kind == TrackKind.Pads ? 1 : g == 2 ? 4 : 5) :
+                         kind == TrackKind.Bass ? (g == 2 && s == 1 ? 2 : g == 1 && s == 2 ? 7 : 5) :
+                         (g == 2 && s == 1 ? 2 : g == 1 && s == 3 ? 6 : 4);
+            double eventsPerBar = starts.Count / (double)harmony.Length;
+            score -= Math.Abs(eventsPerBar - target) * (kind == TrackKind.Pads ? 1.5 : 3.5);
+            if (!harmonic)
+            {
+                double allowed = g == 2 ? .7 : .43;
+                score -= Math.Max(0, repeatCount - sorted.Count * allowed) * 4;
+                score -= jumps * (g == 3 ? 1.5 : 3);
+                if (pitches.Count <= 2 && g != 2 && sorted.Count > 5) score -= 9;
+            }
+            // Real pitch movement between the chord tones and steady rhythmic
+            // spacing both matter, but a groove may still be intentionally repetitive.
+            if (starts.Count >= 3)
+            {
+                var gaps = new HashSet<long>();
+                long prior = -1;
+                foreach (var note in sorted)
+                {
+                    if (prior != note.startTick)
+                    {
+                        if (prior >= 0) gaps.Add(note.startTick - prior);
+                        prior = note.startTick;
+                    }
+                }
+                if (g != 2 && gaps.Count >= 2) score += 3;
+            }
+            if (sorted[0].startTick == 0) score += 2;
+            return score;
+        }
+
+        private static bool IsChordTone(int pitch, int key, int degree, bool minor, int[] external)
+        {
+            if (external != null)
+            {
+                foreach (int n in external) if (Mod(n, 12) == Mod(pitch, 12)) return true;
+                return false;
+            }
+            int root = key + Scale(degree, minor);
+            return Mod(pitch - root, 12) == 0 ||
+                   Mod(pitch - root, 12) == Mod(Scale(degree + 2, minor) - Scale(degree, minor), 12) ||
+                   Mod(pitch - root, 12) == Mod(Scale(degree + 4, minor) - Scale(degree, minor), 12) ||
+                   Mod(pitch - root, 12) == Mod(Scale(degree + 6, minor) - Scale(degree, minor), 12) ||
+                   Mod(pitch - root, 12) == Mod(Scale(degree + 8, minor) - Scale(degree, minor), 12);
+        }
+
         /// <summary>
         /// Musical humanization, not arbitrary quantization noise. Dance kicks hold the
         /// grid; hats and ghost snares establish the pocket. MIDI chords remain aligned
