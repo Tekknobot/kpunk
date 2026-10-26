@@ -683,6 +683,34 @@ namespace ZPunk.DAW
             button.style.paddingRight = 3 * uiScale;
             button.style.fontSize = 12 * uiScale;
             button.style.whiteSpace = WhiteSpace.NoWrap;
+            // Icons and short captions improve scanability without replacing the
+            // user's familiar action labels or changing their click callbacks.
+            string icon = null;
+            switch (label)
+            {
+                case "+ CLIP": icon = "plus"; break;
+                case "EDIT": icon = "edit"; break;
+                case "DUP": icon = "copy"; break;
+                case "DEL": icon = "delete"; break;
+                case "- ZOOM": icon = "zoom-out"; break;
+                case "+ ZOOM": icon = "zoom-in"; break;
+                case "SNAP BAR": icon = "magnet"; break;
+                case "LOOP OFF": icon = "loop"; break;
+            }
+            if (icon != null)
+            {
+                ZPunkUIIcons.Apply(button, icon, label, 17f);
+                button.style.backgroundColor = new Color(.14f, .18f, .24f);
+                button.style.borderTopWidth = 1;
+                button.style.borderBottomWidth = 1;
+                button.style.borderLeftWidth = 1;
+                button.style.borderRightWidth = 1;
+                var outline = new Color(.32f, .40f, .49f);
+                button.style.borderTopColor = outline;
+                button.style.borderBottomColor = outline;
+                button.style.borderLeftColor = outline;
+                button.style.borderRightColor = outline;
+            }
             return button;
         }
 
@@ -890,7 +918,7 @@ namespace ZPunk.DAW
             UpdateDetails();
             if (song.arrangementLoopEnabled && !song.loopLengthCustom)
                 song.loopEndTick = AutomaticLoopEnd(song);
-            if (loopSongButton != null) loopSongButton.text = song.arrangementLoopEnabled ? "LOOP ON" : "LOOP OFF";
+            if (loopSongButton != null) ZPunkUIIcons.SetCaption(loopSongButton, song.arrangementLoopEnabled ? "LOOP ON" : "LOOP OFF");
             if (loopBarsLabel != null)
             {
                 long loopTicks = song.loopLengthCustom ? song.loopEndTick : AutomaticLoopEnd(song);
@@ -1462,17 +1490,17 @@ namespace ZPunk.DAW
             if (snapQuantum == SongData.TicksPerBar4)
             {
                 snapQuantum = SongData.TicksPerQuarter;
-                snapButton.text = "SNAP 1/4";
+                ZPunkUIIcons.SetCaption(snapButton, "SNAP 1/4");
             }
             else if (snapQuantum == SongData.TicksPerQuarter)
             {
                 snapQuantum = SongData.TicksPerSixteenth;
-                snapButton.text = "SNAP 1/16";
+                ZPunkUIIcons.SetCaption(snapButton, "SNAP 1/16");
             }
             else
             {
                 snapQuantum = SongData.TicksPerBar4;
-                snapButton.text = "SNAP BAR";
+                ZPunkUIIcons.SetCaption(snapButton, "SNAP BAR");
             }
         }
         private void PageBars(int direction)

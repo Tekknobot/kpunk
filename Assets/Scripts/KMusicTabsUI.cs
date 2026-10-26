@@ -275,6 +275,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
         headerSave.style.flexShrink=0;
         headerSave.style.marginRight=6;
         headerSave.style.backgroundColor=new Color(.105f,.188f,.230f);
+        // Same white icon language on ARRANGE / CREATE, while leaving the MIX
+        // channel controls and other workspaces untouched.
+        ZPunkUIIcons.Apply(headerSave,"save","SAVE",17f);
         headerRow.Add(headerSave);
 
         menuToggle=Button("",ToggleMenu);

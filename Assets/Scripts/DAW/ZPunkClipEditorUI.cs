@@ -240,7 +240,16 @@ namespace ZPunk.DAW
             heading.style.height = 50;
             heading.style.flexShrink = 0;
             heading.Add(title);
-            heading.Add(Btn("+ NEW CLIP", NewClip, 98));
+            var newClipButton = Btn("+ NEW CLIP", NewClip, 98);
+            ZPunkUIIcons.Apply(newClipButton, "plus", "NEW CLIP", 17f, false);
+            newClipButton.style.minWidth = 99;
+            newClipButton.style.paddingLeft = 5;
+            newClipButton.style.paddingRight = 5;
+            newClipButton.style.borderTopWidth = 1;
+            newClipButton.style.borderBottomWidth = 1;
+            newClipButton.style.borderLeftWidth = 1;
+            newClipButton.style.borderRightWidth = 1;
+            heading.Add(newClipButton);
             root.Add(heading);
 
             var tracks = new ScrollView(ScrollViewMode.Horizontal);
@@ -267,18 +276,33 @@ namespace ZPunk.DAW
             kitSelector.style.flexDirection = FlexDirection.Row;
             kitSelector.style.alignItems = Align.Center;
             kitSelector.style.marginTop = 2;
-            var kitCaption = Txt("DRUM KIT",10,Muted);
-            kitCaption.style.width = 72;
-            kitCaption.style.flexShrink = 0;
-            kitSelector.Add(kitCaption);
-            kitSelector.Add(Btn("<", () => StepDrumKit(-1), 40));
-            kitName = Txt("LOADING",11,Ink);
-            kitName.style.flexGrow = 1;
-            kitName.style.minWidth = 0;
-            kitName.style.whiteSpace = WhiteSpace.NoWrap;
+            // A single, centred preset selector, like a compact VST patch browser.
+            // Preserves the old +/- kit callbacks and its reserved 50-point row.
+            var previousKit = Btn("<", () => StepDrumKit(-1), 40);
+            ZPunkUIIcons.Apply(previousKit, "left", "", 19f);
+            previousKit.tooltip = "Previous drum kit";
+            kitSelector.Add(previousKit);
+            var kitDetails = new VisualElement();
+            kitDetails.style.flexGrow = 1;
+            kitDetails.style.minWidth = 0;
+            kitDetails.style.alignItems = Align.Center;
+            kitDetails.style.justifyContent = Justify.Center;
+            kitName = Txt("LOADING", 13, Ink);
             kitName.style.unityTextAlign = TextAnchor.MiddleCenter;
-            kitSelector.Add(kitName);
-            kitSelector.Add(Btn(">", () => StepDrumKit(1), 40));
+            kitName.style.unityFontStyleAndWeight = FontStyle.Bold;
+            kitName.style.whiteSpace = WhiteSpace.NoWrap;
+            kitName.style.textOverflow = TextOverflow.Ellipsis;
+            kitName.style.overflow = Overflow.Hidden;
+            kitName.style.maxWidth = Length.Percent(100);
+            kitDetails.Add(kitName);
+            var kitCaption = Txt("DRUM KIT", 10, Muted);
+            kitCaption.style.unityTextAlign = TextAnchor.MiddleCenter;
+            kitDetails.Add(kitCaption);
+            kitSelector.Add(kitDetails);
+            var nextKit = Btn(">", () => StepDrumKit(1), 40);
+            ZPunkUIIcons.Apply(nextKit, "right", "", 19f);
+            nextKit.tooltip = "Next drum kit";
+            kitSelector.Add(nextKit);
             root.Add(kitSelector);
 
             // Six equally sized controls fit a portrait phone on ONE row.
@@ -291,12 +315,23 @@ namespace ZPunk.DAW
             controls.style.height = 54;
             controls.style.flexShrink = 0;
             controls.style.marginTop = 2;
-            controls.Add(EqualButton("OCT -", () => { octave = Mathf.Max(-1,octave-1); ScrollToOctave(); }));
-            controls.Add(EqualButton("OCT +", () => { octave = Mathf.Min(9,octave+1); ScrollToOctave(); }));
-            controls.Add(EqualButton("LEN -", () => ChangeLength(-1)));
-            controls.Add(EqualButton("LEN +", () => ChangeLength(1)));
-            controls.Add(EqualButton("DEL", DeleteSelectedNote));
+            var octaveDown = EqualButton("OCT -", () => { octave = Mathf.Max(-1,octave-1); ScrollToOctave(); });
+            var octaveUp = EqualButton("OCT +", () => { octave = Mathf.Min(9,octave+1); ScrollToOctave(); });
+            var lengthDown = EqualButton("LEN -", () => ChangeLength(-1));
+            var lengthUp = EqualButton("LEN +", () => ChangeLength(1));
+            var deleteNote = EqualButton("DEL", DeleteSelectedNote);
             generatorQuickButton = EqualButton("GEN", () => OpenGenerator(trackIndex));
+            ZPunkUIIcons.Apply(octaveDown, "down", "OCT -", 17f);
+            ZPunkUIIcons.Apply(octaveUp, "up", "OCT +", 17f);
+            ZPunkUIIcons.Apply(lengthDown, "minus", "LEN -", 17f);
+            ZPunkUIIcons.Apply(lengthUp, "plus", "LEN +", 17f);
+            ZPunkUIIcons.Apply(deleteNote, "delete", "DEL", 17f);
+            ZPunkUIIcons.Apply(generatorQuickButton, "spark", "GEN", 17f);
+            controls.Add(octaveDown);
+            controls.Add(octaveUp);
+            controls.Add(lengthDown);
+            controls.Add(lengthUp);
+            controls.Add(deleteNote);
             controls.Add(generatorQuickButton);
             root.Add(controls);
 
@@ -2757,11 +2792,23 @@ namespace ZPunk.DAW
                     item.RegisterCallback<PointerCaptureOutEvent>(evt => { pressing = false; hold?.Pause(); });
                     item.RegisterCallback<DetachFromPanelEvent>(evt => { pressing = false; hold?.Pause(); });
                 }
-                item.style.backgroundColor=i==trackIndex ? colors[Mathf.Min(i,4)] : Raised;
-                item.style.color=i==trackIndex ? new Color(.03f,.07f,.10f) : Ink;
+                var trackColor = colors[Mathf.Min(i,4)];
+                bool isSelectedTrack = i == trackIndex;
+                item.style.backgroundColor = isSelectedTrack ? trackColor : Raised;
+                item.style.color = isSelectedTrack ? new Color(.03f,.07f,.10f) : trackColor;
+                item.style.borderTopWidth = 1;
+                item.style.borderBottomWidth = 1;
+                item.style.borderLeftWidth = 1;
+                item.style.borderRightWidth = 1;
+                item.style.borderTopColor = isSelectedTrack ? trackColor : new Color(trackColor.r, trackColor.g, trackColor.b, 0.82f);
+                item.style.borderBottomColor = isSelectedTrack ? trackColor : new Color(trackColor.r, trackColor.g, trackColor.b, 0.82f);
+                item.style.borderLeftColor = isSelectedTrack ? trackColor : new Color(trackColor.r, trackColor.g, trackColor.b, 0.82f);
+                item.style.borderRightColor = isSelectedTrack ? trackColor : new Color(trackColor.r, trackColor.g, trackColor.b, 0.82f);
                 chips.Add(item);
             }
-            chips.Add(EqualButton("SAMPLE", OpenSampler));
+            var sampleButton = EqualButton("SAMPLE", OpenSampler);
+            sampleButton.style.color = Ink;
+            chips.Add(sampleButton);
             if (trackScroller != null)
                 trackScroller.schedule.Execute(() => { if (trackScroller != null) trackScroller.scrollOffset = new Vector2(chipX, 0); }).ExecuteLater(0);
             RefreshKitSelector();
