@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
   m_Name: Kit_03
   m_EditorClassIdentifier: 
-  kitName: 909
+  kitName: HMA 909
   kick: {fileID: 8300000, guid: f5907b153ec82534ea5f96cd9f656af7, type: 3}
   snare: {fileID: 8300000, guid: f429e31479ced4c47936d93e74c65865, type: 3}
   clap: {fileID: 8300000, guid: 3cca2b083121fc844ae4229533e3c8e0, type: 3}

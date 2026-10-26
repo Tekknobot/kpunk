@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
   m_Name: Kit_04
   m_EditorClassIdentifier: 
-  kitName: Boombap
+  kitName: HMA Boombap
   kick: {fileID: 8300000, guid: b203eba5e3b5b7f418c3a1795a4d31f2, type: 3}
   snare: {fileID: 8300000, guid: 387a276482c30d547bdb3cba744bd4b5, type: 3}
   clap: {fileID: 8300000, guid: c149a348e054c194b8a613c674ebe249, type: 3}

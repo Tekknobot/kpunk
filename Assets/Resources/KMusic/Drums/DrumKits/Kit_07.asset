@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
   m_Name: Kit_07
   m_EditorClassIdentifier: 
-  kitName: Triphop
+  kitName: HMA Triphop
   kick: {fileID: 8300000, guid: bffb321a57124694dbf0cb0ab0097145, type: 3}
   snare: {fileID: 8300000, guid: 6c5bbb0fd4c9e614cba876621e7d8ce0, type: 3}
   clap: {fileID: 8300000, guid: e2f6a3291dc144e43870688b0bdd642e, type: 3}

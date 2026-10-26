@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 79fc344d3bc331244946440ddf75a2f8, type: 3}
   m_Name: Kit_09
   m_EditorClassIdentifier: 
-  kitName: KIT-808
+  kitName: ROL 808
   kick: {fileID: 8300000, guid: 7dd52c9923233b54b92a0b8fb9d4c8ce, type: 3}
   snare: {fileID: 8300000, guid: 71e22f69fe5f6614e9daea972e9faf60, type: 3}
   clap: {fileID: 8300000, guid: 6b380c931b8185b4db505fe71a6a3aed, type: 3}

@@ -1,0 +1,313 @@
+{
+  "version": 1,
+  "collection": "ZPUNK Factory Drum Collection",
+  "assetFolder": "Assets/Resources/KMusic/Drums/DrumKits",
+  "notes": "Generated sample assignments. Classic kits and existing Unity assets are not overwritten.",
+  "kits": [
+    {
+      "kitName": "Classic 909",
+      "description": "Tight 909-based four-on-the-floor house and techno kit",
+      "tags": [
+        "house",
+        "techno"
+      ],
+      "assetName": "Kit_12",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_12.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909kick_02_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909snare_11_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909clap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909hat_c_01_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909hat_o_02_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909ride_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909rim_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909crash_crash.wav"
+    },
+    {
+      "kitName": "Deep 808",
+      "description": "Deep 808 kick, electronic snare and classic drum machine percussion",
+      "tags": [
+        "hip hop",
+        "electro",
+        "trap"
+      ],
+      "assetName": "Kit_13",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_13.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808kick05_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808snare06_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808clap01_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808hat_c02_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808hat_o02_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808ride03_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808rim01_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909crash_crash.wav"
+    },
+    {
+      "kitName": "707 House",
+      "description": "Bright early-house 707 percussion",
+      "tags": [
+        "house",
+        "dance"
+      ],
+      "assetName": "Kit_14",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_14.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707kick01_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707snare01_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707clap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707hat_c_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707hat_o_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707ride_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707rimshot_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707crash_crash.wav"
+    },
+    {
+      "kitName": "Acid 606",
+      "description": "Sharp 606 acid and minimal techno kit with 707 accents",
+      "tags": [
+        "acid",
+        "techno"
+      ],
+      "assetName": "Kit_15",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_15.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606kick04_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606snare04_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707clap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606hat_c03_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606hat_o03_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606cymb02_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707rimshot_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606cymb04_crash.wav"
+    },
+    {
+      "kitName": "Linn Funk",
+      "description": "Classic Linn-style sampled drum sound for funk and boogie",
+      "tags": [
+        "funk",
+        "boogie"
+      ],
+      "assetName": "Kit_16",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_16.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_kick_hard_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_snare_hard_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_clap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_cl_hat_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_open_hat_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_ride_hard_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_sidestick_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_crash_crash.wav"
+    },
+    {
+      "kitName": "DMX Electro",
+      "description": "DMX-based punchy early electro drums",
+      "tags": [
+        "electro",
+        "hip hop"
+      ],
+      "assetName": "Kit_17",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_17.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxkick01_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxsnare02_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxclap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxhat_c_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxhat_o_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxride_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxrim_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxcrash_crash.wav"
+    },
+    {
+      "kitName": "SP12 Boom Bap",
+      "description": "SP-12 drums with complementary acoustic cymbals and clap",
+      "tags": [
+        "boom bap",
+        "hip hop"
+      ],
+      "assetName": "Kit_18",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_18.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/emu_sp12/bd1_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/emu_sp12/snare_2_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxclap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/emu_sp12/hihat_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/emu_sp12/open_hi_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_ride_soft_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/emu_sp12/rim_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxcrash_crash.wav"
+    },
+    {
+      "kitName": "RX5 Dance",
+      "description": "Yamaha RX-5 digital dance drums with classic accents",
+      "tags": [
+        "dance",
+        "80s"
+      ],
+      "assetName": "Kit_19",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_19.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/yamaha_rx_5/maxv_rx5c1bd1_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/yamaha_rx_5/maxv_rx5c2sd3_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_clap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/yamaha_rx_5/maxv_rx5ihcl_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/yamaha_rx_5/maxv_rx5ihop_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxride_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/yamaha_rx_5/maxv_rx5rim1_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/yamaha_rx_5/maxv_rx5splsh_crash.wav"
+    },
+    {
+      "kitName": "CR78 Vintage",
+      "description": "CR-78 vintage rhythm-box core with sampled accessory sounds",
+      "tags": [
+        "vintage",
+        "downtempo"
+      ],
+      "assetName": "Kit_20",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_20.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_cr_78/cr78kick_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_cr_78/cr78snare_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_clap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_cr_78/cr78hat_c_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_cr_78/cr78hat_o_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_ride_soft_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_sidestick_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707crash_crash.wav"
+    },
+    {
+      "kitName": "Simmons Electronic",
+      "description": "Simmons SDS-5 synthesized kicks and snares blended with period-style cymbals",
+      "tags": [
+        "synth drums",
+        "80s"
+      ],
+      "assetName": "Kit_21",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_21.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/simmons_sd_5/maxv_sds5_kick_1_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/simmons_sd_5/maxv_sds5_snare_hi_1_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxclap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606hat_c05_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606hat_o03_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707ride_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707rimshot_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxcrash_crash.wav"
+    },
+    {
+      "kitName": "90s Eurodance",
+      "description": "90s dance mix combining tight 909 low end and snappy Linn/RX-5 elements",
+      "tags": [
+        "dance",
+        "90s"
+      ],
+      "assetName": "Kit_22",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_22.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909kick_03_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_snare_hard_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707clap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909hat_c_02_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707hat_o_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909ride_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/yamaha_rx_5/maxv_rx5rim1_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707crash_crash.wav"
+    },
+    {
+      "kitName": "Deep House",
+      "description": "Rounded 808 kick with softer vintage drum accents",
+      "tags": [
+        "deep house",
+        "chill"
+      ],
+      "assetName": "Kit_23",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_23.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808kick04_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909snare_05_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_clap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808hat_c01_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808hat_o03_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_ride_soft_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808rim02_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909crash_crash.wav"
+    },
+    {
+      "kitName": "Industrial Techno",
+      "description": "Driving 909 kick and tough Simmons/606 percussion",
+      "tags": [
+        "techno",
+        "industrial"
+      ],
+      "assetName": "Kit_24",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_24.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909kick_06_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/simmons_sd_5/maxv_sds5_snare_lo_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxclap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606hat_c05_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606hat_o05_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909ride_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxrim_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606cymb05_crash.wav"
+    },
+    {
+      "kitName": "Old School Hip Hop",
+      "description": "Classic 12-bit-era inspired sampled drums and dry hats",
+      "tags": [
+        "boom bap",
+        "hip hop"
+      ],
+      "assetName": "Kit_25",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_25.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/emu_sp12/kick_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/emu_sp12/big_esnare_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxclap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_cl_hat_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808hat_o01_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_ride_soft_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/emu_sp12/rim_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxcrash_crash.wav"
+    },
+    {
+      "kitName": "Electro Funk",
+      "description": "DMX and 808 foundations with bright Linn and 707 accents",
+      "tags": [
+        "electro",
+        "funk"
+      ],
+      "assetName": "Kit_26",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_26.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxkick02_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808snare02_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_clap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707hat_c_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707hat_o_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808ride02_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_707/tr_707rimshot_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/linn_drum_lm2/linn_crash_crash.wav"
+    },
+    {
+      "kitName": "ZPUNK Hybrid",
+      "description": "Wide-genre factory sound combining 909, SP-12, DMX and 606 character",
+      "tags": [
+        "signature",
+        "hybrid"
+      ],
+      "assetName": "Kit_27",
+      "assetPath": "Assets/Resources/KMusic/Drums/DrumKits/Kit_27.asset",
+      "sampleFolder": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool",
+      "kick": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909kick_01_kick.wav",
+      "snare": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/emu_sp12/snare_3_snare.wav",
+      "clap": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/oberheim_dmx/dmxclap_clap.wav",
+      "hatClosed": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606hat_c04_hatClosed.wav",
+      "hatOpen": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_606/tr606hat_o04_hatOpen.wav",
+      "ride": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909ride_ride.wav",
+      "rim": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_808/tr_808rim01_rim.wav",
+      "crash": "Assets/Resources/KMusic/Drums/DrumKits/ZPUNKFactorySamples/Pool/roland_tr_909/tr_909crash_crash.wav"
+    }
+  ]
+}
