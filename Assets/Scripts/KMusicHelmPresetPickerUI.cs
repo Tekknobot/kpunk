@@ -118,8 +118,10 @@ namespace KMusic
                 }
             }
 
-            // Fallback to index
-            _index = Mathf.Clamp(ProjectPrefs.GetInt(PrefKey_SynthPresetIndex, 0), 0, _all.Count - 1);
+            // A saved path that no longer exists must NEVER be translated through
+            // an old numeric index: the curated bank can have a different order.
+            _index = !string.IsNullOrEmpty(want) ? 0 :
+                Mathf.Clamp(ProjectPrefs.GetInt(PrefKey_SynthPresetIndex, 0), 0, _all.Count - 1);
         }
 
         private void OnEnable()
@@ -229,8 +231,15 @@ namespace KMusic
                 }
             }
 
-            // Fallback to index.
-            if (_pendingPresetIndex >= 0)
+            // An old path missing from this bank must not accidentally select
+            // an unrelated patch with the same numeric index.
+            if (!string.IsNullOrEmpty(_pendingPresetRelPath))
+            {
+                Debug.LogWarning("[ZPUNK SYNTH] Saved patch unavailable: " + _pendingPresetRelPath +
+                                 "; selecting first loadable SYNTH patch.");
+                _index = 0;
+            }
+            else if (_pendingPresetIndex >= 0)
                 _index = Mathf.Clamp(_pendingPresetIndex, 0, _all.Count - 1);
 
             _pendingPresetIndex = -1;
@@ -411,33 +420,44 @@ namespace KMusic
             if (helm == null || _runtimePatch == null)
                 yield break;
 
-            string rel = presetsRootFolder + "/" + relPath;
-
-            string json = null;
-            yield return ReadStreamingText(rel, s => json = s);
-            if (revision != _loadRevision) yield break;
-
-            if (string.IsNullOrEmpty(json))
-            {
-                Debug.LogError("[KMusicHelmPresetPickerUI] Failed to load preset: " + StreamingAssetPath(rel));
-                yield break;
-            }
-
+            // Load the requested patch, if it still exists; otherwise try the bank
+            // from index zero. Index entries alone do not guarantee .helm files.
             HelmPatchFormat fmt = null;
-            try
+            string resolvedPath = null;
+            int resolvedIndex = -1;
+            for (int attempt = -1; attempt < _all.Count; attempt++)
             {
-                fmt = JsonUtility.FromJson<HelmPatchFormat>(json);
+                string candidate = attempt < 0 ? relPath : _all[attempt].relPath;
+                if (string.IsNullOrEmpty(candidate) ||
+                    (attempt >= 0 && string.Equals(candidate, relPath, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                string json = null;
+                yield return ReadStreamingText(presetsRootFolder + "/" + candidate, s => json = s);
+                if (revision != _loadRevision) yield break;
+                if (string.IsNullOrEmpty(json)) continue;
+                HelmPatchFormat parsed = null;
+                try { parsed = JsonUtility.FromJson<HelmPatchFormat>(json); }
+                catch (Exception e) { Debug.LogWarning("[ZPUNK SYNTH] Invalid preset " + candidate + ": " + e.Message); }
+                if (parsed == null || parsed.settings == null) continue;
+                fmt = parsed;
+                resolvedPath = candidate;
+                resolvedIndex = attempt >= 0 ? attempt :
+                    _all.FindIndex(x => string.Equals(x.relPath, candidate, StringComparison.OrdinalIgnoreCase));
+                break;
             }
-            catch (Exception e)
+            if (fmt == null)
             {
-                Debug.LogError("[KMusicHelmPresetPickerUI] JSON parse failed for: " + relPath + "\n" + e);
+                Debug.LogError("[ZPUNK SYNTH] No loadable SYNTH presets found in " + presetsRootFolder);
                 yield break;
             }
-
-            if (fmt == null || fmt.settings == null)
+            if (!string.Equals(resolvedPath, relPath, StringComparison.OrdinalIgnoreCase))
             {
-                Debug.LogError("[KMusicHelmPresetPickerUI] Parsed preset invalid: " + relPath);
-                yield break;
+                Debug.LogWarning("[ZPUNK SYNTH] Missing/invalid patch '" + relPath +
+                                 "'; using '" + resolvedPath + "'.");
+                _legacyPresetRelPath = null;
+                _index = resolvedIndex;
+                UpdatePatchUI();
+                SaveCurrentPresetChoice();
             }
 
             // Startup can complete before Audio Helm's native output and the
@@ -460,7 +480,7 @@ namespace KMusic
             yield return null;
 
             if (revision != _loadRevision) yield break;
-            LastAppliedPresetRelPath = relPath;
+            LastAppliedPresetRelPath = resolvedPath;
             // Replace stale bus values with the newly loaded patch's actual
             // parameters before project-specific overrides are restored.
             ResolveMainSynthBinder();
@@ -468,7 +488,7 @@ namespace KMusic
                 _binder.RequestPullFromHelm();
 
             // Fire after the patch has had a couple of frames to settle and the bus has been synced.
-            PresetApplied?.Invoke(_index, relPath);
+            PresetApplied?.Invoke(_index, resolvedPath);
         }
 
         // ---- StreamingAssets reader (UnityWebRequest on Android, direct file IO elsewhere) ----

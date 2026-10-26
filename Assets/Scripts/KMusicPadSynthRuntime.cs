@@ -66,17 +66,6 @@ namespace KMusic
         private Label _indexLabel;
         private readonly List<PresetEntry> _all = new();
         private int _index;
-        // An older project may refer to an original Pad/ file. Keep its sound
-        // without including factory patches in the curated Patch +/- browsing list.
-        private string _legacyPresetRelPath;
-        private static bool IsLegacyPadPath(string relPath)
-        {
-            if (string.IsNullOrEmpty(relPath) || relPath.Contains("..") ||
-                relPath.Contains("\\") || relPath.StartsWith("/")) return false;
-            return relPath.StartsWith("Pad/", StringComparison.OrdinalIgnoreCase) &&
-                relPath.EndsWith(".helm", StringComparison.OrdinalIgnoreCase) &&
-                !relPath.StartsWith("Pad/ZOR ", StringComparison.OrdinalIgnoreCase);
-        }
         private HelmPatch _runtimePatch;
 
         public event Action<int, string> PresetApplied;
@@ -89,7 +78,6 @@ namespace KMusic
         {
             get
             {
-                if (!string.IsNullOrEmpty(_legacyPresetRelPath)) return _legacyPresetRelPath;
                 if (_all != null && _all.Count > 0 && _index >= 0 && _index < _all.Count)
                     return _all[_index].relPath;
 
@@ -683,8 +671,6 @@ public void ApplyMasterVolume(float normalized)
         private void OnPrev()
         {
             if (_all.Count == 0) return;
-            if (!string.IsNullOrEmpty(_legacyPresetRelPath)) _index = 1;
-            _legacyPresetRelPath = null;
             _index = (_index - 1 + _all.Count) % _all.Count;
             UpdatePatchUI();
             SaveCurrentPresetChoice();
@@ -694,8 +680,6 @@ public void ApplyMasterVolume(float normalized)
         private void OnNext()
         {
             if (_all.Count == 0) return;
-            if (!string.IsNullOrEmpty(_legacyPresetRelPath)) _index = _all.Count - 1;
-            _legacyPresetRelPath = null;
             _index = (_index + 1) % _all.Count;
             UpdatePatchUI();
             SaveCurrentPresetChoice();
@@ -707,8 +691,7 @@ public void ApplyMasterVolume(float normalized)
             if (_all == null || _all.Count == 0) return;
 
             ProjectPrefs.SetInt(PrefKey_PadPresetIndex, _index);
-            ProjectPrefs.SetString(PrefKey_PadPresetRelPath, !string.IsNullOrEmpty(_legacyPresetRelPath)
-                ? _legacyPresetRelPath : (_all[_index].relPath ?? ""));
+            ProjectPrefs.SetString(PrefKey_PadPresetRelPath, _all[_index].relPath ?? "");
             ProjectPrefs.Save();
         }
 
@@ -719,9 +702,7 @@ public void ApplyMasterVolume(float normalized)
                 Debug.LogWarning("[ZPunk Pads] No preset index loaded yet; check HelmPresets/presets_index.txt.");
                 return;
             }
-            int next = !string.IsNullOrEmpty(_legacyPresetRelPath)
-                ? (delta >= 0 ? 0 : _all.Count - 1)
-                : ((_index + delta) % _all.Count + _all.Count) % _all.Count;
+            int next = ((_index + delta) % _all.Count + _all.Count) % _all.Count;
             ApplyPresetChoice(next, null);
         }
 
@@ -740,22 +721,11 @@ public void ApplyMasterVolume(float normalized)
 
             if (!string.IsNullOrEmpty(_pendingPresetRelPath))
             {
-                if (IsLegacyPadPath(_pendingPresetRelPath))
-                {
-                    _legacyPresetRelPath = _pendingPresetRelPath;
-                    _pendingPresetIndex = -1;
-                    _pendingPresetRelPath = null;
-                    UpdatePatchUI();
-                    SaveCurrentPresetChoice();
-                    StartCoroutine(LoadAndApplyPreset(_legacyPresetRelPath));
-                    return;
-                }
                 for (int i = 0; i < _all.Count; i++)
                 {
                     if (string.Equals(_all[i].relPath, _pendingPresetRelPath, StringComparison.OrdinalIgnoreCase))
                     {
                         _index = i;
-                        _legacyPresetRelPath = null;
                         _pendingPresetIndex = -1;
                         _pendingPresetRelPath = null;
                         UpdatePatchUI();
@@ -766,10 +736,16 @@ public void ApplyMasterVolume(float normalized)
                 }
             }
 
-            if (_pendingPresetIndex >= 0)
+            // Do not reuse an old numeric index when its saved patch path vanished.
+            if (!string.IsNullOrEmpty(_pendingPresetRelPath))
+            {
+                Debug.LogWarning("[ZPUNK PADS] Saved patch unavailable: " + _pendingPresetRelPath +
+                                 "; selecting first loadable PADS patch.");
+                _index = 0;
+            }
+            else if (_pendingPresetIndex >= 0)
                 _index = Mathf.Clamp(_pendingPresetIndex, 0, _all.Count - 1);
 
-            _legacyPresetRelPath = null;
             _pendingPresetIndex = -1;
             _pendingPresetRelPath = null;
             UpdatePatchUI();
@@ -782,11 +758,6 @@ public void ApplyMasterVolume(float normalized)
             if (_all.Count == 0) return;
 
             string want = ProjectPrefs.GetString(PrefKey_PadPresetRelPath, "");
-            if (IsLegacyPadPath(want))
-            {
-                _legacyPresetRelPath = want;
-                return;
-            }
             if (!string.IsNullOrEmpty(want))
             {
                 for (int i = 0; i < _all.Count; i++)
@@ -799,7 +770,8 @@ public void ApplyMasterVolume(float normalized)
                 }
             }
 
-            _index = Mathf.Clamp(ProjectPrefs.GetInt(PrefKey_PadPresetIndex, 0), 0, _all.Count - 1);
+            _index = !string.IsNullOrEmpty(want) ? 0 :
+                Mathf.Clamp(ProjectPrefs.GetInt(PrefKey_PadPresetIndex, 0), 0, _all.Count - 1);
         }
 
         private void UpdatePatchUI()
@@ -813,12 +785,6 @@ public void ApplyMasterVolume(float normalized)
                 return;
             }
 
-            if (!string.IsNullOrEmpty(_legacyPresetRelPath))
-            {
-                _patchNameLabel.text = NiceNameFromPath(_legacyPresetRelPath) + " (Legacy)";
-                _indexLabel.text = "LEGACY";
-                return;
-            }
             _patchNameLabel.text = _all[_index].display;
             _indexLabel.text = $"{_index + 1} / {_all.Count}";
         }
@@ -844,7 +810,7 @@ public void ApplyMasterVolume(float normalized)
                 // Bass, percussion, or arpeggiator patches.
                 if (string.IsNullOrEmpty(clean) ||
                     !clean.EndsWith(".helm", StringComparison.OrdinalIgnoreCase) ||
-                    !clean.StartsWith("Pad/ZOR ", StringComparison.OrdinalIgnoreCase))
+                    !clean.StartsWith("Pad/", StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 _all.Add(new PresetEntry
@@ -869,8 +835,7 @@ public void ApplyMasterVolume(float normalized)
             RestorePresetChoice();
             _index = Mathf.Clamp(_index, 0, _all.Count - 1);
             UpdatePatchUI();
-            yield return LoadAndApplyPreset(!string.IsNullOrEmpty(_legacyPresetRelPath)
-                ? _legacyPresetRelPath : _all[_index].relPath);
+            yield return LoadAndApplyPreset(_all[_index].relPath);
         }
 
         private IEnumerator LoadAndApplyPreset(string relPath)
@@ -878,31 +843,58 @@ public void ApplyMasterVolume(float normalized)
             int revision = ++_loadRevision;
             if (helm == null || _runtimePatch == null) yield break;
 
-            string rel = presetsRootFolder + "/" + relPath;
-            string json = null;
-            yield return ReadStreamingText(rel, s => json = s);
-            if (revision != _loadRevision) yield break;
-            if (string.IsNullOrEmpty(json)) yield break;
-
+            // If the saved path was removed, or an indexed file is no longer
+            // bundled, look for the first readable and valid Pad/.helm patch.
             HelmPatchFormat fmt = null;
-            try { fmt = JsonUtility.FromJson<HelmPatchFormat>(json); }
-            catch { }
-            if (fmt == null || fmt.settings == null) yield break;
+            string resolvedPath = null;
+            int resolvedIndex = -1;
+            for (int attempt = -1; attempt < _all.Count; attempt++)
+            {
+                string candidate = attempt < 0 ? relPath : _all[attempt].relPath;
+                if (string.IsNullOrEmpty(candidate) ||
+                    (attempt >= 0 && string.Equals(candidate, relPath, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                string json = null;
+                yield return ReadStreamingText(presetsRootFolder + "/" + candidate, s => json = s);
+                if (revision != _loadRevision) yield break;
+                if (string.IsNullOrEmpty(json)) continue;
+                HelmPatchFormat parsed = null;
+                try { parsed = JsonUtility.FromJson<HelmPatchFormat>(json); }
+                catch (Exception e) { Debug.LogWarning("[ZPUNK PADS] Invalid preset " + candidate + ": " + e.Message); }
+                if (parsed == null || parsed.settings == null) continue;
+                fmt = parsed;
+                resolvedPath = candidate;
+                resolvedIndex = attempt >= 0 ? attempt :
+                    _all.FindIndex(x => string.Equals(x.relPath, candidate, StringComparison.OrdinalIgnoreCase));
+                break;
+            }
+            if (fmt == null)
+            {
+                Debug.LogError("[ZPUNK PADS] No loadable PADS presets found in " + presetsRootFolder);
+                yield break;
+            }
+            if (!string.Equals(resolvedPath, relPath, StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.LogWarning("[ZPUNK PADS] Missing/invalid patch '" + relPath +
+                                 "'; using '" + resolvedPath + "'.");
+                _index = resolvedIndex;
+                UpdatePatchUI();
+                SaveCurrentPresetChoice();
+            }
 
             yield return null;
             yield return null;
             if (revision != _loadRevision) yield break;
             _runtimePatch.patchData = fmt;
             LastAppliedPresetRelPath = null;
-            ZPunk.DAW.ZPunkSoundUI.ClearLiveEdits(helm);
             helm.LoadPatch(_runtimePatch);
             yield return null;
             yield return null;
             if (revision != _loadRevision) yield break;
 
-            LastAppliedPresetRelPath = relPath;
+            LastAppliedPresetRelPath = resolvedPath;
             PullHelmToBus();
-            PresetApplied?.Invoke(_index, relPath);
+            PresetApplied?.Invoke(_index, resolvedPath);
         }
 
         private static IEnumerator ReadStreamingText(string relativePath, Action<string> onDone)
@@ -933,10 +925,9 @@ public void ApplyMasterVolume(float normalized)
             string noExt = relPath.EndsWith(".helm", StringComparison.OrdinalIgnoreCase)
                 ? relPath.Substring(0, relPath.Length - 5)
                 : relPath;
-            // Display the filename, not the folder. Keep its ZOR brand prefix.
-            // Example: Pad/ZOR Techno Detroit Strings.helm -> ZOR Techno Detroit Strings
-            int slash = noExt.LastIndexOf('/');
-            return slash >= 0 ? noExt.Substring(slash + 1) : noExt;
+            // Hide the folder name but retain the ZOR prefix on curated sounds.
+            return noExt.StartsWith("Pad/", StringComparison.OrdinalIgnoreCase)
+                ? noExt.Substring(4) : noExt.Replace("/", " / ");
         }
 
         private static string StreamingAssetPath(string relativePath)
