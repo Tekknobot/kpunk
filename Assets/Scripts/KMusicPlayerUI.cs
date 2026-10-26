@@ -168,6 +168,103 @@ public class KMusicPlayerUI : MonoBehaviour
     private bool _sourceBpmRhythmic;
     private bool _sourceBpmManual;
     private float _sourceBpmConfidence;
+
+    // TAP BPM measures the original audio's musical pulse, never the warped
+    // preview. Retain the most recent intervals so continued tapping refines
+    // the tempo while isolated mis-taps have little influence.
+    private readonly List<float> _tapBpmIntervals = new List<float>(8);
+    private float _lastTapBpmAt = -10f;
+    private float _tapBpmCommitAt = -1f;
+    private int _tapBpmCount;
+    private string _tapBpmStatus = "";
+    public string DawTapBpmStatus => _tapBpmStatus;
+
+    private void ResetTapBpmSession(bool clearStatus = true)
+    {
+        _tapBpmIntervals.Clear();
+        _lastTapBpmAt = -10f;
+        _tapBpmCount = 0;
+        _tapBpmCommitAt = -1f;
+        if (clearStatus) _tapBpmStatus = "";
+    }
+
+    /// <summary>
+    /// Tap quarter-note beats in the ORIGINAL sample. Require four taps before
+    /// applying a manual BPM; resynthesize only after the user stops tapping.
+    /// This avoids launching an expensive warp on every beat on a phone.
+    /// </summary>
+    public void DawTapSourceBpm()
+    {
+        if (_clip == null) return;
+        // The already-stretched preview plays toward the song BPM. Tapping
+        // that would assign the WRONG source tempo; audition original audio.
+        if (_autoWarpEnabled && _warpedClip != null)
+        {
+            _tapBpmStatus = "TURN WARP OFF / TAP ORIGINAL AUDIO";
+            return;
+        }
+        if (_warpProcessing)
+        {
+            _tapBpmStatus = "WAIT FOR WARP TO FINISH";
+            return;
+        }
+        float now = Time.unscaledTime;
+        float interval = now - _lastTapBpmAt;
+        if (_tapBpmCount == 0 || interval > 2.0f)
+        {
+            ResetTapBpmSession();
+            _tapBpmCount = 1;
+            _lastTapBpmAt = now;
+            _tapBpmStatus = "TAP 1/4 / FOLLOW THE ORIGINAL BEAT";
+            return;
+        }
+        // Reject accidental double clicks without breaking the tapping session.
+        if (interval < .25f) return;
+        _lastTapBpmAt = now;
+        _tapBpmCount++;
+        _tapBpmIntervals.Add(interval);
+        if (_tapBpmIntervals.Count > 7) _tapBpmIntervals.RemoveAt(0);
+        if (_tapBpmCount < 4)
+        {
+            _tapBpmStatus = "TAP " + _tapBpmCount + "/4 / KEEP TAPPING";
+            return;
+        }
+
+        // Median-filter then average matching intervals. A single late beat
+        // should not cut the estimated tempo in half.
+        var sorted = _tapBpmIntervals.ToArray();
+        Array.Sort(sorted);
+        float median = sorted[sorted.Length / 2];
+        if ((sorted.Length & 1) == 0)
+            median = (sorted[sorted.Length / 2 - 1] + median) * .5f;
+        float sum = 0f;
+        int count = 0;
+        for (int i = 0; i < sorted.Length; i++)
+        {
+            if (Mathf.Abs(sorted[i] - median) > median * .22f) continue;
+            sum += sorted[i];
+            count++;
+        }
+        if (count == 0 || sum <= 0f) return;
+        float bpm = 60f * count / sum;
+        if (bpm < 40f || bpm > 240f)
+        {
+            _tapBpmStatus = "TAP BETWEEN 40 AND 240 BPM";
+            return;
+        }
+        _sourceBpm = Mathf.Round(bpm * 10f) / 10f;
+        _sourceBpmManual = true;
+        _sourceBpmRhythmic = false;
+        _sourceBpmConfidence = 0f;
+        _restoredSourceTempo = false;
+        // Invalidate any slower detection job so it cannot overwrite the taps.
+        _tempoDetectionRevision++;
+        _tempoDetectionRunning = false;
+        _tempoDetectionStatus = "TAPPED SOURCE BPM " + _sourceBpm.ToString("0.0");
+        _tapBpmStatus = "TAPPED " + _sourceBpm.ToString("0.0") +
+            " BPM / " + (_autoWarpEnabled ? "RE-WARP AFTER FINAL TAP" : "WARP OFF");
+        _tapBpmCommitAt = _autoWarpEnabled ? now + 1.2f : -1f;
+    }
     public string DawTrackBpmLabel => _clip == null ? "TRACK BPM / NO SAMPLE" :
         _sourceBpm <= 0f ? "TRACK BPM / UNKNOWN" :
         "TRACK " + _sourceBpm.ToString("0.#") + " BPM / " +
@@ -957,6 +1054,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _pendingProjectWarpSampleId = null;
         _hasPendingProjectWarp = false;
         _restoredSourceTempo = false;
+        ResetTapBpmSession();
 
         if (saved != null && string.Equals(CanonicalSampleId(saved.sampleId),
             CanonicalSampleId(_clipResourcesPath), StringComparison.Ordinal))
@@ -1003,6 +1101,7 @@ public class KMusicPlayerUI : MonoBehaviour
     public void DawDetectSourceBpm()
     {
         if (_clip == null || _tempoDetectionRunning) return;
+        ResetTapBpmSession();
         _restoredSourceTempo = false;
         int revision = ++_tempoDetectionRevision;
         _tempoDetectionRunning = true;
@@ -1188,6 +1287,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _warpProgress = 0f;
         _tempoDetectionRevision++;
         _tempoDetectionRunning = false;
+        ResetTapBpmSession();
         ResetSampleKey();
         ResetTransientAnalysis(true);
         if (_markerPreviewCoroutine != null)
@@ -2239,14 +2339,19 @@ public class KMusicPlayerUI : MonoBehaviour
     }
     public void DawToggleAutoWarp()
     {
+        ResetTapBpmSession(false);
         _autoWarpEnabled = !_autoWarpEnabled;
         ProjectPrefs.SetInt(WarpEnabledKey, _autoWarpEnabled ? 1 : 0);
         ProjectPrefs.Save();
+        if (_sourceBpmManual && _clip != null)
+            _tapBpmStatus = "MANUAL " + _sourceBpm.ToString("0.0") + " BPM / " +
+                (_autoWarpEnabled ? "WARP ON" : "WARP OFF / TAP ORIGINAL");
         QueueWarp(true);
     }
     public void DawAdjustSourceBpm(float delta)
     {
         if (_clip == null) return;
+        ResetTapBpmSession();
         _sourceBpm = Mathf.Clamp((_sourceBpm > 0 ? _sourceBpm : CurrentSongTempo()) + delta, 40f, 240f);
         _sourceBpmManual = true;
         _restoredSourceTempo = false;
@@ -2256,11 +2361,17 @@ public class KMusicPlayerUI : MonoBehaviour
     public void DawScaleSourceBpm(float scale)
     {
         if (_clip == null) return;
+        ResetTapBpmSession();
         _sourceBpm = Mathf.Round(Mathf.Clamp(_sourceBpm * scale,
             40f, 240f) * 10f) / 10f;
         _sourceBpmManual = true;
+        _sourceBpmRhythmic = false;
+        _sourceBpmConfidence = 0f;
         _restoredSourceTempo = false;
+        _tempoDetectionRevision++;
+        _tempoDetectionRunning = false;
         _tempoDetectionStatus = "SOURCE BPM ADJUSTED / CHECK BY EAR";
+        _tapBpmStatus = "MANUAL " + _sourceBpm.ToString("0.0") + " BPM / CHECK GRID";
         QueueWarp();
     }
     private float CurrentSongTempo()
@@ -2306,6 +2417,7 @@ public class KMusicPlayerUI : MonoBehaviour
         _warpSourceEnd01 = 1f;
         _tempoDetectionRevision++;
         _tempoDetectionRunning = false;
+        ResetTapBpmSession();
         _tempoDetectionStatus = "";
         _sourceBpm = ZPunkSampleWarp.EstimateLoopBpm(_clip, CurrentSongTempo());
         _sourceBpmRhythmic = false;
@@ -2352,6 +2464,13 @@ public class KMusicPlayerUI : MonoBehaviour
     private void Update()
     {
         if (_clip == null) return;
+        if (_tapBpmCommitAt > 0f && Time.unscaledTime >= _tapBpmCommitAt)
+        {
+            _tapBpmCommitAt = -1f;
+            if (_autoWarpEnabled) QueueWarp();
+            _tapBpmStatus = "MANUAL " + _sourceBpm.ToString("0.0") + " BPM / " +
+                (_autoWarpEnabled ? "WARP QUEUED" : "WARP OFF");
+        }
         if (Time.unscaledTime >= _nextWarpCheck)
         {
             _nextWarpCheck = Time.unscaledTime + .40f;

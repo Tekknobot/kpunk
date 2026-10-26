@@ -61,6 +61,51 @@ namespace ZPunk.DAW
         private int sampleCursor;
         private int midiCursor;
         private long cycle;
+        // An arrangement edit rebuilds the event plan while earlier audio starts may
+        // already be waiting inside Unity's DSP scheduler. Remember committed starts
+        // so rebuilding a plan cannot double-trigger the same boundary hit.
+        private struct ScheduledSampleKey : IEquatable<ScheduledSampleKey>
+        {
+            public long cycleId;
+            public long tick;
+            public int track;
+            public SongEventPlanner.EventType type;
+            public int value;
+
+            public ScheduledSampleKey(long cycleId, SongEventPlanner.Event e)
+            {
+                this.cycleId = cycleId;
+                tick = e.tick;
+                track = e.trackIndex;
+                type = e.type;
+                value = e.value;
+            }
+
+            public bool Equals(ScheduledSampleKey other)
+            {
+                return cycleId == other.cycleId && tick == other.tick &&
+                    track == other.track && type == other.type && value == other.value;
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is ScheduledSampleKey other && Equals(other);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = cycleId.GetHashCode();
+                    hash = (hash * 397) ^ tick.GetHashCode();
+                    hash = (hash * 397) ^ track;
+                    hash = (hash * 397) ^ (int)type;
+                    return (hash * 397) ^ value;
+                }
+            }
+        }
+        private readonly HashSet<ScheduledSampleKey> scheduledSamples =
+            new HashSet<ScheduledSampleKey>();
         private float bpm;
         // An edited song can replace the active plan without resetting the transport.
         // DSP voices already queued within the lookahead interval cannot be recalled.
@@ -224,6 +269,7 @@ namespace ZPunk.DAW
             sampleCursor = 0;
             midiCursor = 0;
             cycle = 0;
+            scheduledSamples.Clear();
             prefetchedLoopSamples = 0;
             paused = false;
             CurrentTick = startTick;
@@ -252,15 +298,23 @@ namespace ZPunk.DAW
             if (updated != null) song = updated;
             if (!playing) return;
             double now = AudioSettings.dspTime;
-            long atTick = CurrentTick;
+            // Preserve the fractional musical phase, not the last displayed whole
+            // tick (which can lag by one 30-fps mobile frame).
+            bool beforeStart = now < anchorDsp;
+            double exactTick = beforeStart ? startTick :
+                startTick + (now - anchorDsp) / secondsPerTick;
+            long atTick = (long)Math.Max(0.0, Math.Floor(exactTick));
             bpm = Mathf.Clamp(nextBpm, 1f, 400f);
             secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
-            anchorDsp = now - (atTick - startTick) * secondsPerTick;
+            if (!beforeStart)
+                anchorDsp = now - (exactTick - startTick) * secondsPerTick;
             if (clock != null) clock.bpm = bpm;
-            // Drums/chops already queued within the short lookahead may retain old timing.
-            long safeTick = atTick + (long)Math.Ceiling((audioLookahead + .02f) / secondsPerTick);
+            // Replay the scheduler's lookahead against the new tempo. Already queued
+            // events retain their old DSP time and are deduplicated by identity;
+            // previously *unscheduled* events must not be discarded wholesale.
+            sampleCursor = 0;
             while (plan != null && sampleCursor < plan.samples.Count &&
-                   plan.samples[sampleCursor].tick < safeTick) sampleCursor++;
+                   plan.samples[sampleCursor].tick < atTick) sampleCursor++;
             prefetchedLoopSamples = 0;
             liveRevision++;
         }
@@ -292,15 +346,34 @@ namespace ZPunk.DAW
                 return;
             }
             double now = AudioSettings.dspTime;
-            long position = CurrentTick;
-            bool tempoChanged = Math.Abs(song.bpm - bpm) > .01f;
-            if (tempoChanged)
+            bool beforeStart = now < anchorDsp;
+            double exactTick = beforeStart ? startTick :
+                startTick + (now - anchorDsp) / secondsPerTick;
+            long position = (long)Math.Max(0.0, Math.Floor(exactTick));
+            if (Math.Abs(song.bpm - bpm) > .01f)
             {
                 bpm = Mathf.Clamp(song.bpm, 1f, 400f);
                 secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
-                // Keep the current tick at the current DSP time rather than restarting.
-                anchorDsp = now - (position - startTick) * secondsPerTick;
+                // Fractional-tick phase continuity avoids a frame-sized tempo jump.
+                if (!beforeStart)
+                    anchorDsp = now - (exactTick - startTick) * secondsPerTick;
                 if (clock != null) clock.bpm = bpm;
+            }
+            // A future-only edit (especially DUP) must not retrigger notes already
+            // sounding. Compare the actual held pitches at the current tick.
+            bool heldNotesUnchanged = beforeStart || SameHeldNotes(plan, next, position);
+            if (heldNotesUnchanged && !beforeStart)
+            {
+                // The plan can be identical while a mute/solo edit changes which
+                // held voices should actually sound. The meter tracks real NoteOn
+                // dispatches, so detect notes that need starting or stopping.
+                foreach (var held in HeldMidiNotes(next, position).Values)
+                {
+                    bool shouldSound = TrackAudible(held.trackIndex);
+                    bool isSounding = meterNoteVelocities.TryGetValue(held.trackIndex, out var notes) &&
+                        notes.ContainsKey(held.value);
+                    if (shouldSound != isSounding) { heldNotesUnchanged = false; break; }
+                }
             }
             plan = next;
             long length = Math.Max(1L, plan.lengthTicks);
@@ -309,36 +382,59 @@ namespace ZPunk.DAW
             sampleCursor = 0;
             midiCursor = 0;
             prefetchedLoopSamples = 0;
-            // Don't schedule duplicate drum voices in the already-filled DSP window.
-            long safeSampleTick = position + (long)Math.Ceiling((audioLookahead + .02f) / secondsPerTick);
-            while (sampleCursor < plan.samples.Count && plan.samples[sampleCursor].tick < safeSampleTick)
+            // Skip events genuinely in the past, not every event in the lookahead.
+            // The scheduledSamples set prevents duplicate DSP starts after rebuilding.
+            while (sampleCursor < plan.samples.Count && plan.samples[sampleCursor].tick < position)
                 sampleCursor++;
             while (midiCursor < plan.midi.Count && plan.midi[midiCursor].tick < position)
                 midiCursor++;
             ResolveControllers();
-            // A removed/moved note must not hang. Resume any unchanged sustained
-            // pitches that began before the current playhead but are still held.
-            StopAllSynthNotes();
-            var held = new Dictionary<string, SongEventPlanner.Event>();
-            foreach (var midiEvent in plan.midi)
+            if (!heldNotesUnchanged)
             {
-                if (midiEvent.tick > position) break;
-                string key = midiEvent.trackIndex + ":" + midiEvent.value;
-                if (midiEvent.type == SongEventPlanner.EventType.NoteOn) held[key] = midiEvent;
-                else held.Remove(key);
-            }
-            foreach (var entry in held.Values)
-            {
-                if (TrackAudible(entry.trackIndex) &&
-                    trackControllers.TryGetValue(entry.trackIndex, out HelmController active) && active != null)
+                // Only an edit affecting sounding MIDI voices warrants a release.
+                StopAllSynthNotes();
+                var held = HeldMidiNotes(plan, position);
+                foreach (var entry in held.Values)
                 {
-                    active.NoteOn(entry.value, Mathf.Clamp01(entry.velocity / 127f));
-                    MeterNoteOn(entry.trackIndex, entry.value, entry.velocity / 127f);
+                    if (TrackAudible(entry.trackIndex) &&
+                        trackControllers.TryGetValue(entry.trackIndex, out HelmController active) && active != null)
+                    {
+                        active.NoteOn(entry.value, Mathf.Clamp01(entry.velocity / 127f));
+                        MeterNoteOn(entry.trackIndex, entry.value, entry.velocity / 127f);
+                    }
                 }
             }
             liveRevision++;
             // If the loop is shortened past the playhead, jump to its beginning.
             if (position >= loopEnd) SeekLive(loopStart);
+        }
+
+        private static Dictionary<int, SongEventPlanner.Event> HeldMidiNotes(
+            SongEventPlanner.Plan source, long atTick)
+        {
+            var held = new Dictionary<int, SongEventPlanner.Event>();
+            if (source == null) return held;
+            foreach (var e in source.midi)
+            {
+                if (e.tick > atTick) break;
+                int id = e.trackIndex * 128 + e.value;
+                if (e.type == SongEventPlanner.EventType.NoteOn) held[id] = e;
+                else held.Remove(id);
+            }
+            return held;
+        }
+
+        private static bool SameHeldNotes(SongEventPlanner.Plan original,
+            SongEventPlanner.Plan updated, long atTick)
+        {
+            var before = HeldMidiNotes(original, atTick);
+            var after = HeldMidiNotes(updated, atTick);
+            if (before.Count != after.Count) return false;
+            foreach (var item in before)
+                if (!after.TryGetValue(item.Key, out var newer) ||
+                    newer.velocity != item.Value.velocity || newer.tick != item.Value.tick)
+                    return false;
+            return true;
         }
 
         private void SeekLive(long newTick)
@@ -516,7 +612,7 @@ namespace ZPunk.DAW
                 double target = DspAt(e.tick);
                 if (target > now + audioLookahead) break;
                 sampleCursor++;
-                DispatchSample(e, target, now);
+                DispatchSample(e, target, now, cycle);
             }
 
             // Pre-schedule the start of the next loop while we still have DSP lead time.
@@ -531,29 +627,12 @@ namespace ZPunk.DAW
                     double target = endDsp + (e.tick - loopStart) * secondsPerTick;
                     if (target > now + audioLookahead) break;
                     prefetchedLoopSamples++;
-                    DispatchSample(e, target, now);
+                    DispatchSample(e, target, now, cycle + 1);
                 }
             }
 
-            // Audio Helm's NoteOn/NoteOff public API does not accept a future DSP timestamp.
-            // Dispatch on the first suitable frame. This is not sample-accurate MIDI.
-            while (midiCursor < plan.midi.Count)
-            {
-                var e = plan.midi[midiCursor];
-                if (e.tick >= end || DspAt(e.tick) > now) break;
-                midiCursor++;
-                if (!trackControllers.TryGetValue(e.trackIndex, out HelmController controller) || controller == null) continue;
-                if (e.type == SongEventPlanner.EventType.NoteOff)
-                {
-                    controller.NoteOff(e.value);
-                    MeterNoteOff(e.trackIndex, e.value);
-                }
-                else if (TrackAudible(e.trackIndex))
-                {
-                    controller.NoteOn(e.value, Mathf.Clamp01(e.velocity / 127f));
-                    MeterNoteOn(e.trackIndex, e.value, e.velocity / 127f);
-                }
-            }
+            // Audio Helm dispatch is limited to Unity frame accuracy.
+            DispatchDueMidi(now);
 
             if (now >= endDsp)
             {
@@ -565,25 +644,55 @@ namespace ZPunk.DAW
                     anchorDsp = nextAnchor;
                     startTick = 0;
                     cycle++;
+                    // Keep the just-prefetched cycle, discard identities from prior
+                    // traversals so long-running arrangements do not accumulate them.
+                    scheduledSamples.RemoveWhere(e => e.cycleId < cycle);
                     sampleCursor = prefetchedLoopSamples;
                     midiCursor = 0;
                     prefetchedLoopSamples = 0;
                     SkipBefore(loopStart);
                     CurrentTick = loopStart;
+                    // Don't wait for another Update frame to fire boundary MIDI.
+                    DispatchDueMidi(now);
                 }
                 else StopSong();
             }
         }
 
-        private void DispatchSample(SongEventPlanner.Event e, double target, double now)
+        private void DispatchDueMidi(double now)
+        {
+            while (midiCursor < plan.midi.Count)
+            {
+                var e = plan.midi[midiCursor];
+                if (e.tick >= loopEnd || DspAt(e.tick) > now) break;
+                midiCursor++;
+                if (!trackControllers.TryGetValue(e.trackIndex, out HelmController controller) || controller == null)
+                    continue;
+                if (e.type == SongEventPlanner.EventType.NoteOff)
+                {
+                    controller.NoteOff(e.value);
+                    MeterNoteOff(e.trackIndex, e.value);
+                }
+                else if (TrackAudible(e.trackIndex))
+                {
+                    controller.NoteOn(e.value, Mathf.Clamp01(e.velocity / 127f));
+                    MeterNoteOn(e.trackIndex, e.value, e.velocity / 127f);
+                }
+            }
+        }
+
+        private void DispatchSample(SongEventPlanner.Event e, double target, double now, long eventCycle)
         {
             if (target < now - 0.02 || !TrackAudible(e.trackIndex)) return;
+            var key = new ScheduledSampleKey(eventCycle, e);
+            if (!scheduledSamples.Add(key)) return;
             TrackData track = song.tracks[e.trackIndex];
             float velocity = Mathf.Clamp01(e.velocity / 127f) * Mathf.Clamp01(track.volume);
+            double scheduledAt = Math.Max(now + 0.005, target);
             if (e.type == SongEventPlanner.EventType.Drum)
-                drums.ScheduleDAWDrum(e.value, Math.Max(now + 0.005, target), velocity);
+                drums.ScheduleDAWDrum(e.value, scheduledAt, velocity);
             else if (e.type == SongEventPlanner.EventType.Chop)
-                drums.ScheduleDAWChop(e.value, Math.Max(now + 0.005, target), velocity);
+                drums.ScheduleDAWChop(e.value, scheduledAt, velocity);
         }
 
         /// <summary>Pause while retaining the playhead position. ResumeSong starts with DSP pre-roll.</summary>
@@ -615,6 +724,7 @@ namespace ZPunk.DAW
             Resolve();
             bool wasExporting = exportingOneShot;
             playing = false;
+            scheduledSamples.Clear();
             meterNoteVelocities.Clear();
             meterEnvelope.Clear();
             meterLastTime.Clear();

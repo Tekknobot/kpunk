@@ -913,7 +913,9 @@ namespace ZPunk.DAW
         {
             string id = clip.id;
             float left = TickToPixel(clip.startTick);
-            float width = Mathf.Max(8f, TickToPixel(clip.lengthTicks) - 2f);
+            // Adjacent clips touch at the exact same tick. Draw a thin *inside*
+            // divider instead of subtracting pixels (which looks like an audio gap).
+            float width = Mathf.Max(8f, TickToPixel(clip.lengthTicks));
             var rect = new VisualElement();
             rect.name = "Clip_" + id;
             rect.style.position = Position.Absolute;
@@ -922,6 +924,8 @@ namespace ZPunk.DAW
             rect.style.width = width;
             rect.style.height = RowHeight - 14;
             rect.style.backgroundColor = color;
+            rect.style.borderRightWidth = 1;
+            rect.style.borderRightColor = new Color(.04f, .07f, .09f, .65f);
             rect.style.borderTopLeftRadius = 4;
             rect.style.borderTopRightRadius = 4;
             rect.style.borderBottomLeftRadius = 4;
@@ -1146,7 +1150,7 @@ namespace ZPunk.DAW
                 gesture.candidateLength = Math.Max(snapQuantum,
                     Math.Min(ArrangementEditing.MaxSongTicks - gesture.originalStart,
                         gesture.originalLength + offset));
-                gesture.rect.style.width = Mathf.Max(8f, TickToPixel(gesture.candidateLength) - 2f);
+                gesture.rect.style.width = Mathf.Max(8f, TickToPixel(gesture.candidateLength));
             }
             else
             {

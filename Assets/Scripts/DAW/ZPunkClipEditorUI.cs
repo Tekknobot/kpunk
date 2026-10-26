@@ -47,7 +47,7 @@ namespace ZPunk.DAW
         private VisualElement editorPlayhead;
         private VisualElement samplerPage, samplerWave;
         private ScrollView samplerScroll;
-        private Label samplerSelectedMarker, samplerHitSliceStatus, samplerBpmLabel, samplerHitProgressLabel;
+        private Label samplerSelectedMarker, samplerHitSliceStatus, samplerBpmLabel, samplerHitProgressLabel, samplerTapBpmStatus;
         private VisualElement samplerHitProgressTrack, samplerHitProgressFill;
         private Button samplerGridButton;
         private Button samplerSnapButton;
@@ -521,12 +521,55 @@ namespace ZPunk.DAW
             samplerTitle.style.overflow = Overflow.Hidden;
             samplerTitle.style.textOverflow = TextOverflow.Ellipsis;
             sampleRow.Add(samplerTitle);
-            samplerBpmLabel = Txt("TRACK BPM / UNKNOWN", 10, Muted);
-            samplerBpmLabel.style.flexShrink = 0;
-            samplerBpmLabel.style.marginLeft = 8;
-            samplerBpmLabel.style.unityTextAlign = TextAnchor.MiddleRight;
-            sampleRow.Add(samplerBpmLabel);
             samplerPage.Add(sampleRow);
+
+            // Keep sample tempo separate from the ARRANGE tempo. The TAP and
+            // half/double controls are compact enough for portrait phones.
+            var tempoRow = new VisualElement();
+            tempoRow.style.flexDirection = FlexDirection.Row;
+            tempoRow.style.alignItems = Align.Center;
+            tempoRow.style.height = 41;
+            tempoRow.style.marginBottom = 2;
+            samplerBpmLabel = Txt("SOURCE BPM --", 11, Accent);
+            samplerBpmLabel.style.flexGrow = 1;
+            samplerBpmLabel.style.flexShrink = 1;
+            samplerBpmLabel.style.minWidth = 0;
+            tempoRow.Add(samplerBpmLabel);
+            var tapBpm = Btn("TAP", () =>
+            {
+                FindSampler();
+                samplePlayer?.DawTapSourceBpm();
+                RefreshSampler();
+            }, 70);
+            tapBpm.style.height = 37;
+            tapBpm.style.marginRight = 4;
+            tapBpm.style.backgroundColor = Accent;
+            tapBpm.style.color = new Color(.035f, .09f, .105f);
+            tempoRow.Add(tapBpm);
+            var halfBpm = Btn("1/2", () =>
+            {
+                FindSampler();
+                samplePlayer?.DawScaleSourceBpm(.5f);
+                RefreshSampler();
+            }, 48);
+            halfBpm.style.height = 37;
+            halfBpm.style.marginRight = 4;
+            tempoRow.Add(halfBpm);
+            var doubleBpm = Btn("x2", () =>
+            {
+                FindSampler();
+                samplePlayer?.DawScaleSourceBpm(2f);
+                RefreshSampler();
+            }, 48);
+            doubleBpm.style.height = 37;
+            doubleBpm.style.marginRight = 0;
+            tempoRow.Add(doubleBpm);
+            samplerPage.Add(tempoRow);
+            samplerTapBpmStatus = Txt("", 10, Muted);
+            samplerTapBpmStatus.style.display = DisplayStyle.None;
+            samplerTapBpmStatus.style.whiteSpace = WhiteSpace.Normal;
+            samplerTapBpmStatus.style.marginBottom = 3;
+            samplerPage.Add(samplerTapBpmStatus);
 
             var primaryRow = new VisualElement();
             primaryRow.style.flexDirection = FlexDirection.Row;
@@ -1426,7 +1469,14 @@ namespace ZPunk.DAW
             if (samplerTitle != null)
                 samplerTitle.text = samplePlayer != null ? samplePlayer.DawSampleName : "SAMPLER UNAVAILABLE";
             if (samplerBpmLabel != null)
-                samplerBpmLabel.text = samplePlayer != null ? samplePlayer.DawTrackBpmCompact : "BPM --";
+                samplerBpmLabel.text = "SOURCE " + (samplePlayer != null ? samplePlayer.DawTrackBpmCompact : "BPM --");
+            if (samplerTapBpmStatus != null)
+            {
+                string tapStatus = samplePlayer != null ? samplePlayer.DawTapBpmStatus : "";
+                samplerTapBpmStatus.text = tapStatus;
+                samplerTapBpmStatus.style.display = string.IsNullOrEmpty(tapStatus) ?
+                    DisplayStyle.None : DisplayStyle.Flex;
+            }
             if (samplerWarpButton != null)
                 samplerWarpButton.text = samplePlayer != null && samplePlayer.DawAutoWarp ? "WARP ON" : "WARP OFF";
             if (samplerWarpLabel != null)
