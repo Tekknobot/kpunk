@@ -112,6 +112,25 @@ namespace ZPunk.DAW
         {
             return new Macro { id = id, label = label, param = param };
         }
+        // Only change how knob captions are displayed; parameter names and
+        // SOUND mappings remain untouched. Keep an instrument prefix together:
+        // "OSC 1 LEVEL" -> "OSC 1\nLEVEL", "LFO 1 RATE" -> "LFO 1\nRATE".
+        private static string FormatKnobLabel(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+
+            // Treat slash-separated captions as two centered lines too.
+            // e.g. "DRY / WET" -> "DRY /\nWET".
+            int slash = text.IndexOf(" / ", StringComparison.Ordinal);
+            if (slash >= 0)
+                return text.Substring(0, slash) + " /\n" + text.Substring(slash + 3);
+
+            int split = text.LastIndexOf(' ');
+            return split > 0 && split < text.Length - 1
+                ? text.Substring(0, split) + "\n" + text.Substring(split + 1)
+                : text;
+        }
+
         private static Macro Choices(string id, string label, Param param, params string[] choices)
         {
             return new Macro { id = id, label = label, param = param,
@@ -921,12 +940,14 @@ namespace ZPunk.DAW
                 face.Add(marker);
                 PositionMarker(macro, 0f);
                 tile.Add(face);
-                var label = T(macro.label, 14, Ink);
+                var label = T(FormatKnobLabel(macro.label), 14, Ink);
                 label.style.unityFontStyleAndWeight = FontStyle.Bold;
                 label.style.unityTextAlign = TextAnchor.MiddleCenter;
                 label.style.whiteSpace = WhiteSpace.Normal;
                 label.style.marginTop = 6;
-                label.style.minHeight = 40;
+                // Reserve the same centered two-line caption area for all knobs.
+                label.style.height = 42;
+                label.style.flexShrink = 0;
                 label.style.width = new Length(100, LengthUnit.Percent);
                 tile.Add(label);
                 knobTargets[face] = macro;
