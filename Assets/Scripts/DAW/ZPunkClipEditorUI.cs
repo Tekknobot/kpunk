@@ -71,6 +71,11 @@ namespace ZPunk.DAW
         private ZPunkTrackScope trackScope;
         private float nextTrackScopeSample;
         private KMusicDrumSequencer drumEngine;
+        private VisualElement drumDesignerPage;
+        private Label drumDesignerLaneLabel;
+        private int drumDesignerLane;
+        private bool showingDrumDesigner;
+        private static readonly string[] DrumDesignerNames = { "KICK", "SNARE", "CLAP", "CLOSED", "OPEN", "RIDE", "RIM", "CRASH" };
         private ScrollView trackScroller;
         private KMusicProjectManager projects;
         private SongData song;
@@ -305,6 +310,10 @@ namespace ZPunk.DAW
             ZPunkUIIcons.Apply(nextKit, "right", "", 19f);
             nextKit.tooltip = "Next drum kit";
             kitSelector.Add(nextKit);
+            var shapeButton = Btn("DESIGN", OpenDrumDesigner, 72);
+            shapeButton.name = "ZPunkDrumDesignerButton";
+            shapeButton.tooltip = "Shape the eight drum sounds";
+            kitSelector.Add(shapeButton);
             root.Add(kitSelector);
 
             // Use the very same 50-point slot as the drum-kit selector, so
@@ -542,6 +551,387 @@ namespace ZPunk.DAW
             root.Add(footer);
             BuildSamplerPage();
             BuildGeneratorPanel();
+            BuildDrumDesignerPage();
+        }
+
+        // The designer is a compact, fixed two-row panel rather than a scroll view.
+        // UI Toolkit pointer handling below uses discrete detents; the DSP/audio
+        // implementation remains in the existing drum sequencer and master tap.
+        private void BuildDrumDesignerPage()
+        {
+            drumDesignerPage = new VisualElement { name = "ZPunkDrumDesignerPage" };
+            drumDesignerPage.style.position = Position.Absolute;
+            drumDesignerPage.style.left = 0;
+            drumDesignerPage.style.right = 0;
+            drumDesignerPage.style.top = 0;
+            drumDesignerPage.style.bottom = 0;
+            drumDesignerPage.style.backgroundColor = Surface;
+            drumDesignerPage.style.paddingLeft = 8;
+            drumDesignerPage.style.paddingRight = 8;
+            drumDesignerPage.style.paddingTop = 8;
+            drumDesignerPage.style.paddingBottom = 8;
+            drumDesignerPage.style.flexDirection = FlexDirection.Column;
+            drumDesignerPage.style.overflow = Overflow.Hidden;
+            drumDesignerPage.style.display = DisplayStyle.None;
+
+            // Keep all actions visible above the pad selector and knobs.
+            var head = new VisualElement();
+            head.style.flexDirection = FlexDirection.Row;
+            head.style.justifyContent = Justify.SpaceBetween;
+            head.style.alignItems = Align.Center;
+            var back = Btn("< BACK", () => ShowDrumDesigner(false), 70);
+            var audition = Btn("AUDITION", AuditionDrumDesigner, 90);
+            var reset = Btn("RESET", ResetDrumShape, 76);
+            back.style.height = 38;
+            audition.style.height = 38;
+            reset.style.height = 38;
+            back.style.minWidth = 65;
+            audition.style.minWidth = 85;
+            reset.style.minWidth = 72;
+            head.Add(back);
+            head.Add(audition);
+            head.Add(reset);
+            drumDesignerPage.Add(head);
+
+            var heading = Txt("DRUM DESIGNER", 15, Accent);
+            heading.style.unityFontStyleAndWeight = FontStyle.Bold;
+            heading.style.marginTop = 3;
+            heading.style.marginBottom = 4;
+            drumDesignerPage.Add(heading);
+
+            var pads = new VisualElement();
+            pads.style.flexDirection = FlexDirection.Row;
+            pads.style.flexWrap = Wrap.Wrap;
+            pads.style.width = Length.Percent(100);
+            for (int i = 0; i < DrumDesignerNames.Length; ++i)
+            {
+                int lane = i;
+                var button = Btn(DrumDesignerNames[i], () =>
+                {
+                    drumDesignerLane = lane;
+                    RefreshDrumDesigner();
+                    AuditionDrumDesigner();
+                }, 0);
+                button.style.width = Length.Percent(24.5f);
+                button.style.minWidth = 0;
+                button.style.height = 38;
+                button.style.marginRight = 1;
+                button.style.marginBottom = 2;
+                button.style.paddingLeft = 1;
+                button.style.paddingRight = 1;
+                button.style.fontSize = 11;
+                button.name = "ZPunkDrumDesignLane" + i;
+                pads.Add(button);
+            }
+            drumDesignerPage.Add(pads);
+
+            drumDesignerLaneLabel = Txt("KICK / SHAPE", 13, Accent);
+            drumDesignerLaneLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            drumDesignerLaneLabel.style.marginTop = 8;
+            drumDesignerLaneLabel.style.marginBottom = 3;
+            drumDesignerPage.Add(drumDesignerLaneLabel);
+
+            var shaping = new VisualElement { name = "ZPunkDrumDesignControls" };
+            shaping.style.flexDirection = FlexDirection.Row;
+            shaping.style.flexWrap = Wrap.Wrap;
+            shaping.style.width = Length.Percent(100);
+            shaping.style.flexShrink = 0;
+            drumDesignerPage.Add(shaping);
+
+            var hint = Txt("TAP LEFT/RIGHT: -/+  •  DRAG VERTICALLY: STEPS  •  GLUE: MASTER", 10, Muted);
+            hint.style.whiteSpace = WhiteSpace.Normal;
+            hint.style.unityTextAlign = TextAnchor.MiddleCenter;
+            hint.style.marginTop = 5;
+            drumDesignerPage.Add(hint);
+            root.Add(drumDesignerPage);
+        }
+
+        private sealed class DrumKnobBinding
+        {
+            public VisualElement face;
+            public VisualElement marker;
+            public Label readout;
+            public float min, max;
+            public int detents;
+            public int step, initialStep, pointerId = -1;
+            public float initialY;
+            public bool moved;
+            public Action<float> write;
+            public Func<float, string> display;
+        }
+
+        private static void PaintDrumKnob(DrumKnobBinding knob)
+        {
+            float fraction = knob.detents > 0 ? (float)knob.step / knob.detents : 0f;
+            float value = Mathf.Lerp(knob.min, knob.max, fraction);
+            knob.readout.text = knob.display != null ? knob.display(value) : value.ToString("0.##");
+            // Marker moves along the upper 270 degrees: left/bottom -> top -> right/bottom.
+            float theta = (-225f + 270f * fraction) * Mathf.Deg2Rad;
+            knob.marker.style.left = 28f + Mathf.Cos(theta) * 22f;
+            knob.marker.style.top = 28f + Mathf.Sin(theta) * 22f;
+        }
+
+        private static void SetDrumKnobStep(DrumKnobBinding knob, int step)
+        {
+            step = Mathf.Clamp(step, 0, knob.detents);
+            if (step == knob.step) return; // no redundant save or preview within a detent
+            knob.step = step;
+            float value = Mathf.Lerp(knob.min, knob.max, (float)step / knob.detents);
+            knob.write(value);
+            PaintDrumKnob(knob);
+        }
+
+        private void AddDrumKnob(VisualElement target, string name, float min, float max, int detents,
+            Func<float> read, Action<float> write, Func<float, string> display = null, bool master = false)
+        {
+            var tile = new VisualElement();
+            tile.style.width = Length.Percent(25);
+            tile.style.minWidth = 0;
+            tile.style.height = 108;
+            tile.style.flexShrink = 0;
+            tile.style.alignItems = Align.Center;
+            tile.style.justifyContent = Justify.Center;
+            tile.style.paddingTop = 2;
+            tile.style.paddingBottom = 2;
+
+            var face = new VisualElement { name = "ZPunkDrumKnob" + name.Replace(" ", "") };
+            face.style.width = 62;
+            face.style.height = 62;
+            face.style.flexShrink = 0;
+            face.style.position = Position.Relative;
+            face.style.backgroundColor = Raised;
+            face.style.borderTopLeftRadius = 31;
+            face.style.borderTopRightRadius = 31;
+            face.style.borderBottomLeftRadius = 31;
+            face.style.borderBottomRightRadius = 31;
+            face.style.borderLeftWidth = 2;
+            face.style.borderRightWidth = 2;
+            face.style.borderTopWidth = 2;
+            face.style.borderBottomWidth = 2;
+            var rim = master ? Accent : new Color(.29f, .39f, .48f);
+            face.style.borderLeftColor = rim;
+            face.style.borderRightColor = rim;
+            face.style.borderTopColor = rim;
+            face.style.borderBottomColor = rim;
+            face.style.alignItems = Align.Center;
+            face.style.justifyContent = Justify.Center;
+            face.pickingMode = PickingMode.Position;
+
+            var valueLabel = Txt("", 12, master ? Accent : Ink);
+            valueLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+            valueLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            valueLabel.style.whiteSpace = WhiteSpace.NoWrap;
+            valueLabel.pickingMode = PickingMode.Ignore;
+            face.Add(valueLabel);
+
+            for (int tick = 0; tick <= 8; ++tick)
+            {
+                float angle = (-225f + tick * 33.75f) * Mathf.Deg2Rad;
+                var notch = new VisualElement();
+                notch.style.position = Position.Absolute;
+                notch.style.left = 29f + Mathf.Cos(angle) * 26f;
+                notch.style.top = 29f + Mathf.Sin(angle) * 26f;
+                notch.style.width = 3;
+                notch.style.height = 3;
+                notch.style.borderTopLeftRadius = 1.5f;
+                notch.style.borderTopRightRadius = 1.5f;
+                notch.style.borderBottomLeftRadius = 1.5f;
+                notch.style.borderBottomRightRadius = 1.5f;
+                notch.style.backgroundColor = new Color(.45f, .55f, .62f, .7f);
+                notch.pickingMode = PickingMode.Ignore;
+                face.Add(notch);
+            }
+
+            var marker = new VisualElement();
+            marker.style.position = Position.Absolute;
+            marker.style.width = 6;
+            marker.style.height = 6;
+            marker.style.borderTopLeftRadius = 3;
+            marker.style.borderTopRightRadius = 3;
+            marker.style.borderBottomLeftRadius = 3;
+            marker.style.borderBottomRightRadius = 3;
+            marker.style.backgroundColor = Accent;
+            marker.pickingMode = PickingMode.Ignore;
+            face.Add(marker);
+            tile.Add(face);
+
+            var caption = Txt(name, 11, master ? Accent : Muted);
+            caption.style.unityFontStyleAndWeight = FontStyle.Bold;
+            caption.style.unityTextAlign = TextAnchor.MiddleCenter;
+            caption.style.marginTop = 5;
+            caption.style.whiteSpace = WhiteSpace.NoWrap;
+            tile.Add(caption);
+
+            var knob = new DrumKnobBinding
+            {
+                face = face, marker = marker, readout = valueLabel,
+                min = min, max = max, detents = Mathf.Max(1, detents),
+                write = write, display = display
+            };
+            knob.step = Mathf.Clamp(Mathf.RoundToInt(
+                Mathf.InverseLerp(min, max, Mathf.Clamp(read(), min, max)) * knob.detents), 0, knob.detents);
+            PaintDrumKnob(knob);
+
+            face.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0 || knob.pointerId >= 0) return;
+                knob.pointerId = evt.pointerId;
+                knob.initialY = evt.position.y;
+                knob.initialStep = knob.step;
+                knob.moved = false;
+                face.CapturePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            face.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (knob.pointerId != evt.pointerId) return;
+                float distance = knob.initialY - evt.position.y;
+                if (Mathf.Abs(distance) >= 5f) knob.moved = true;
+                if (knob.moved)
+                    SetDrumKnobStep(knob, knob.initialStep + Mathf.RoundToInt(distance / 12f));
+                evt.StopPropagation();
+            });
+            face.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (knob.pointerId != evt.pointerId) return;
+                // A tap moves one detent. Left half decreases; right half increases.
+                if (!knob.moved)
+                {
+                    float midpoint = face.worldBound.xMin + face.worldBound.width * .5f;
+                    SetDrumKnobStep(knob, knob.step + (evt.position.x < midpoint ? -1 : 1));
+                }
+                knob.pointerId = -1;
+                if (face.HasPointerCapture(evt.pointerId)) face.ReleasePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            face.RegisterCallback<PointerCancelEvent>(evt =>
+            {
+                if (knob.pointerId != evt.pointerId) return;
+                knob.pointerId = -1;
+                if (face.HasPointerCapture(evt.pointerId)) face.ReleasePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            face.RegisterCallback<PointerCaptureOutEvent>(evt =>
+            {
+                if (knob.pointerId == evt.pointerId) knob.pointerId = -1;
+            });
+            face.RegisterCallback<DetachFromPanelEvent>(evt => { knob.pointerId = -1; });
+            target.Add(tile);
+        }
+
+        private void AuditionDrumDesigner()
+        {
+            FindDrumEngine();
+            drumEngine?.PreviewDAWDrum(drumDesignerLane);
+        }
+
+        private bool CanWriteDrumShape()
+        {
+            if (projects == null || song == null || song.tracks == null || song.tracks.Count == 0) return false;
+            if (!ReferenceEquals(song, projects.CurrentSong))
+                song = ArrangementEditing.IndependentCopy(song);
+            projects.AcceptArrangementEdit(song);
+            if (song.tracks[0].instrument == null)
+                song.tracks[0].instrument = new InstrumentState();
+            return true;
+        }
+
+        private DrumShapeData GetDrumShape(int lane, bool create)
+        {
+            if (song == null || song.tracks == null || song.tracks.Count == 0) return null;
+            var instrument = song.tracks[0].instrument;
+            if (instrument == null) return null;
+            if (instrument.drumDesign == null)
+            {
+                if (!create) return null;
+                instrument.drumDesign = new List<DrumShapeData>();
+            }
+            while (create && instrument.drumDesign.Count < 8)
+                instrument.drumDesign.Add(new DrumShapeData());
+            return lane < instrument.drumDesign.Count ? instrument.drumDesign[lane] : null;
+        }
+
+        private void SetDrumShape(Action<DrumShapeData> update)
+        {
+            if (!CanWriteDrumShape()) return;
+            var shape = GetDrumShape(drumDesignerLane, true);
+            if (shape == null) return;
+            update(shape);
+            FindDrumEngine();
+            drumEngine?.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
+            AuditionDrumDesigner();
+        }
+
+        private void ResetDrumShape()
+        {
+            SetDrumShape(shape => { shape.tune = 0; shape.tone = .5f; shape.decay = 1f;
+                shape.pan = 0; shape.trim = 0; shape.drive = 0; shape.punch = 0; });
+            RefreshDrumDesigner();
+        }
+
+        private void RefreshDrumDesigner()
+        {
+            if (drumDesignerPage == null || song == null) return;
+            drumDesignerLaneLabel.text = DrumDesignerNames[drumDesignerLane] + "  /  SHAPE";
+            for (int i = 0; i < 8; ++i)
+            {
+                var pad = drumDesignerPage.Q<Button>("ZPunkDrumDesignLane" + i);
+                if (pad != null) pad.style.backgroundColor = i == drumDesignerLane ? Accent : Raised;
+                if (pad != null) pad.style.color = i == drumDesignerLane ? Surface : Ink;
+            }
+            var controls = drumDesignerPage.Q<VisualElement>("ZPunkDrumDesignControls");
+            if (controls == null) return;
+            controls.Clear();
+            var shape = GetDrumShape(drumDesignerLane, false) ?? new DrumShapeData();
+            // Four stepped knobs per row. Eight knobs: seven per-drum plus master GLUE.
+            AddDrumKnob(controls, "TUNE", -12f, 12f, 24, () => shape.tune,
+                v => SetDrumShape(d => d.tune = Mathf.Round(v)),
+                v => (v > 0f ? "+" : "") + Mathf.RoundToInt(v) + " st");
+            AddDrumKnob(controls, "TONE", 0f, 1f, 20, () => shape.tone,
+                v => SetDrumShape(d => d.tone = v),
+                v => Mathf.RoundToInt(v * 100f) + "%");
+            AddDrumKnob(controls, "DECAY", .04f, 1f, 24, () => shape.decay,
+                v => SetDrumShape(d => d.decay = v),
+                v => Mathf.RoundToInt(v * 100f) + "%");
+            AddDrumKnob(controls, "PAN", -1f, 1f, 20, () => shape.pan,
+                v => SetDrumShape(d => d.pan = v),
+                v => Mathf.Abs(v) < .001f ? "C" :
+                    Mathf.RoundToInt(Mathf.Abs(v) * 100f) + (v < 0 ? " L" : " R"));
+            AddDrumKnob(controls, "TRIM", -12f, 12f, 24, () => shape.trim,
+                v => SetDrumShape(d => d.trim = Mathf.Round(v)),
+                v => (v > 0f ? "+" : "") + Mathf.RoundToInt(v) + " dB");
+            AddDrumKnob(controls, "DRIVE", 0f, 1f, 20, () => shape.drive,
+                v => SetDrumShape(d => d.drive = v),
+                v => Mathf.RoundToInt(v * 100f) + "%");
+            AddDrumKnob(controls, "PUNCH", 0f, 1f, 20, () => shape.punch,
+                v => SetDrumShape(d => d.punch = v),
+                v => Mathf.RoundToInt(v * 100f) + "%");
+            AddDrumKnob(controls, "GLUE", 0f, 1f, 20,
+                () => song != null ? song.masterGlue : 0f,
+                v =>
+                {
+                    if (!CanWriteDrumShape()) return;
+                    song.masterGlue = v;
+                    ZPunkMasterAudioTap.GlueAmount = v;
+                    AuditionDrumDesigner();
+                },
+                v => Mathf.RoundToInt(v * 100f) + "%", true);
+        }
+
+        private void OpenDrumDesigner()
+        {
+            if (song?.tracks == null || trackIndex != 0) return;
+            drumDesignerLane = Mathf.Clamp(selectedEventRow, 0, 7);
+            ShowSampler(false);
+            ShowDrumDesigner(true);
+        }
+
+        private void ShowDrumDesigner(bool show)
+        {
+            showingDrumDesigner = show;
+            if (drumDesignerPage == null) return;
+            drumDesignerPage.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+            if (show) RefreshDrumDesigner();
         }
 
         private void BuildSamplerPage()
@@ -1682,11 +2072,20 @@ namespace ZPunk.DAW
         private void ShowSampler(bool value)
         {
             showingSampler = value;
+            // The Drum Designer is an overlay, not part of the normal clip-editor
+            // layout. Track switches call ShowSampler(false), so never restore the
+            // overlay along with the regular editor controls.
+            ShowDrumDesigner(false);
             if (root == null || samplerPage == null) return;
             foreach (var child in root.Children())
-                child.style.display = child == generatorPanel ? DisplayStyle.None :
-                    child == samplerPage ? (value ? DisplayStyle.Flex : DisplayStyle.None) :
-                    (value ? DisplayStyle.None : DisplayStyle.Flex);
+            {
+                if (child == generatorPanel || child == drumDesignerPage)
+                    child.style.display = DisplayStyle.None;
+                else if (child == samplerPage)
+                    child.style.display = value ? DisplayStyle.Flex : DisplayStyle.None;
+                else
+                    child.style.display = value ? DisplayStyle.None : DisplayStyle.Flex;
+            }
             if (!value) { RefreshKitSelector(); return; }
             FindSampler();
             samplePlayer?.DawPrepareSliceLab();
@@ -1859,6 +2258,7 @@ namespace ZPunk.DAW
         {
             if (!ready) return;
             ShowSampler(false);
+            ShowDrumDesigner(false);
             if (projects == null) projects = FindObjectOfType<KMusicProjectManager>();
             if (projects == null) return;
             song = projects.GetSongForArrangementEditor();
@@ -1870,6 +2270,11 @@ namespace ZPunk.DAW
             if (!string.IsNullOrEmpty(requestedClip)) clipId = requestedClip;
             LoadClip();
             EnsureChopsEditable();
+            FindDrumEngine();
+            if (drumEngine != null && song.tracks[0] != null)
+                drumEngine.ApplyDAWDrumDesign(song.tracks[0].instrument != null ?
+                    song.tracks[0].instrument.drumDesign : null);
+            ZPunkMasterAudioTap.GlueAmount = Mathf.Clamp01(song.masterGlue);
             Redraw(false);
             FocusPatternNotes();
         }
@@ -1944,6 +2349,7 @@ namespace ZPunk.DAW
         }
         private void SelectTrack(int index)
         {
+            ShowDrumDesigner(false);
             ShowSampler(false);
             trackIndex = index;
             clipId = null;
@@ -2868,6 +3274,8 @@ namespace ZPunk.DAW
             if (trackScroller != null)
                 trackScroller.schedule.Execute(() => { if (trackScroller != null) trackScroller.scrollOffset = new Vector2(chipX, 0); }).ExecuteLater(0);
             RefreshKitSelector();
+            var designButton = root.Q<Button>("ZPunkDrumDesignerButton");
+            if (designButton != null) designButton.style.display = trackIndex == 0 ? DisplayStyle.Flex : DisplayStyle.None;
             RefreshClipSampleKeyReference();
             if (generatorQuickButton != null)
                 generatorQuickButton.SetEnabled(song.tracks[trackIndex].kind != TrackKind.Chops);

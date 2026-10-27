@@ -543,6 +543,9 @@ namespace ZPunk.DAW
             if (song == null || song.tracks == null) return;
             // Apply main DRUMS and CHOPS track gains at their actual sample PCM
             // stages too. The individual drum faders remain independent.
+            if (drums != null && song.tracks.Count > 0 && song.tracks[0] != null && song.tracks[0].instrument != null)
+                drums.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
+            ZPunkMasterAudioTap.GlueAmount = Mathf.Clamp01(song.masterGlue);
             if (drums != null && song.tracks.Count > 4)
                 drums.ApplyDAWTrackMix(TrackAudible(0) ? Mathf.Clamp(song.tracks[0].volume, 0f, 2f) : 0f,
                                        TrackAudible(4) ? Mathf.Clamp(song.tracks[4].volume, 0f, 2f) : 0f);
@@ -750,7 +753,9 @@ namespace ZPunk.DAW
             var key = new ScheduledSampleKey(eventCycle, e);
             if (!scheduledSamples.Add(key)) return;
             TrackData track = song.tracks[e.trackIndex];
-            float velocity = Mathf.Clamp01(e.velocity / 127f) * Mathf.Clamp01(track.volume);
+            // Track volume already runs through ApplyDAWTrackMix's PCM gain stage.
+            // The AudioSource must receive only note velocity, never track gain twice.
+            float velocity = Mathf.Clamp01(e.velocity / 127f);
             // Give late events at least one scheduling buffer of lead time.
             // On-time events retain their exact DSP timestamps.
             double scheduledAt = lateness > 0.0 ? now + 0.012 : Math.Max(now + 0.005, target);

@@ -52,6 +52,35 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     // When routeDrumsToMixer is true, we use per-drum AudioSource voice pools (for mixer routing + meters).
     private readonly Dictionary<int, List<AudioSource>> _drumVoicePools = new();
+    private readonly DrumShapeData[] _dawDrumShapes = new DrumShapeData[8];
+
+    // Invoked on song load, editor shape changes and playback/export preparation.
+    public void ApplyDAWDrumDesign(List<DrumShapeData> lanes)
+    {
+        for (int i = 0; i < 8; ++i)
+            _dawDrumShapes[i] = lanes != null && i < lanes.Count ? lanes[i] : null;
+        for (int i = 0; i < 8; ++i)
+        {
+            if (!_drumVoicePools.TryGetValue(i + 1, out var voices)) continue;
+            foreach (AudioSource src in voices) if (src != null) ApplyDrumShapeToVoice(src, i + 1);
+        }
+    }
+
+    private void ApplyDrumShapeToVoice(AudioSource src, int drumId)
+    {
+        if (src == null || drumId < 1 || drumId > 8) return;
+        var shape = _dawDrumShapes[drumId - 1];
+        src.pitch = shape == null ? 1f : Mathf.Pow(2f, Mathf.Clamp(shape.tune, -12f, 12f) / 12f);
+        src.panStereo = shape == null ? 0f : Mathf.Clamp(shape.pan, -1f, 1f);
+        var meter = src.GetComponent<ZPunkSampleChannelMeter>();
+        if (meter != null) meter.SetDrumShape(shape);
+    }
+
+    public void PreviewDAWDrum(int lane)
+    {
+        if (lane < 0 || lane >= 8) return;
+        PreviewDrum(lane + 1);
+    }
     // Every sample voice has its fader applied inside the PCM callback, before
     // Unity routes it to the output mixer. This is the same post-fader point
     // for every drum lane and for CHOPS. Source.volume is the velocity/master
@@ -203,6 +232,7 @@ public class KMusicDrumSequencer : MonoBehaviour
             src.volume = 1f;
             var meter = go.AddComponent<ZPunkSampleChannelMeter>();
             meter.Gain = GetDrumChannelGain(drumId);
+            ApplyDrumShapeToVoice(src, drumId);
 
             // Route into mixer if provided
             var g = GetMixerGroupForDrum(drumId);
@@ -252,6 +282,7 @@ public class KMusicDrumSequencer : MonoBehaviour
                 extra.volume = 1f;
                 var extraMeter = go.AddComponent<ZPunkSampleChannelMeter>();
                 extraMeter.Gain = GetDrumChannelGain(drumId);
+                ApplyDrumShapeToVoice(extra, drumId);
                 var group = GetMixerGroupForDrum(drumId);
                 if (group != null) extra.outputAudioMixerGroup = group;
                 ZPunkArrangementFilters.RegisterVoice(extra, true);
@@ -273,6 +304,7 @@ public class KMusicDrumSequencer : MonoBehaviour
             var meter = voice.GetComponent<ZPunkSampleChannelMeter>();
             if (meter == null) meter = voice.gameObject.AddComponent<ZPunkSampleChannelMeter>();
             meter.Gain = GetDrumChannelGain(drumId);
+            ApplyDrumShapeToVoice(voice, drumId);
         }
 
         return voice;
@@ -298,8 +330,10 @@ public class KMusicDrumSequencer : MonoBehaviour
         // exhausted). Do not prematurely steal a queued/playing hit.
         src.Stop();
         src.volume = Mathf.Clamp01(velocityScale);
+        var meter = src.GetComponent<ZPunkSampleChannelMeter>();
+        if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, src.pitch));
         src.PlayScheduled(dspTime);
-        _dawDrumVoiceBusyUntil[src] = dspTime + Math.Max(0.01, clip.length);
+        _dawDrumVoiceBusyUntil[src] = dspTime + Math.Max(0.01, clip.length / Mathf.Max(.1f, src.pitch));
     }
 
     /// <summary>DAW DSP event. Drum lane is 0..7, matching SongData.</summary>
@@ -404,6 +438,8 @@ public class KMusicDrumSequencer : MonoBehaviour
 
         src.Stop();
         src.volume = GetDrumInputGain(drumId);
+        var meter = src.GetComponent<ZPunkSampleChannelMeter>();
+        if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, src.pitch));
         src.PlayOneShot(clip, Mathf.Clamp01(velocityScale));
     }
 

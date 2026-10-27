@@ -39,6 +39,8 @@ namespace ZPunk.DAW
         public int sharedProgressionKey = 9;
         public bool sharedProgressionMinor = true;
         public bool legacyChainEnabled = false;
+        // Optional 2.3 drum/master dynamics parameters. Old project JSON has neutral defaults.
+        public float masterGlue = 0f;
         public List<TrackData> tracks = new List<TrackData>();
         public List<ClipContentData> contents = new List<ClipContentData>();
 
@@ -82,8 +84,23 @@ namespace ZPunk.DAW
         public string sampleResourcesPath;
         public float[] sliceStart01;
         public float[] sliceEnd01;
+        // Per-lane drum shaping; missing/empty means fully neutral sound for old projects.
+        public List<DrumShapeData> drumDesign = new List<DrumShapeData>();
         public int legacyChordMode;
         public float savedMasterVolume = -1f;
+    }
+
+    [Serializable]
+    public sealed class DrumShapeData
+    {
+        // All values are neutral when this object does not exist on an old song.
+        public float tune;         // semitones, -12..+12
+        public float tone = 0.5f; // darker / brighter, neutral midpoint
+        public float decay = 1f;  // length of hit envelope, neutral at 1
+        public float pan;          // left/right, -1..1
+        public float trim;         // signed dB, -12..+12
+        public float drive;        // 0..1, neutral at 0
+        public float punch;        // 0..1, mild per-hit compression
     }
 
     [Serializable]

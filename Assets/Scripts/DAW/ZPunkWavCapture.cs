@@ -131,7 +131,9 @@ namespace ZPunk.DAW
             if (pcm.Length < byteCount) pcm = new byte[byteCount];
             for (int n = 0; n < count; n++)
             {
-                float v = Mathf.Clamp(source[index + n], -1f, 1f);
+                // Safety for platforms where the export tap runs before the
+                // listener master processor. Never serialize unprotected peaks.
+                float v = Mathf.Clamp(source[index + n], -0.90f, 0.90f);
                 short sample = (short)Mathf.RoundToInt(v * (v < 0 ? 32768f : 32767f));
                 pcm[n * 2] = (byte)sample;
                 pcm[n * 2 + 1] = (byte)(sample >> 8);

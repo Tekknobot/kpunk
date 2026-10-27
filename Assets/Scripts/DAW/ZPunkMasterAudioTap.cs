@@ -18,6 +18,16 @@ namespace ZPunk.DAW
         private const int FramesPerBin = 64;
         // The scope is optional: when closed the callback returns immediately.
         public volatile bool CaptureEnabled;
+        // Master dynamics available without an extra screen or plugin host.
+        // Linked channels, 0.90 (-0.9dBFS) sample peak ceiling. No allocations.
+        public static volatile float GlueAmount;
+        private int sampleRate = 48000;
+        private void OnEnable() { sampleRate = Math.Max(8000, AudioSettings.outputSampleRate); }
+        private float compressorEnvelope;
+        private float limiterGain = 1f;
+        public volatile float PeakBeforeProtection;
+        public volatile float PeakAfterProtection;
+        public volatile float LimiterReduction;
         private readonly float[] lows = new float[RingSize];
         private readonly float[] highs = new float[RingSize];
         private int published;
@@ -26,8 +36,46 @@ namespace ZPunk.DAW
 
         private void OnAudioFilterRead(float[] samples, int channels)
         {
-            if (!CaptureEnabled || samples == null || channels < 1) return;
+            if (samples == null || channels < 1) return;
             int frames = samples.Length / channels;
+            float glue = Math.Max(0f, Math.Min(1f, GlueAmount));
+            int rate = sampleRate;
+            float compressorRelease = (float)Math.Exp(-1.0 / (rate * .12));
+            float limiterRelease = 1f - (float)Math.Exp(-1.0 / (rate * .08));
+            const float ceiling = .90f;
+            float before = 0f, after = 0f, reduction = 0f;
+            for (int frame = 0; frame < frames; ++frame)
+            {
+                int baseIndex = frame * channels;
+                float linkedPeak = 0f;
+                for (int channel = 0; channel < channels; ++channel)
+                    linkedPeak = Math.Max(linkedPeak, Math.Abs(samples[baseIndex + channel]));
+                if (linkedPeak > before) before = linkedPeak;
+                compressorEnvelope = Math.Max(linkedPeak, compressorEnvelope * compressorRelease);
+                float compression = 1f;
+                if (glue > .0001f && compressorEnvelope > .25f)
+                    compression = (float)Math.Pow(.25f / compressorEnvelope, glue * .32f);
+                // Hard instantaneous attack prevents any overshoot at sample points.
+                float demanded = linkedPeak > 0f ? Math.Min(1f, ceiling / (linkedPeak * compression)) : 1f;
+                limiterGain = demanded < limiterGain ? demanded :
+                    Math.Min(1f, limiterGain + (1f - limiterGain) * limiterRelease);
+                float resultGain = compression * limiterGain;
+                reduction = Math.Max(reduction, 1f - limiterGain);
+                for (int channel = 0; channel < channels; ++channel)
+                {
+                    int i = baseIndex + channel;
+                    float processed = samples[i] * resultGain;
+                    // Final safety cap; both channels were gain-linked above.
+                    if (processed > ceiling) processed = ceiling;
+                    else if (processed < -ceiling) processed = -ceiling;
+                    samples[i] = processed;
+                    after = Math.Max(after, Math.Abs(processed));
+                }
+            }
+            PeakBeforeProtection = before;
+            PeakAfterProtection = after;
+            LimiterReduction = reduction;
+            if (!CaptureEnabled) return;
             int position = 0;
             for (int frame = 0; frame < frames; ++frame)
             {

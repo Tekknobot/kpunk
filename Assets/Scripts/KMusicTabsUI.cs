@@ -128,6 +128,16 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(isReady)yield break;
         uiRoot=doc.rootVisualElement.Q<VisualElement>("Root");
         if(uiRoot==null)yield break;
+        // Master limiter must be active even when the optional waveform scope is closed.
+        // Create before the WAV capture component so the export hears protected audio.
+        foreach (var audioListener in FindObjectsOfType<AudioListener>())
+        {
+            if (!audioListener.isActiveAndEnabled) continue;
+            masterAudioTap = audioListener.GetComponent<ZPunkMasterAudioTap>();
+            if (masterAudioTap == null)
+                masterAudioTap = audioListener.gameObject.AddComponent<ZPunkMasterAudioTap>();
+            break;
+        }
         projects=FindObjectOfType<KMusicProjectManager>();
         pages=uiRoot.Q<VisualElement>("Pages");
         pageArrangement=uiRoot.Q<VisualElement>("PageArrangement");
