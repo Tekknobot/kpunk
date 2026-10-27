@@ -247,33 +247,41 @@ namespace ZPunk.DAW
                 K("osc1.vol", "OSC 1 LEVEL", Param.kOsc1Volume),
                 K("osc2.vol", "OSC 2 LEVEL", Param.kOsc2Volume),
                 K("sub.vol", "SUB LEVEL", Param.kSubVolume),
-                K("noise.vol", "NOISE", Param.kNoiseVolume),
+                K("noise.vol", "NOISE LEVEL", Param.kNoiseVolume),
+                Choices("osc1.uni", "OSC 1 VOICES", Param.kOsc1UnisonVoices,
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"),
                 K("osc1.detune", "OSC 1 DETUNE", Param.kOsc1UnisonDetune),
+                Choices("osc2.uni", "OSC 2 VOICES", Param.kOsc2UnisonVoices,
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"),
                 K("osc2.detune", "OSC 2 DETUNE", Param.kOsc2UnisonDetune)
             });
+            AddModuleHint("DETUNE spreads unison voices. Use 2+ VOICES and raise the oscillator LEVEL to hear it. Increasing voices uses more CPU.");
             BuildModule("FILTER", Gold, null, null, new[] {
                 K("filter.cutoff", "CUTOFF", Param.kFilterCutoff),
                 K("filter.res", "RESONANCE", Param.kResonance),
                 K("filter.drive", "FILTER DRIVE", Param.kFilterDrive),
-                K("filter.env", "ENV DEPTH", Param.kFilterEnvelopeDepth),
+                K("filter.env", "ENV AMOUNT", Param.kFilterEnvelopeDepth),
                 K("filter.atk", "ENV ATTACK", Param.kFilterAttack),
+                K("filter.dec", "ENV DECAY", Param.kFilterDecay),
+                K("filter.sus", "ENV SUSTAIN", Param.kFilterSustain),
                 K("filter.rel", "ENV RELEASE", Param.kFilterRelease)
             });
-            BuildModule("AMP / MASTER", Blue, null, null, new[] {
+            BuildModule("AMPLITUDE / GLIDE", Blue, null, null, new[] {
                 K("amp.atk", "ATTACK", Param.kAmplitudeAttack),
                 K("amp.dec", "DECAY", Param.kAmplitudeDecay),
                 K("amp.sus", "SUSTAIN", Param.kAmplitudeSustain),
                 K("amp.rel2", "RELEASE", Param.kAmplitudeRelease),
                 K("master.porta", "PORTAMENTO", Param.kPortamento),
-                K("master.vol", "LEVEL", Param.kVolume)
+                K("master.vol", "SYNTH LEVEL", Param.kVolume)
             });
             BuildModule("MODULATION", Aqua, null, null, new[] {
                 K("mod.rate", "LFO 1 RATE", Param.kMonoLfo1Frequency),
-                K("mod.depth", "LFO 1 DEPTH", Param.kMonoLfo1Amplitude),
+                K("mod.depth", "LFO 1 AMOUNT", Param.kMonoLfo1Amplitude),
                 Choices("mod.wave", "LFO 1 WAVE", Param.kMonoLfo1Waveform,
                     "SIN", "TRI", "SQR", "SAW +", "SAW -", "3 STEP", "4 STEP",
                     "8 STEP", "3 PYR", "5 PYR", "9 PYR", "RAND 1", "RAND 2")
             });
+            AddModuleHint("LFO amount and waveform affect sound only when the loaded preset routes LFO 1 to a synth parameter.");
             BuildModule("ARPEGGIATOR", Aqua, "arp.on", "arp.sync", new[] {
                 Choices("arp.pattern", "PATTERN", Param.kArpPattern,
                     "UP", "DOWN", "UP / DOWN", "AS PLAYED", "RANDOM"),
@@ -296,16 +304,38 @@ namespace ZPunk.DAW
                 K("fx.delay.mix", "DRY / WET", Param.kDelayDryWet)
             });
             BuildModule("REVERB", Blue, "fx.rev.on", null, new[] {
-                K("fx.rev.fb", "DECAY / FB", Param.kReverbFeedback),
+                K("fx.rev.fb", "FEEDBACK", Param.kReverbFeedback),
                 K("fx.rev.damp", "DAMPING", Param.kReverbDamping),
                 K("fx.rev.mix", "DRY / WET", Param.kReverbDryWet)
             });
-            var note = T("Drag a knob vertically to adjust. ON / OFF switches apply to effects and the arpeggiator.", 10, Dim);
+            var note = T("Drag a knob vertically to adjust. ON / OFF switches bypass modules; FREE / SYNC / DOTTED / TRIPLET set rhythmic timing.", 12, Dim);
             note.style.whiteSpace = WhiteSpace.Normal;
             note.style.marginBottom = 16;
             note.style.marginLeft = 6;
             moduleLayout.Add(note);
             OnShown();
+        }
+
+        private void AddModuleHint(string message)
+        {
+            if (moduleCells.Count == 0) return;
+            var hint = T(message, 12, Dim);
+            hint.style.whiteSpace = WhiteSpace.Normal;
+            hint.style.marginLeft = 11;
+            hint.style.marginRight = 11;
+            hint.style.marginTop = 3;
+            hint.style.marginBottom = 5;
+            moduleCells[moduleCells.Count - 1].Add(hint);
+        }
+
+        private static bool IsUnisonVoices(Param param)
+        {
+            return param == Param.kOsc1UnisonVoices || param == Param.kOsc2UnisonVoices;
+        }
+
+        private static int NativeVoiceCount(HelmController controller, Param param)
+        {
+            return Mathf.Clamp(Mathf.RoundToInt(controller.GetParameterValue(param)), 1, 15);
         }
 
         private void OnLayoutChanged(GeometryChangedEvent evt)
@@ -445,7 +475,9 @@ namespace ZPunk.DAW
                 // can return stale/rounded values that cause toggle snapback.
                 amount = IsNativeOnSwitch(param)
                     ? (controller.GetParameterValue(param) >= .5f ? 1f : 0f)
-                    : Mathf.Clamp01(controller.GetParameterPercent(param));
+                    : IsUnisonVoices(param)
+                        ? (NativeVoiceCount(controller, param) - 1f) / 14f
+                        : Mathf.Clamp01(controller.GetParameterPercent(param));
                 if (pendingController == controller && IsDistortion(param) &&
                     pendingDistortion.TryGetValue(param, out PendingDistortion pending))
                 {
@@ -560,7 +592,33 @@ namespace ZPunk.DAW
             if (m.choices != null && m.choices.Length > 1)
             {
                 int index = Mathf.Clamp(Mathf.RoundToInt(amount * (m.choices.Length - 1)), 0, m.choices.Length - 1);
-                return m.choices[index];
+                return IsUnisonVoices(actualParam) ? m.choices[index] + "V" : m.choices[index];
+            }
+            // Show native units when reliable; Helm's parameter percent is
+            // generally non-linear and a blanket 0-100% hides useful meaning.
+            if (controller != null)
+            {
+                try
+                {
+                    float nativeValue = controller.GetParameterValue(actualParam);
+                    if (m.id == "filter.cutoff")
+                    {
+                        // Helm expresses filter cutoff in MIDI-note units.
+                        float hz = 440f * Mathf.Pow(2f, (nativeValue - 69f) / 12f);
+                        return hz >= 1000f ? (hz / 1000f).ToString("0.#") + "kHz"
+                            : Mathf.RoundToInt(hz) + "Hz";
+                    }
+                    if (m.id == "filter.drive")
+                        return (nativeValue >= 0f ? "+" : "") + nativeValue.ToString("0.#") + "dB";
+                    if (m.id == "filter.env")
+                        return (nativeValue > 0f ? "+" : "") + nativeValue.ToString("0.#");
+                    if (m.id == "mod.depth")
+                        return (nativeValue > 0f ? "+" : "") + Mathf.RoundToInt(nativeValue * 100f) + "%";
+                    if (m.id == "amp.atk" || m.id == "amp.dec" || m.id == "amp.rel2" ||
+                        m.id == "filter.atk" || m.id == "filter.dec" || m.id == "filter.rel")
+                        return nativeValue.ToString(nativeValue < 1f ? "0.00" : "0.0") + "s";
+                }
+                catch (Exception) { }
             }
             if ((m.id == "arp.rate" || m.id == "fx.delay.time") && controller != null)
             {
@@ -589,15 +647,12 @@ namespace ZPunk.DAW
             if (controller == null || param == Param.kNone) return;
             amount = Mathf.Clamp01(amount);
 
-            // Mirror a SOUND distortion edit without firing the legacy bus
-            // listeners: this selected controller owns the single native write.
+            // SOUND owns these native Helm writes. Keep the legacy bus in sync
+            // without emitting its OnChanged event, which otherwise sends a
+            // SECOND (potentially differently mapped) write for Synth/Pads.
             var bus = CurrentBus();
             if (bus != null && bus.TryGet(id, out Parameter existing) && existing != null)
-            {
-                if (IsDistortion(param) || IsNativeOnSwitch(param))
-                    bus.SetNormalizedSilently(id, amount);
-                else bus.SetNormalized(id, amount);
-            }
+                bus.SetNormalizedSilently(id, amount);
 
             try
             {
@@ -629,12 +684,37 @@ namespace ZPunk.DAW
                 }
                 else if (IsNativeOnSwitch(param))
                     controller.SetParameterValue(param, amount >= 0.5f ? 1f : 0f);
+                else if (IsUnisonVoices(param))
+                    // Unison is an INTEGER count, not a continuous knob.
+                    controller.SetParameterValue(param, 1f + Mathf.RoundToInt(amount * 14f));
                 else if (id == "fx.delay.sync" || id == "arp.sync")
                     controller.SetParameterValue(param, Mathf.RoundToInt(amount * 3f));
                 else
                     controller.SetParameterPercent(param, amount);
 
                 RecordLiveEdit(controller, param, amount);
+
+                // A single-voice patch has no unison spread, so DETUNE can
+                // appear broken. Raise only that oscillator to 2 voices on
+                // a nonzero detune edit, and persist both native parameters.
+                // Do not touch the other oscillator or an existing 2+ stack.
+                if (amount > .0005f && (param == Param.kOsc1UnisonDetune ||
+                    param == Param.kOsc2UnisonDetune))
+                {
+                    Param voices = param == Param.kOsc1UnisonDetune
+                        ? Param.kOsc1UnisonVoices : Param.kOsc2UnisonVoices;
+                    if (NativeVoiceCount(controller, voices) < 2)
+                    {
+                        controller.SetParameterValue(voices, 2f);
+                        float voicePercent = 1f / 14f;
+                        RecordLiveEdit(controller, voices, voicePercent);
+                        string voiceId = param == Param.kOsc1UnisonDetune ? "osc1.uni" : "osc2.uni";
+                        if (bus != null && bus.TryGet(voiceId, out Parameter storedVoices) && storedVoices != null)
+                            bus.SetNormalizedSilently(voiceId, voicePercent);
+                        foreach (var voiceKnob in macros)
+                            if (voiceKnob.param == voices) voiceKnob.lastDisplay = -999;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -804,7 +884,7 @@ namespace ZPunk.DAW
             {
                 var tile = new VisualElement();
                 tile.style.width = new Length(33.3333f, LengthUnit.Percent);
-                tile.style.height = 118;
+                tile.style.height = 136;
                 tile.style.alignItems = Align.Center;
                 tile.style.justifyContent = Justify.Center;
                 tile.style.paddingBottom = 3;
@@ -841,11 +921,12 @@ namespace ZPunk.DAW
                 face.Add(marker);
                 PositionMarker(macro, 0f);
                 tile.Add(face);
-                var label = T(macro.label, 11, Dim);
+                var label = T(macro.label, 14, Ink);
+                label.style.unityFontStyleAndWeight = FontStyle.Bold;
                 label.style.unityTextAlign = TextAnchor.MiddleCenter;
                 label.style.whiteSpace = WhiteSpace.Normal;
                 label.style.marginTop = 6;
-                label.style.minHeight = 25;
+                label.style.minHeight = 40;
                 label.style.width = new Length(100, LengthUnit.Percent);
                 tile.Add(label);
                 knobTargets[face] = macro;
