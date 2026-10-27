@@ -913,6 +913,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
             recorder=listener.GetComponent<ZPunkWavCapture>();
             if(recorder==null)recorder=listener.gameObject.AddComponent<ZPunkWavCapture>();
             file=ZPunkMobileFileExport.CreatePrivateFilePath(song.title,".wav");
+            // Standalone WAV always uses the audible master mix.
+            var wavMaster = listener.GetComponent<ZPunkMasterAudioTap>();
+            if (wavMaster != null) wavMaster.StemExport = false;
             if(!transport.PlaySong(0,true))
                 throw new InvalidOperationException("Could not start full song playback.");
             started=true;
@@ -1089,6 +1092,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
                 recorder = listener.GetComponent<ZPunkWavCapture>();
                 if (recorder == null) recorder = listener.gameObject.AddComponent<ZPunkWavCapture>();
                 collectRecorder = recorder;
+                masterAudioTap = listener.GetComponent<ZPunkMasterAudioTap>();
+                if (masterAudioTap == null)
+                    masterAudioTap = listener.gameObject.AddComponent<ZPunkMasterAudioTap>();
                 if (samplePlayer != null) samplePlayer.DawStopSample();
             }
             catch (Exception e) { error = e.Message; Debug.LogWarning("[ZPUNK Collect] " + e); }
@@ -1109,6 +1115,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
                 try
                 {
                     dest = pass < 0 ? bundle.MasterFile : bundle.StemFile(pass);
+                    // Master pass retains BUS FX. Individual STEM bounces bypass
+                    // nonlinear master coloration, retaining peak protection.
+                    if (masterAudioTap != null) masterAudioTap.StemExport = pass >= 0;
                     if (!transport.PlayExportSnapshot(snapshot, pass))
                         throw new InvalidOperationException("Could not start " + trackName + " bounce.");
                     double seconds = snapshot.lengthTicks * 60.0 /
@@ -1148,7 +1157,11 @@ public sealed class KMusicTabsUI : MonoBehaviour
                     Debug.LogWarning("[ZPUNK Collect] " + e);
                     recorder.Abort();
                 }
-                finally { if (transport != null) transport.StopSong(); }
+                finally
+                {
+                    if (transport != null) transport.StopSong();
+                    if (masterAudioTap != null) masterAudioTap.StemExport = false;
+                }
                 yield return null;
             }
 
@@ -1168,6 +1181,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         {
             if (recorder != null && recorder.IsActive) recorder.Abort();
             if (transport != null && transport.IsPlaying) transport.StopSong();
+            if (masterAudioTap != null) masterAudioTap.StemExport = false;
             if (bundle != null) bundle.Dispose();
             collectSession = null;
             collectRecorder = null;

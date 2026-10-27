@@ -545,7 +545,7 @@ namespace ZPunk.DAW
             // stages too. The individual drum faders remain independent.
             if (drums != null && song.tracks.Count > 0 && song.tracks[0] != null && song.tracks[0].instrument != null)
                 drums.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
-            ZPunkMasterAudioTap.GlueAmount = Mathf.Clamp01(song.masterGlue);
+            ZPunkMasterAudioTap.ApplySongSettings(song);
             if (drums != null && song.tracks.Count > 4)
                 drums.ApplyDAWTrackMix(TrackAudible(0) ? Mathf.Clamp(song.tracks[0].volume, 0f, 2f) : 0f,
                                        TrackAudible(4) ? Mathf.Clamp(song.tracks[4].volume, 0f, 2f) : 0f);

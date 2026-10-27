@@ -19,6 +19,8 @@ namespace ZPunk.DAW
         private readonly Stack<Block> available = new Stack<Block>();
         private volatile bool active;
         private volatile bool overflow;
+        private ZPunkMasterAudioTap masterProcessor;
+        private volatile bool masterCaptureMode;
         private double targetDsp;
         private long wantedFrames;
         private int sampleRate;
@@ -49,11 +51,32 @@ namespace ZPunk.DAW
             channels = 0;
             writtenFrames = 0;
             overflow = false;
+            // One owner for capture: listener master processing forwards the post-FX
+            // buffer explicitly. This avoids Unity's unspecified filter order.
+            masterProcessor = GetComponent<ZPunkMasterAudioTap>();
+            if (masterProcessor == null)
+                masterProcessor = gameObject.AddComponent<ZPunkMasterAudioTap>();
+            if (!masterProcessor.isActiveAndEnabled)
+                throw new InvalidOperationException("Master audio processor is disabled.");
+            masterProcessor.ResetDynamics();
+            // Publish the recording route before activating capture. No callback
+            // can race a raw recorder block against the post-master route.
+            masterCaptureMode = true;
+            masterProcessor.ExportCapture = this;
             lock (gate) { active = true; }
         }
 
-        // Captures after all sources/audio mixers are combined at the listener.
+        // The listener master always forwards post-processed samples. This
+        // callback is intentionally inert when the master component is active.
         private void OnAudioFilterRead(float[] data, int inputChannels)
+        {
+            // Audio thread: never access Unity component properties here.
+            if (masterCaptureMode) return;
+            CaptureProcessed(data, inputChannels);
+        }
+
+        // Called on the audio thread by the master audio tap, after its limiter.
+        internal void CaptureProcessed(float[] data, int inputChannels)
         {
             if (!active || data == null || inputChannels < 1) return;
             double blockDsp = AudioSettings.dspTime;
@@ -131,9 +154,12 @@ namespace ZPunk.DAW
             if (pcm.Length < byteCount) pcm = new byte[byteCount];
             for (int n = 0; n < count; n++)
             {
-                // Safety for platforms where the export tap runs before the
-                // listener master processor. Never serialize unprotected peaks.
-                float v = Mathf.Clamp(source[index + n], -0.90f, 0.90f);
+                // Post-master samples have already been dynamically limited.
+                // A PCM-format safety guard exists for nonfinite / malformed data,
+                // not as an audible hard-clipping stage at -0.9 dBFS.
+                float input = source[index + n];
+                float v = float.IsNaN(input) || float.IsInfinity(input) ? 0f :
+                    Mathf.Clamp(input, -1f, 1f);
                 short sample = (short)Mathf.RoundToInt(v * (v < 0 ? 32768f : 32767f));
                 pcm[n * 2] = (byte)sample;
                 pcm[n * 2 + 1] = (byte)(sample >> 8);
@@ -170,14 +196,22 @@ namespace ZPunk.DAW
         public void Abort()
         {
             lock (gate) { active = false; ready.Clear(); }
+            DetachMaster();
             Close();
             if (!string.IsNullOrEmpty(location))
             {
                 try { if (File.Exists(location)) File.Delete(location); } catch { }
             }
         }
+        private void DetachMaster()
+        {
+            masterCaptureMode = false;
+            if (masterProcessor != null && ReferenceEquals(masterProcessor.ExportCapture, this))
+                masterProcessor.ExportCapture = null;
+        }
         private void Close()
         {
+            DetachMaster();
             writer?.Dispose(); writer = null;
             file?.Dispose(); file = null;
         }

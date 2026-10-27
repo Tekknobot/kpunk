@@ -579,7 +579,7 @@ namespace ZPunk.DAW
             head.style.flexDirection = FlexDirection.Row;
             head.style.justifyContent = Justify.SpaceBetween;
             head.style.alignItems = Align.Center;
-            var back = Btn("< BACK", () => ShowDrumDesigner(false), 70);
+            var back = Btn("BACK", () => ShowDrumDesigner(false), 70);
             var audition = Btn("AUDITION", AuditionDrumDesigner, 90);
             var reset = Btn("RESET", ResetDrumShape, 76);
             back.style.height = 38;
@@ -2274,7 +2274,7 @@ namespace ZPunk.DAW
             if (drumEngine != null && song.tracks[0] != null)
                 drumEngine.ApplyDAWDrumDesign(song.tracks[0].instrument != null ?
                     song.tracks[0].instrument.drumDesign : null);
-            ZPunkMasterAudioTap.GlueAmount = Mathf.Clamp01(song.masterGlue);
+            ZPunkMasterAudioTap.ApplySongSettings(song);
             Redraw(false);
             FocusPatternNotes();
         }

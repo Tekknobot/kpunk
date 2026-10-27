@@ -41,6 +41,11 @@ namespace ZPunk.DAW
         public bool legacyChainEnabled = false;
         // Optional 2.3 drum/master dynamics parameters. Old project JSON has neutral defaults.
         public float masterGlue = 0f;
+        // Neutral zero defaults keep pre-2.3 project JSON sounding unchanged.
+        public float masterDrive = 0f;
+        public float masterWidthOffset = 0f; // -1..1 = 70..130% stereo sides
+        public float masterOutputTrimDb = 0f; // -12..+3 dB; applied before limiter
+        public bool masterFxBypassed = false; // limiter always remains engaged
         public List<TrackData> tracks = new List<TrackData>();
         public List<ClipContentData> contents = new List<ClipContentData>();
 

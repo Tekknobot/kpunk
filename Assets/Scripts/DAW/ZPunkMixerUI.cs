@@ -22,6 +22,10 @@ namespace ZPunk.DAW
         private static readonly Color Solo = new Color(.45f, .38f, .20f);
         private VisualElement root, lanes;
         private ScrollView mixerScroll;
+        private Label masterReadout;
+        private VisualElement masterStatusLight;
+        private float heldMasterPeak, heldGainReduction;
+        private ZPunkMasterAudioTap masterTap;
         private sealed class FaderGesture
         {
             public Action<Vector2> begin;
@@ -150,6 +154,24 @@ namespace ZPunk.DAW
             var sub = Text("TRACK LEVELS  /  LIVE AUDIO GAIN", 10, Dim);
             sub.style.marginBottom = 10;
             root.Add(sub);
+            var masterStatus = new VisualElement();
+            masterStatus.style.flexDirection = FlexDirection.Row;
+            masterStatus.style.alignItems = Align.Center;
+            masterStatus.style.height = 24;
+            masterStatus.style.marginBottom = 7;
+            masterStatus.style.paddingLeft = 7;
+            masterStatus.style.backgroundColor = Card;
+            Round(masterStatus, 4);
+            masterStatusLight = new VisualElement();
+            masterStatusLight.style.width = 7;
+            masterStatusLight.style.height = 7;
+            Round(masterStatusLight, 4);
+            masterStatusLight.style.backgroundColor = Off;
+            masterStatus.Add(masterStatusLight);
+            masterReadout = Text("MASTER  |  PEAK --  |  GR 0.0 dB", 10, Dim);
+            masterReadout.style.marginLeft = 9;
+            masterStatus.Add(masterReadout);
+            root.Add(masterStatus);
             mixerScroll = new ScrollView(ScrollViewMode.Vertical);
             mixerScroll.style.flexGrow = 1;
             mixerScroll.style.minHeight = 0;
@@ -165,6 +187,7 @@ namespace ZPunk.DAW
             if (app == null) app = FindObjectOfType<KMusicApp>();
             if (drums == null) drums = FindObjectOfType<KMusicDrumSequencer>();
             if (transport == null) transport = FindObjectOfType<ZPunkSongTransport>();
+            if (masterTap == null) masterTap = FindObjectOfType<ZPunkMasterAudioTap>();
         }
         private static Label Text(string content, int size, Color color)
         {
@@ -446,6 +469,192 @@ namespace ZPunk.DAW
             cell.Add(actions);
             return cell;
         }
+        // These controls only act on the final stereo MASTER bus. Independent
+        // DRUM DESIGN per-lane parameters remain in CREATE, not duplicated here.
+        private void EditMasterFx(Action<SongData> edit)
+        {
+            Resolve();
+            if (projects == null) return;
+            var edited = projects.GetSongForArrangementEditor();
+            if (edited == null) return;
+            if (!ReferenceEquals(projects.CurrentSong, edited))
+                edited = ArrangementEditing.IndependentCopy(edited);
+            if (edited == null) return;
+            edit(edited);
+            projects.AcceptArrangementEdit(edited);
+            ZPunkMasterAudioTap.ApplySongSettings(edited);
+            if (transport != null) transport.ApplyLiveMix(edited);
+        }
+
+        private void MasterFxKnob(VisualElement grid, string name, float min, float max,
+            int steps, float initial, Action<float> write, Func<float, string> formatted)
+        {
+            var tile = new VisualElement();
+            tile.style.width = Length.Percent(25);
+            tile.style.minWidth = 0;
+            tile.style.height = 110;
+            tile.style.flexShrink = 0;
+            tile.style.alignItems = Align.Center;
+            tile.style.justifyContent = Justify.Center;
+            var face = new VisualElement();
+            face.style.position = Position.Relative;
+            face.style.width = 62;
+            face.style.height = 62;
+            face.style.flexShrink = 0;
+            face.style.backgroundColor = new Color(.13f, .19f, .26f);
+            Round(face, 31);
+            face.style.borderTopWidth = 2;
+            face.style.borderBottomWidth = 2;
+            face.style.borderLeftWidth = 2;
+            face.style.borderRightWidth = 2;
+            face.style.borderTopColor = Aqua;
+            face.style.borderBottomColor = Aqua;
+            face.style.borderLeftColor = Aqua;
+            face.style.borderRightColor = Aqua;
+            face.style.alignItems = Align.Center;
+            face.style.justifyContent = Justify.Center;
+            face.pickingMode = PickingMode.Position;
+            var value = Text("", 11, Ink);
+            value.style.unityTextAlign = TextAnchor.MiddleCenter;
+            value.style.unityFontStyleAndWeight = FontStyle.Bold;
+            face.Add(value);
+            var tick = new VisualElement();
+            tick.style.position = Position.Absolute;
+            tick.style.width = 6;
+            tick.style.height = 6;
+            Round(tick, 3);
+            tick.style.backgroundColor = Aqua;
+            tick.pickingMode = PickingMode.Ignore;
+            face.Add(tick);
+            var caption = Text(name, 10, Dim);
+            caption.style.unityTextAlign = TextAnchor.MiddleCenter;
+            caption.style.marginTop = 5;
+            caption.style.unityFontStyleAndWeight = FontStyle.Bold;
+            tile.Add(face);
+            tile.Add(caption);
+            grid.Add(tile);
+            int current = Mathf.Clamp(Mathf.RoundToInt((initial - min) / (max - min) * steps), 0, steps);
+            Action render = () =>
+            {
+                float v = min + (max - min) * current / steps;
+                value.text = formatted(v);
+                float angle = (-225f + current * 270f / steps) * Mathf.Deg2Rad;
+                tick.style.left = 28f + Mathf.Cos(angle) * 23f;
+                tick.style.top = 28f + Mathf.Sin(angle) * 23f;
+            };
+            Action<int> change = requested =>
+            {
+                int next = Mathf.Clamp(requested, 0, steps);
+                if (next == current) return;
+                current = next;
+                render();
+                write(min + (max - min) * current / steps);
+            };
+            render();
+            float startY = 0f;
+            int startStep = 0;
+            bool dragged = false;
+
+            // The mixer ScrollView handles touches during trickle-down, BEFORE
+            // an individual knob's PointerDown callback can stop propagation.
+            // Register with the same root-level gesture capture as the faders:
+            // it claims the pointer before the ScrollView sees the down event,
+            // pins the scroll offset while adjusting, and preserves ordinary
+            // scrolling on the rest of the page.
+            faderTargets[face] = new FaderGesture
+            {
+                begin = position =>
+                {
+                    startY = position.y;
+                    startStep = current;
+                    dragged = false;
+                },
+                move = position =>
+                {
+                    float distance = startY - position.y;
+                    if (Mathf.Abs(distance) >= 5f) dragged = true;
+                    if (dragged) change(startStep + Mathf.RoundToInt(distance / 12f));
+                },
+                end = position =>
+                {
+                    // Short taps still move by one discrete step.
+                    if (!dragged)
+                        change(current + (position.x < face.worldBound.center.x ? -1 : 1));
+                },
+                cancel = () => { }
+            };
+        }
+
+        private void BuildMasterFx(SongData song)
+        {
+            var panel = Panel();
+            var header = new VisualElement();
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.justifyContent = Justify.SpaceBetween;
+            header.style.alignItems = Align.Center;
+            var heading = Text("MASTER FX  /  BUS", 12, Aqua);
+            heading.style.unityFontStyleAndWeight = FontStyle.Bold;
+            header.Add(heading);
+            Button bypass = null;
+            bool initialBypass = song != null && song.masterFxBypassed;
+            bypass = Switch(initialBypass ? "FX OFF" : "FX ON", () =>
+            {
+                bool next = projects != null && projects.CurrentSong != null &&
+                    !projects.CurrentSong.masterFxBypassed;
+                EditMasterFx(s => s.masterFxBypassed = next);
+                bypass.text = next ? "FX OFF" : "FX ON";
+                bypass.style.backgroundColor = next ? Off : new Color(.09f, .32f, .28f);
+            }, !initialBypass);
+            bypass.style.backgroundColor = initialBypass ? Off : new Color(.09f, .32f, .28f);
+            bypass.style.flexGrow = 0;
+            bypass.style.width = 77;
+            bypass.style.height = 31;
+            header.Add(bypass);
+            panel.Add(header);
+            var grid = new VisualElement();
+            grid.style.flexDirection = FlexDirection.Row;
+            grid.style.flexWrap = Wrap.NoWrap;
+            grid.style.width = Length.Percent(100);
+            panel.Add(grid);
+            float drive = song != null ? song.masterDrive : 0f;
+            float glue = song != null ? song.masterGlue : 0f;
+            float width = song != null ? song.masterWidthOffset : 0f;
+            float output = song != null ? song.masterOutputTrimDb : 0f;
+            MasterFxKnob(grid, "DRIVE", 0f, 1f, 20, drive,
+                v => EditMasterFx(s => s.masterDrive = v),
+                v => Mathf.RoundToInt(v * 100f) + "%");
+            MasterFxKnob(grid, "GLUE", 0f, 1f, 20, glue,
+                v => EditMasterFx(s => s.masterGlue = v),
+                v => Mathf.RoundToInt(v * 100f) + "%");
+            MasterFxKnob(grid, "WIDTH", -1f, 1f, 20, width,
+                v => EditMasterFx(s => s.masterWidthOffset = v),
+                v => Mathf.RoundToInt((1f + v * .30f) * 100f) + "%");
+            MasterFxKnob(grid, "OUT", -12f, 3f, 15, output,
+                v => EditMasterFx(s => s.masterOutputTrimDb = v),
+                v => (v > 0f ? "+" : "") + Mathf.RoundToInt(v) + "dB");
+            var detail = Text("Tap L/R or drag to step. Master limiter always on (-1 dBFS sample peak).", 10, Dim);
+            detail.style.whiteSpace = WhiteSpace.Normal;
+            panel.Add(detail);
+            lanes.Add(panel);
+        }
+
+        private void RefreshMasterStatus()
+        {
+            if (masterReadout == null || masterStatusLight == null) return;
+            Resolve();
+            float incoming = masterTap != null ? Mathf.Max(0f, masterTap.PeakBeforeProtection) : 0f;
+            float reduction = masterTap != null ? Mathf.Max(0f, masterTap.GainReductionDb) : 0f;
+            heldMasterPeak = Mathf.Max(incoming, heldMasterPeak * .84f);
+            heldGainReduction = Mathf.Max(reduction, heldGainReduction * .78f);
+            float db = heldMasterPeak <= .00001f ? -80f : 20f * Mathf.Log10(heldMasterPeak);
+            bool hot = heldMasterPeak >= 1f;
+            bool limiting = heldGainReduction >= .15f;
+            masterStatusLight.style.backgroundColor = hot ? Muted : (limiting ? Solo : Off);
+            masterReadout.style.color = hot ? new Color(1f, .58f, .47f) : (limiting ? Aqua : Dim);
+            masterReadout.text = "MASTER PRE-LIMIT " + (db <= -79f ? "-INF" : db.ToString("+0.0;-0.0;0.0")) +
+                " dBFS   /   GR " + heldGainReduction.ToString("0.0") + " dB";
+        }
+
         private void ChangeTrack(int index, Action<TrackData> edit, bool cutSustains = false)
         {
             Resolve();
@@ -471,6 +680,8 @@ namespace ZPunk.DAW
             lanes.Clear();
             displayedSlot = projects != null ? projects.CurrentSlot : -1;
             var song = projects != null ? projects.GetSongForArrangementEditor() : null;
+            ZPunkMasterAudioTap.ApplySongSettings(song);
+            BuildMasterFx(song);
             if (song != null && song.tracks != null)
             {
                 var tracksGrid = Bank("TRACK LEVELS", Aqua, false);
@@ -571,6 +782,7 @@ namespace ZPunk.DAW
             {
                 nextMeterUpdate = Time.unscaledTime + .055f;
                 RefreshMeters();
+                RefreshMasterStatus();
             }
         }
     }
