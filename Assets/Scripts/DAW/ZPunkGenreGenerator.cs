@@ -35,7 +35,7 @@ namespace ZPunk.DAW
             string[][] d = {
                 new[] { "Weighted backbeat, broken kick and laid-back hats", "Spacious drums with ghosts and understated swing", "Off-grid-feeling syncopation with answering hits" },
                 new[] { "Four-to-floor, offbeat hats and rolling bass", "Warm, open spaces and restrained chord movement", "Jackin accents, swung-feel hats and chord stabs", "90s Eurodance/rave hooks with call-and-response, offbeat pickups and bold chord answers" },
-                new[] { "Steady machine pulse with evolving punctuation", "Sparse, hypnotic drums and focused low notes", "Hard syncopated percussion and clipped motifs" },
+                new[] { "Driving sequencer pulse and evolving punctuation", "Sparse hypnotic sixteenth-note cells", "Hard syncopated percussion and clipped motifs" },
                 new[] { "Break-style ghost snares and rolling kick variations", "Denser jungle accents with restless hat patterns", "Half-time backbeat with spacious, heavy hits" },
                 new[] { "Disco pulse, tight claps and bright offbeat percussion", "Dry kick/snare pocket, ghost hits and loose syncopation", "Electro-funk accents, crisp hats and syncopated kicks" },
                 new[] { "Four-on-the-floor with clipped filtered disco accents", "Tight disco drums with playful offbeat hats", "Bouncy French-touch percussion and small fills" }
@@ -47,7 +47,7 @@ namespace ZPunk.DAW
             string[][] d = {
                 new[] { "Lazy low-end pocket with octave replies", "Sparse soulful bass and muted pickups", "Broken sixteenth-note bass with syncopated fifths" },
                 new[] { "Disco-style offbeat bounce and octave movement", "Warm sustained roots with restrained funk accents", "Tight jackin sixteenths and chromatic turnarounds", "Classic 90s house bass bounce with octave accents" },
-                new[] { "Hypnotic root pulse with occasional octave jumps", "Minimal long notes with deliberate gaps", "Clipped industrial syncopation and fifths" },
+                new[] { "Hypnotic sixteenth-note pulses with octave accents", "Sparse pitched cells on syncopated sixteenths", "Clipped industrial sixteenths and dark fifths" },
                 new[] { "Broken low-end call and response", "Restless bass movement with octave accents", "Heavy spaced roots with sharp pickups" },
                 new[] { "Disco-funk octave bounce and short plucked notes", "Deep pocket with sparse fifths and rhythmic silence", "Electro-funk sixteenths, octave pops and passing tones" },
                 new[] { "Filtered repetitive octave bass and short pickups", "Disco-root bounce with fifths and sixteenth-note silence", "Rubbery syncopated French-touch bass with turnarounds" }
@@ -70,7 +70,7 @@ namespace ZPunk.DAW
         public static void Fill(ClipContentData clip, TrackKind kind, int genre, int style,
                                 int bars, int key, bool minor, int variation, bool synthChords = false,
                                 int[] harmonyDegrees = null, int[][] harmonyVoices = null,
-                                int progressionChoice = 0, int progressionBarOffset = 0)
+                                int progressionChoice = 0, int progressionBarOffset = 0, float currentBpm = 120f)
         {
             if (clip == null) throw new ArgumentNullException(nameof(clip));
             if (kind == TrackKind.Chops) return;
@@ -79,6 +79,10 @@ namespace ZPunk.DAW
             bars = Clamp(bars, 1, 4);
             key = Mod(key, 12);
             progressionChoice = Clamp(progressionChoice, 0, ProgressionChoiceCount - 1);
+            // BPM is a compositional parameter only. Do not modify MIDI ticks or transport.
+            if (float.IsNaN(currentBpm) || float.IsInfinity(currentBpm)) currentBpm = 120f;
+            currentBpm = Math.Max(40f, Math.Min(240f, currentBpm));
+            int tempoBand = TempoBand(genre, style, currentBpm);
             clip.kind = kind == TrackKind.Drums ? ClipKind.Drums : ClipKind.Midi;
             clip.lengthTicks = bars * SongData.TicksPerBar4;
             clip.generatedTag = Label(genre, style, key, minor, synthChords && kind == TrackKind.Synth) +
@@ -89,13 +93,17 @@ namespace ZPunk.DAW
             clip.drums.Clear();
             clip.notes.Clear();
             if (clip.chops != null) clip.chops.Clear();
-            int seed = unchecked(variation * 104729 + genre * 3659 + style * 1619 + (int)kind * 307 + key * 47 + (minor ? 173 : 97));
+            // Keep BPM in the deterministic identity, including tenths for decimal tempos.
+            // At 120 BPM preserve the old seed as a useful 2.2.6 reference point.
+            int seed = unchecked(variation * 104729 + genre * 3659 + style * 1619 +
+                                 (int)kind * 307 + key * 47 + (minor ? 173 : 97) +
+                                 ((int)Math.Round(currentBpm * 10.0) - 1200) * 1009);
             if (kind == TrackKind.Drums)
             {
                 // Keep the tick-based drum contract; develop each genre's own rhythm.
                 var drumRng = new Random(seed);
                 for (int bar = 0; bar < bars; bar++)
-                    GenerateDrums(clip, genre, style, bar, bars, variation, drumRng);
+                    GenerateDrums(clip, genre, style, bar, bars, variation, tempoBand, drumRng);
                 AlignToStart(clip);
             }
             else
@@ -112,10 +120,10 @@ namespace ZPunk.DAW
                     clip.notes.Clear();
                     var candidateRng = new Random(CandidateSeed(seed, candidate, harmony, bars));
                     GenerateMidiCandidate(clip, kind, genre, style, bars, key, minor,
-                                          harmony, synthChords, harmonyVoices, candidateRng);
+                                          harmony, synthChords, harmonyVoices, tempoBand, candidateRng);
                     double score = ScoreCandidate(clip, kind, genre, style, minor, key,
                                                   harmony, synthChords && kind == TrackKind.Synth,
-                                                  harmonyVoices);
+                                                  harmonyVoices, tempoBand);
                     if (bestNotes == null || score > bestScore)
                     {
                         bestScore = score;
@@ -163,6 +171,79 @@ namespace ZPunk.DAW
                 foreach (var note in clip.notes)
                     if (note != null) note.startTick -= earliest;
             }
+        }
+
+        // Style-specific tempo centers: the same BPM need not produce the same
+        // density response in DUSTY boom bap, DRIVING techno or HALF-TIME breaks.
+        private static int TempoBand(int g, int s, float bpm)
+        {
+            float center = g == 0 ? (s == 1 ? 82f : 93f) :
+                g == 1 ? (s == 1 ? 120f : s == 3 ? 132f : 126f) :
+                g == 2 ? (s == 1 ? 130f : s == 2 ? 140f : 136f) :
+                g == 3 ? (s == 2 ? 92f : s == 1 ? 165f : 142f) :
+                g == 4 ? (s == 1 ? 105f : s == 2 ? 118f : 114f) :
+                         (s == 0 ? 122f : 126f);
+            float difference = bpm - center;
+            return difference <= -35f ? -2 : difference <= -13f ? -1 :
+                   difference >= 35f ? 2 : difference >= 12f ? 1 : 0;
+        }
+
+        // Small, style-aware rhythmic shaping applied to the original vocabulary.
+        // Changes use integer sixteenth positions so no quantization drift is possible.
+        private static int[] ShapeRhythm(int[] source, int g, int s, int bar, int bars,
+                                         int tempoBand, bool bass, int character)
+        {
+            var steps = new List<int>(source);
+            bool spare = (g == 0 && s == 1) || (g == 1 && s == 1) ||
+                         (g == 2 && s == 1) || (g == 3 && s == 2) ||
+                         (g == 4 && s == 1);
+            // At high absolute tempos retain the pocket rather than mechanically
+            // filling every subdivision. Techno instead sharpens its sequencer pulse.
+            if (tempoBand >= 1)
+            {
+                if (g == 2 && s != 1)
+                    InsertStep(steps, bass ? (character % 2 == 0 ? 11 : 7) :
+                                          (character % 2 == 0 ? 3 : 13), 1);
+                else if (spare && steps.Count > 3 && (bar + character) % 2 == 0)
+                    steps.RemoveAt(steps.Count - 2);
+                else if ((g == 3 && s == 1) || (g == 4 && s == 2))
+                    InsertStep(steps, 15, 1);
+            }
+            else if (tempoBand <= -1)
+            {
+                // At slower tempos make an occasional response audible, except in
+                // deliberately sparse styles (including MINIMAL techno).
+                if (!spare && (g == 0 || g == 1 || g == 4 || g == 5) &&
+                    (bar + character) % 2 == 0)
+                    InsertStep(steps, bass ? 11 : 13, 2);
+            }
+            // Development is constrained to multi-bar phrases. A one-bar loop
+            // keeps the stable original motif and its immediately usable ending.
+            if (bars == 4 && bar == 2 && !spare && (g == 1 || g == 4 || g == 5))
+                InsertStep(steps, bass ? 9 : 11, 2);
+            if (bars > 1 && bar == bars - 1 && (g == 0 || g == 3) && s != 1)
+                InsertStep(steps, 15, 1);
+            steps.Sort();
+            return steps.ToArray();
+        }
+
+        private static void InsertStep(List<int> steps, int step, int minDistance)
+        {
+            if (step < 0 || step >= 16) return;
+            foreach (int existing in steps)
+                if (Math.Abs(existing - step) < minDistance + 1) return;
+            steps.Add(step);
+        }
+
+        private static int ShapeLength(int length, int g, int s, int tempoBand)
+        {
+            if (g == 2) // Sequenced techno: clipped sixteenths, not half-note pulses.
+                return Math.Min(length, s == 1 && tempoBand < 1 ? 2 : 1);
+            if (tempoBand >= 1 && (g == 1 || g == 3 || g == 4 || g == 5))
+                return Math.Max(1, length - 1);
+            if (tempoBand <= -1 && ((g == 1 && s == 1) || (g == 0 && s == 1)))
+                return Math.Min(6, length + 1);
+            return length;
         }
 
         // 0 = original genre-specific harmony for backwards compatibility.
@@ -279,7 +360,7 @@ namespace ZPunk.DAW
         {
             foreach (int step in positions) Drum(c, bar, step, lane, vel, r, chance);
         }
-        private static void GenerateDrums(ClipContentData c, int g, int s, int bar, int bars, int variation, Random r)
+        private static void GenerateDrums(ClipContentData c, int g, int s, int bar, int bars, int variation, int tempoBand, Random r)
         {
             int family = Mod(variation - 1, 4);
             bool turn = (bar & 1) == 1;
@@ -327,7 +408,7 @@ namespace ZPunk.DAW
             }
             else if (g == 2)
             {
-                Hits(c, bar, 0, new[] { 0, 4, 8, 12 }, 121, r, s == 1 ? .95 : 1);
+                Hits(c, bar, 0, new[] { 0, 4, 8, 12 }, 121, r);
                 if (s != 1) Hits(c, bar, 1, new[] { 4, 12 }, 98, r, .9);
                 Hits(c, bar, 4, new[] { 2, 6, 10, 14 }, 92, r, s == 1 ? .55 : .95);
                 int[] hats = s == 1 ? new[] { 0, 4, 8, 12 } :
@@ -421,6 +502,20 @@ namespace ZPunk.DAW
                 if (family == 2) Drum(c, bar, 7, 1, 44, r, .52);
                 if (family == 3) Drum(c, bar, 15, 0, 72, r, .55);
             }
+            // BPM-aware punctuation sits on top of established kick/snare anchors.
+            // All extra events use existing lanes and the exact 16th grid.
+            if (g == 0 && tempoBand < 0 && s != 1)
+                Drum(c, bar, 15, 6, 42, r, .42);
+            else if (g == 1 && tempoBand > 0 && s != 1)
+                Drum(c, bar, bar % 2 == 0 ? 7 : 15, 3, 48, r, .67);
+            else if (g == 2 && tempoBand > 0)
+                Drum(c, bar, s == 1 ? 11 : 15, 3, 55, r, s == 1 ? .45 : .85);
+            else if (g == 3 && tempoBand > 0 && s == 1)
+                Drum(c, bar, bar % 2 == 0 ? 7 : 15, 6, 44, r, .7);
+            else if (g == 4 && tempoBand < 0 && s != 1)
+                Drum(c, bar, 15, 6, 42, r, .56);
+            else if (g == 5 && tempoBand > 0 && s == 2)
+                Drum(c, bar, 15, 3, 53, r, .65);
             if (fill)
             {
                 Drum(c, bar, 14, 6, 58, r, .7);
@@ -468,7 +563,7 @@ namespace ZPunk.DAW
         private static void GenerateMidiCandidate(ClipContentData clip, TrackKind kind, int g, int s,
                                                   int bars, int key, bool minor,
                                                   int[] harmony, bool synthChords,
-                                                  int[][] harmonyVoices, Random r)
+                                                  int[][] harmonyVoices, int tempoBand, Random r)
         {
             int motif = r.Next(0, 16);
             int rhythm = r.Next(0, 4);
@@ -481,7 +576,7 @@ namespace ZPunk.DAW
                 int nextDegree = harmony[(bar + 1) % bars]; // Actual loop destination.
                 if (kind == TrackKind.Bass)
                     ComposeBass(clip, g, s, bar, bars, key, minor, degree, nextDegree,
-                                motif, rhythm, character, r);
+                                motif, rhythm, character, tempoBand, r);
                 else if (kind == TrackKind.Pads || (kind == TrackKind.Synth && synthChords))
                 {
                     bool pads = kind == TrackKind.Pads;
@@ -493,13 +588,13 @@ namespace ZPunk.DAW
                     int[] chord = ComposeVoicing(degree, key, minor, g, s, pads, character,
                                                  previousVoicing, r);
                     ComposeChordRhythm(clip, g, s, bar, bars, degree, harmony, pads,
-                                       chord, rhythm, character, r);
+                                       chord, rhythm, character, tempoBand, r);
                     previousVoicing = chord;
                 }
                 else
                     ComposeMelody(clip, g, s, bar, bars, key, minor, degree, motif, rhythm,
                                   character, harmonyVoices != null && bar < harmonyVoices.Length
-                                  ? harmonyVoices[bar] : null, ref previousMelodyPitch, r);
+                                  ? harmonyVoices[bar] : null, ref previousMelodyPitch, tempoBand, r);
             }
             // Never force a tick-zero note into intentionally offbeat chords/stabs.
             // Clip placement is already aligned by the arrangement's tick clock.
@@ -564,10 +659,10 @@ namespace ZPunk.DAW
                 return new[] { new[] { 0, 2, 6, 10, 14 }, new[] { 0, 3, 6, 11, 14 }, new[] { 0, 2, 7, 10, 15 }, new[] { 0, 4, 6, 10, 14 } };
             }
             if (g == 2) return s == 1
-                ? new[] { new[] { 0, 8 }, new[] { 0, 10 }, new[] { 0, 6, 12 }, new[] { 0, 7 } }
+                ? new[] { new[] { 0, 3, 7, 11 }, new[] { 0, 5, 9, 13 }, new[] { 0, 2, 7, 11, 15 }, new[] { 0, 3, 8, 13 } }
                 : s == 2
-                ? new[] { new[] { 0, 3, 7, 11, 14 }, new[] { 0, 2, 6, 9, 13 }, new[] { 0, 4, 7, 11, 15 }, new[] { 0, 3, 8, 12, 14 } }
-                : new[] { new[] { 0, 4, 6, 10, 12, 14 }, new[] { 0, 3, 6, 8, 12 }, new[] { 0, 4, 8, 10, 14 }, new[] { 0, 2, 6, 10, 12, 15 } };
+                ? new[] { new[] { 0, 1, 3, 6, 7, 9, 11, 14 }, new[] { 0, 2, 3, 5, 8, 10, 13, 15 }, new[] { 0, 3, 4, 7, 9, 11, 14, 15 }, new[] { 0, 1, 4, 6, 9, 10, 13, 15 } }
+                : new[] { new[] { 0, 2, 3, 5, 7, 8, 10, 13, 15 }, new[] { 0, 1, 3, 4, 7, 9, 11, 14 }, new[] { 0, 3, 4, 6, 7, 10, 12, 14, 15 }, new[] { 0, 2, 4, 5, 8, 9, 11, 13, 15 } };
             if (g == 3) return s == 2
                 ? new[] { new[] { 0, 8, 13 }, new[] { 0, 7, 14 }, new[] { 0, 10, 14 }, new[] { 0, 6, 12 } }
                 : s == 1
@@ -622,12 +717,12 @@ namespace ZPunk.DAW
 
         private static void ComposeMelody(ClipContentData c, int g, int s, int bar, int bars,
                                           int key, bool minor, int degree, int motif, int rhythm,
-                                          int character, int[] externalChord, ref int previous, Random r)
+                                          int character, int[] externalChord, ref int previous, int tempoBand, Random r)
         {
             int[][] grids = MelodyRhythms(g, s);
             // A-A'-B-A'' form in four bars; call/reply on short phrases.
-            int variant = Mod(rhythm + (bar % 2 == 1 ? 1 : 0) + (bar == 2 ? 2 : 0), grids.Length);
-            int[] steps = grids[variant];
+            int variant = Mod(rhythm + (bar == 1 ? 1 : bar == 2 ? 2 : 0), grids.Length);
+            int[] steps = ShapeRhythm(grids[variant], g, s, bar, bars, tempoBand, false, character);
             int[][] contours = MelodicContours(g);
             int[] shape = contours[Mod(motif / 4 + s, contours.Length)];
             // Previous note carries across bars, avoiding arbitrary octave resets.
@@ -661,7 +756,8 @@ namespace ZPunk.DAW
                              g == 2 ? (s == 1 ? 3 : 1 + r.Next(2)) :
                              g == 3 ? (s == 1 ? 1 + r.Next(2) : 1 + r.Next(3)) :
                              g == 5 ? (s == 0 ? 2 + r.Next(2) : 1 + r.Next(3)) : 1 + r.Next(2);
-                if (i == steps.Length - 1 && bar == bars - 1) length = Math.Max(length, 2);
+                if (i == steps.Length - 1 && bar == bars - 1 && g != 2) length = Math.Max(length, 2);
+                length = ShapeLength(length, g, s, tempoBand);
                 length = Math.Max(1, Math.Min(length, Math.Max(1, gap)));
                 int vel = i == 0 ? 107 : i == steps.Length - 1 ? 97 :
                     step % 4 == 0 ? 98 : 78 + character * 3;
@@ -683,10 +779,10 @@ namespace ZPunk.DAW
                 ? new[] { new[] { 0, 3, 6, 10, 12, 15 }, new[] { 0, 3, 7, 10, 14 }, new[] { 0, 2, 6, 9, 12, 15 }, new[] { 0, 3, 6, 11, 14 } }
                 : new[] { new[] { 0, 3, 6, 10, 14 }, new[] { 0, 2, 6, 10, 14 }, new[] { 0, 3, 7, 11, 14 }, new[] { 0, 2, 7, 10, 15 } };
             if (g == 2) return s == 1
-                ? new[] { new[] { 0, 8 }, new[] { 0, 7, 12 }, new[] { 0, 10 }, new[] { 0, 6, 13 } }
+                ? new[] { new[] { 0, 3, 7, 11, 14 }, new[] { 0, 5, 9, 13 }, new[] { 0, 2, 7, 10, 15 }, new[] { 0, 3, 8, 11 } }
                 : s == 2
-                ? new[] { new[] { 0, 3, 6, 8, 11, 14 }, new[] { 0, 2, 5, 8, 12, 15 }, new[] { 0, 3, 7, 10, 14 }, new[] { 0, 4, 6, 9, 13 } }
-                : new[] { new[] { 0, 2, 4, 6, 8, 10, 12, 14 }, new[] { 0, 2, 4, 7, 8, 10, 12, 15 }, new[] { 0, 3, 4, 6, 8, 11, 12, 14 }, new[] { 0, 2, 4, 6, 9, 10, 12, 14 } };
+                ? new[] { new[] { 0, 1, 3, 6, 7, 9, 11, 14, 15 }, new[] { 0, 2, 3, 5, 8, 10, 13, 15 }, new[] { 0, 3, 4, 7, 9, 11, 14 }, new[] { 0, 1, 4, 6, 9, 10, 13, 15 } }
+                : new[] { new[] { 0, 2, 3, 5, 6, 8, 10, 11, 13, 15 }, new[] { 0, 1, 3, 4, 7, 8, 10, 11, 14 }, new[] { 0, 3, 4, 6, 7, 9, 12, 14, 15 }, new[] { 0, 2, 4, 5, 8, 9, 11, 13, 15 } };
             if (g == 3) return s == 2
                 ? new[] { new[] { 0, 7, 10, 14 }, new[] { 0, 6, 11 }, new[] { 0, 8, 13 }, new[] { 0, 5, 10, 15 } }
                 : s == 1
@@ -706,7 +802,7 @@ namespace ZPunk.DAW
 
         private static void ComposeBass(ClipContentData c, int g, int s, int bar, int bars,
                                         int key, bool minor, int degree, int nextDegree,
-                                        int motif, int rhythm, int character, Random r)
+                                        int motif, int rhythm, int character, int tempoBand, Random r)
         {
             int root = BassRoot(key, degree, minor);
             int nextRoot = BassRoot(key, nextDegree, minor);
@@ -714,7 +810,9 @@ namespace ZPunk.DAW
             int third = Scale(degree + 2, minor) - Scale(degree, minor);
             int seventh = Scale(degree + 6, minor) - Scale(degree, minor);
             int[][] grids = BassRhythms(g, s);
-            int[] steps = grids[Mod(rhythm + (bar == 2 ? 1 : 0) + (bar == 3 ? 2 : 0), grids.Length)];
+            // A / answer / development / reprise, retaining the original motifs.
+            int variant = Mod(rhythm + (bar == 1 ? 1 : bar == 2 ? 2 : 0), grids.Length);
+            int[] steps = ShapeRhythm(grids[variant], g, s, bar, bars, tempoBand, true, character);
             for (int i = 0; i < steps.Length; i++)
             {
                 int step = steps[i];
@@ -750,12 +848,13 @@ namespace ZPunk.DAW
                     pitch = BassApproach(root, nextRoot);
                 pitch = FoldPitch(pitch, pitch >= 48 ? 51 : 42, 35, 60);
                 int gap = i + 1 < steps.Length ? steps[i + 1] - step : 16 - step;
-                int length = g == 2 && s == 1 ? 5 :
+                int length = g == 2 ? (s == 1 ? 2 : 1 + (i % 4 == 0 ? 1 : 0)) :
                              g == 0 && s == 1 ? 4 :
                              g == 1 && s == 1 ? 3 :
                              g == 3 && s == 2 ? 4 :
                              g == 4 ? 1 + ((i + character) % 3) :
                              g == 5 ? (s == 0 ? 2 : 1 + ((i + character) % 2)) : 1 + (step % 3);
+                length = ShapeLength(length, g, s, tempoBand);
                 length = Math.Max(1, Math.Min(length, Math.Max(1, gap)));
                 int vel = i == 0 ? 112 : step % 4 == 0 ? 101 :
                           step % 2 == 1 ? 87 : 95;
@@ -776,8 +875,18 @@ namespace ZPunk.DAW
                 offsets = character % 3 == 0 ? new[] { 2, 6, 8 } : new[] { 0, 2, 6, 8 };
             else if (g == 4)
                 offsets = character % 2 == 0 ? new[] { 2, 6, 8 } : new[] { 0, 2, 6, 8 };
-            else if (g == 1 && s == 3)
-                offsets = character % 2 == 0 ? new[] { 0, 2, 4, 6 } : new[] { 2, 4, 6, 8 };
+            else if (g == 1)
+            {
+                // House piano/organ vocabulary: four and five-voice seventh/ninth
+                // voicings with real thirds/fifths (not simply dyads or clusters).
+                // Alternate richness with register clarity and smooth inversions.
+                if (s == 1) offsets = character % 2 == 0 ?
+                    new[] { 0, 2, 4, 6, 8 } : new[] { 0, 2, 6, 8 };
+                else if (s == 3) offsets = character % 2 == 0 ?
+                    new[] { 0, 2, 4, 6, 8 } : new[] { 0, 2, 4, 6 };
+                else offsets = character % 3 == 0 ?
+                    new[] { 0, 2, 4, 6, 8 } : new[] { 0, 2, 4, 6 };
+            }
             else if (g == 3)
                 offsets = character % 2 == 0 ? new[] { 0, 2, 4, 6 } : new[] { 2, 4, 6, 8 };
             else
@@ -893,9 +1002,12 @@ namespace ZPunk.DAW
 
         private static void ComposeChordRhythm(ClipContentData c, int g, int s, int bar,
                                                 int bars, int degree, int[] harmony, bool pads,
-                                                int[] notes, int rhythm, int character, Random r)
+                                                int[] notes, int rhythm, int character, int tempoBand, Random r)
         {
             int[] hits = ChordRhythms(g, s, pads, rhythm + character, bar);
+            if (!pads && g == 1 && tempoBand < 0 && s != 1)
+                hits = ShapeChordStabs(hits, s == 3 ? 15 : 11);
+            // Keep PADS separate from the busy rhythmic SYNTH-stab vocabulary.
             bool longHold = pads && ShouldHoldPad(g, s, character) &&
                             bar + 1 < bars && harmony[bar + 1] == degree && bar % 2 == 0;
             for (int hit = 0; hit < hits.Length; hit++)
@@ -909,6 +1021,8 @@ namespace ZPunk.DAW
                 else duration = g == 1 && s == 1 ? 6 :
                     g == 0 && s == 1 ? 5 : g == 3 && s == 2 ? 6 :
                     g == 2 && s == 1 ? 7 : 1 + r.Next(2);
+                if (!pads) duration = Math.Min(16 - step,
+                    ShapeLength(duration, g, s, tempoBand));
                 duration = Math.Max(1, duration);
                 int vel = pads ? 66 : g == 1 && s == 3 ? 103 : g == 4 ? 94 : 84;
                 for (int i = 0; i < notes.Length; i++)
@@ -924,11 +1038,19 @@ namespace ZPunk.DAW
             }
         }
 
+        private static int[] ShapeChordStabs(int[] original, int extra)
+        {
+            var hits = new List<int>(original);
+            InsertStep(hits, extra, 1);
+            hits.Sort();
+            return hits.ToArray();
+        }
+
         // Cheap deterministic ranking, with density, harmonic, rhythmic and register
         // checks. Genre-specific preferences prevent over-penalizing minimal techno.
         private static double ScoreCandidate(ClipContentData c, TrackKind kind, int g, int s,
                                               bool minor, int key, int[] harmony, bool chords,
-                                              int[][] externalVoices)
+                                              int[][] externalVoices, int tempoBand)
         {
             if (c.notes.Count == 0) return double.MinValue;
             bool harmonic = kind == TrackKind.Pads || chords;
@@ -973,9 +1095,7 @@ namespace ZPunk.DAW
                 }
             }
             foreach (int count in barNotes) if (count == 0) score -= 18;
-            int target = harmonic ? (kind == TrackKind.Pads ? 1 : g == 2 ? 4 : 5) :
-                         kind == TrackKind.Bass ? (g == 2 && s == 1 ? 2 : g == 1 && s == 2 ? 7 : 5) :
-                         (g == 2 && s == 1 ? 2 : g == 1 && s == 3 ? 6 : 4);
+            int target = TargetAttacksPerBar(kind, g, s, chords, tempoBand);
             double eventsPerBar = starts.Count / (double)harmony.Length;
             score -= Math.Abs(eventsPerBar - target) * (kind == TrackKind.Pads ? 1.5 : 3.5);
             if (!harmonic)
@@ -1004,8 +1124,62 @@ namespace ZPunk.DAW
             // Style-specific syncopation matters more than insisting every
             // harmonic phrase starts on the downbeat.
             score += ScoreRhythmicFit(starts, kind, g, s, chords, sixteenth);
+            if (g == 2 && (kind == TrackKind.Bass || (kind == TrackKind.Synth && !chords)))
+            {
+                // Techno can repeat pitches, but attacks should sound like a
+                // sixteenth sequencer rather than sustained half-note pads.
+                foreach (var note in sorted)
+                    score += note.durationTicks <= sixteenth * 2 ? .25 : -1.2;
+            }
+            if (harmony.Length == 4 && !harmonic)
+                score += ScoreFourBarPhrase(starts, sixteenth);
             if (kind == TrackKind.Bass && sorted[0].startTick == 0) score += 1;
             return score;
+        }
+
+        private static int TargetAttacksPerBar(TrackKind kind, int g, int s,
+                                                bool chords, int tempoBand)
+        {
+            if (kind == TrackKind.Pads) return 1;
+            if (chords)
+                return g == 1 ? (s == 1 ? 2 : s == 3 ? 4 : 4) :
+                       g == 2 ? (s == 1 ? 2 : 4) : g == 0 ? (s == 1 ? 2 : 4) :
+                       g == 3 ? (s == 2 ? 2 : 3) : g == 4 ? 4 : 4;
+            int count = g == 0 ? (s == 1 ? 3 : s == 2 ? 5 : 4) :
+                        g == 1 ? (s == 1 ? 4 : s == 2 ? 7 : s == 3 ? 6 : 5) :
+                        g == 2 ? (s == 1 ? 4 : s == 2 ? 8 : 9) :
+                        g == 3 ? (s == 1 ? 6 : s == 2 ? 3 : 5) :
+                        g == 4 ? (s == 1 ? 4 : s == 2 ? 6 : 5) :
+                                 (s == 0 ? 5 : s == 1 ? 6 : 6);
+            if (kind == TrackKind.Synth && g != 2) count = Math.Max(2, count - 1);
+            bool spare = (g == 0 && s == 1) || (g == 1 && s == 1) ||
+                         (g == 2 && s == 1) || (g == 3 && s == 2) ||
+                         (g == 4 && s == 1);
+            if (tempoBand >= 1 && spare) count = Math.Max(2, count - 1);
+            if (tempoBand >= 1 && g == 2 && s != 1) count++;
+            if (tempoBand <= -1 && !spare && (g == 0 || g == 1 || g == 4 || g == 5)) count++;
+            return count;
+        }
+
+        private static double ScoreFourBarPhrase(HashSet<long> starts, long sixteenth)
+        {
+            // Encourage the fourth bar to recall the original motif, while bar
+            // three offers a contrasting response. Small bonus, not a mandate.
+            var first = new HashSet<int>();
+            var third = new HashSet<int>();
+            var fourth = new HashSet<int>();
+            foreach (long tick in starts)
+            {
+                int bar = (int)(tick / SongData.TicksPerBar4);
+                int step = (int)((tick / sixteenth) % 16);
+                if (bar == 0) first.Add(step);
+                else if (bar == 2) third.Add(step);
+                else if (bar == 3) fourth.Add(step);
+            }
+            int echo = 0, contrast = 0;
+            foreach (int step in fourth) if (first.Contains(step)) echo++;
+            foreach (int step in third) if (!first.Contains(step)) contrast++;
+            return Math.Min(2.5, echo * .35 + contrast * .25);
         }
 
         // Evaluate distinct onsets rather than counting every voice of a chord.
@@ -1032,7 +1206,8 @@ namespace ZPunk.DAW
                     if (g == 0) sum += sync ? 1.7 : onBeat ? 1.2 : .5; // boom bap pocket
                     else if (g == 1) sum += s == 1 ? (onBeat ? 1.9 : .7) :
                                                (offbeat ? 2.0 : onBeat ? 1.2 : .8);
-                    else if (g == 2) sum += onBeat ? 2.0 : s == 2 && sync ? 1.2 : .3;
+                    else if (g == 2) sum += sync ? (s == 1 ? 2.3 : 2.6) :
+                                               offbeat ? 1.7 : 1.1;
                     else if (g == 3) sum += sync ? 1.7 : onBeat ? 1.0 : .4;
                     else if (g == 4) sum += sync ? 2.0 : offbeat ? 1.2 : .7;
                     else sum += offbeat ? 2.1 : sync ? 1.4 : onBeat ? 1.0 : .4;
@@ -1046,7 +1221,8 @@ namespace ZPunk.DAW
                 }
                 else // melodic SYNTH
                 {
-                    if (g == 2) sum += onBeat ? 1.7 : s == 2 && sync ? 1.1 : .4;
+                    if (g == 2) sum += sync ? (s == 1 ? 2.0 : 2.5) :
+                                          offbeat ? 1.6 : 1.0;
                     else if (g == 0 || g == 3) sum += sync ? 1.5 : onBeat ? 1.1 : .5;
                     else if (g == 4) sum += sync ? 1.7 : offbeat ? 1.2 : .5;
                     else sum += offbeat ? 1.5 : onBeat ? 1.1 : .8;

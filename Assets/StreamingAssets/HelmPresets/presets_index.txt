@@ -88,10 +88,20 @@ Bass/ZOR HipHop Soft 808 Tail.helm
 Bass/ZOR HipHop West Coast Glide.helm
 Bass/ZOR Techno 909 Rubber.helm
 Bass/ZOR Techno Acid 303.helm
+Bass/ZOR Techno Acid Venom.helm
 Bass/ZOR Techno Berlin Resonance.helm
+Bass/ZOR Techno Black Tunnel.helm
+Bass/ZOR Techno Concrete Hammer.helm
 Bass/ZOR Techno Detroit Sub.helm
+Bass/ZOR Techno EBM Stalker.helm
+Bass/ZOR Techno Iron Teeth.helm
 Bass/ZOR Techno Motor City FM.helm
+Bass/ZOR Techno Night Conveyor.helm
+Bass/ZOR Techno Pressure Valve.helm
+Bass/ZOR Techno Reactor Core.helm
+Bass/ZOR Techno Static Ritual.helm
 Bass/ZOR Techno Warehouse Pulse.helm
+Bass/ZOR Techno Wire Sequence.helm
 Chip/COA Insane Gamer.helm
 Chip/COA Random Chip Bass.helm
 Chip/MT Bounce.helm

@@ -1471,7 +1471,8 @@ namespace ZPunk.DAW
             int barOffset = clip == null ? 0 : (int)(clip.startTick / SongData.TicksPerBar4);
             ZPunkGenreGenerator.Fill(content, kind, generatorGenre, generatorStyle,
                 generatorBars, generatorKey, generatorMinor, generatorVariation, chords,
-                detectedDegrees, detectedVoices, song.sharedProgressionChoice, barOffset);
+                detectedDegrees, detectedVoices, song.sharedProgressionChoice, barOffset,
+                song.bpm);
             ZPunkGenerationHistory.Add(projects.CurrentSlot, kind, generatorGenre, generatorStyle,
                 generatorKey, generatorMinor, generatorBars, generatorVariation, chords, content);
             FinishGeneratorContent();
