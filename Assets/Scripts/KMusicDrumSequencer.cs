@@ -98,6 +98,10 @@ public class KMusicDrumSequencer : MonoBehaviour
     }
 
     private readonly Dictionary<int, int> _drumVoiceCursor = new();
+    // isPlaying is false for some voices that have been PlayScheduled but have
+    // not reached their start time yet. Track future reservations explicitly so
+    // rapidly repeating kick/hat hits do not cancel pending or sounding voices.
+    private readonly Dictionary<AudioSource, double> _dawDrumVoiceBusyUntil = new();
 
     private KMusicApp _app;
     private ParameterBus _bus;
@@ -175,7 +179,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         WireMuteButtons(_root);
     }
 
-    private AudioSource GetOrCreateDrumVoice(int drumId, AudioClip clip)
+    private AudioSource GetOrCreateDrumVoice(int drumId, AudioClip clip, double requestedDsp = -1.0)
     {
         drumId = Mathf.Clamp(drumId, 1, 8);
 
@@ -211,8 +215,52 @@ public class KMusicDrumSequencer : MonoBehaviour
         int cur = _drumVoiceCursor.TryGetValue(drumId, out var c) ? c : 0;
         if (cur < 0 || cur >= pool.Count) cur = 0;
 
-        var voice = pool[cur];
-        _drumVoiceCursor[drumId] = (cur + 1) % pool.Count;
+        int chosen = cur;
+        if (requestedDsp >= 0.0)
+        {
+            // PlayScheduled requires preparing this AudioSource *now*. Even if
+            // a voice ends before requestedDsp, calling Stop() now would cut its
+            // active tail. Use the current DSP time, not the upcoming hit time.
+            double nowDsp = AudioSettings.dspTime;
+            bool foundFree = false;
+            double earliestEnd = double.MaxValue;
+            for (int offset = 0; offset < pool.Count; offset++)
+            {
+                int i = (cur + offset) % pool.Count;
+                var candidate = pool[i];
+                double busyUntil = candidate != null &&
+                    _dawDrumVoiceBusyUntil.TryGetValue(candidate, out double reserved)
+                    ? reserved : 0.0;
+                if (busyUntil <= nowDsp + 0.0001)
+                {
+                    chosen = i;
+                    foundFree = true;
+                    break;
+                }
+                if (busyUntil < earliestEnd) { earliestEnd = busyUntil; chosen = i; }
+            }
+            if (!foundFree && pool.Count < 8)
+            {
+                // Add a voice only when truly required; no extra voices on
+                // ordinary projects. Cap at eight per lane for mobile memory.
+                var go = new GameObject($"Drum{drumId:00}_Voice{pool.Count}");
+                go.transform.SetParent(transform, false);
+                var extra = go.AddComponent<AudioSource>();
+                extra.playOnAwake = false;
+                extra.loop = false;
+                extra.spatialBlend = 0f;
+                extra.volume = 1f;
+                var extraMeter = go.AddComponent<ZPunkSampleChannelMeter>();
+                extraMeter.Gain = GetDrumChannelGain(drumId);
+                var group = GetMixerGroupForDrum(drumId);
+                if (group != null) extra.outputAudioMixerGroup = group;
+                ZPunkArrangementFilters.RegisterVoice(extra, true);
+                pool.Add(extra);
+                chosen = pool.Count - 1;
+            }
+        }
+        var voice = pool[chosen];
+        _drumVoiceCursor[drumId] = (chosen + 1) % pool.Count;
 
         if (voice != null)
         {
@@ -243,13 +291,15 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
             return;
 
-        var src = GetOrCreateDrumVoice(drumId, clip);
+        var src = GetOrCreateDrumVoice(drumId, clip, dspTime);
         if (src == null) return;
 
-        // Scheduled playback (tight timing)
+        // Voice is free now (or the oldest if the eight-voice cap is
+        // exhausted). Do not prematurely steal a queued/playing hit.
         src.Stop();
         src.volume = Mathf.Clamp01(velocityScale);
         src.PlayScheduled(dspTime);
+        _dawDrumVoiceBusyUntil[src] = dspTime + Math.Max(0.01, clip.length);
     }
 
     /// <summary>DAW DSP event. Drum lane is 0..7, matching SongData.</summary>
@@ -333,6 +383,7 @@ public class KMusicDrumSequencer : MonoBehaviour
     /// <summary>Cancel any scheduled DAW voices on stop, seek or load.</summary>
     public void StopDAWVoices()
     {
+        _dawDrumVoiceBusyUntil.Clear();
         foreach (var pool in _drumVoicePools.Values)
             foreach (AudioSource source in pool)
                 if (source != null) source.Stop();

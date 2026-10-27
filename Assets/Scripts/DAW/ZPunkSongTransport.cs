@@ -21,6 +21,20 @@ namespace ZPunk.DAW
         [SerializeField, Range(0.04f, 0.20f)] private float audioLookahead = 0.10f;
         [SerializeField, Range(0.02f, 0.30f)] private float startDelay = 0.15f;
         [SerializeField] private bool verbose;
+        // Unity/AudioHelm MIDI events use the main thread. For an exact-pitch
+        // repeat, release the previous note a little before its retrigger so
+        // native Helm receives the off/on on distinct audio callbacks more often.
+        // This is deliberately limited to touching same-pitch notes; all other
+        // notes keep their authored release time.
+        private const double SamePitchRetriggerReleaseLead = 0.025;
+        // Android devices running at 30 FPS may dispatch a DSP lookahead frame
+        // late. Recover a modestly late sample event rather than dropping it.
+        // Larger hitches are still discarded to avoid a machine-gun catch-up.
+        private const double MaxRecoverableSampleLateness = 0.065;
+        private int lateMidiEvents;
+        private int recoveredSampleEvents;
+        private int droppedSampleEvents;
+        private float nextTimingReport;
 
         private KMusicDrumSequencer drums;
         private KMusicProjectManager projects;
@@ -273,6 +287,10 @@ namespace ZPunk.DAW
             cycle = 0;
             scheduledSamples.Clear();
             prefetchedLoopSamples = 0;
+            lateMidiEvents = 0;
+            recoveredSampleEvents = 0;
+            droppedSampleEvents = 0;
+            nextTimingReport = Time.unscaledTime + 8f;
             paused = false;
             CurrentTick = startTick;
             drums.SetDAWPlayheadStep(-1);
@@ -635,6 +653,17 @@ namespace ZPunk.DAW
 
             // Audio Helm dispatch is limited to Unity frame accuracy.
             DispatchDueMidi(now);
+            if (verbose && Time.unscaledTime >= nextTimingReport)
+            {
+                if (lateMidiEvents > 0 || recoveredSampleEvents > 0 || droppedSampleEvents > 0)
+                    Debug.LogWarning($"[ZPUNK TIMING] Last 8s: MIDI >20ms late={lateMidiEvents}, " +
+                        $"sample hits recovered={recoveredSampleEvents}, sample hits dropped={droppedSampleEvents}. " +
+                        "Helm MIDI is frame-dispatched; high counts suggest frame stalls.");
+                lateMidiEvents = 0;
+                recoveredSampleEvents = 0;
+                droppedSampleEvents = 0;
+                nextTimingReport = Time.unscaledTime + 8f;
+            }
 
             if (now >= endDsp)
             {
@@ -661,13 +690,39 @@ namespace ZPunk.DAW
             }
         }
 
+        // A touching same-pitch repeat has NoteOff and NoteOn at the same tick.
+        // Sending both native commands in a single Unity frame can collapse the
+        // audible retrigger, especially on a 30 FPS phone. Give the release a
+        // short head start without changing stored song/MIDI or adjacent pitches.
+        private bool HasSamePitchRetriggerAtTick(int eventIndex)
+        {
+            var off = plan.midi[eventIndex];
+            if (off.type != SongEventPlanner.EventType.NoteOff) return false;
+            for (int i = eventIndex + 1; i < plan.midi.Count; i++)
+            {
+                var next = plan.midi[i];
+                if (next.tick != off.tick) break;
+                if (next.type == SongEventPlanner.EventType.NoteOn &&
+                    next.trackIndex == off.trackIndex && next.value == off.value)
+                    return true;
+            }
+            return false;
+        }
+
         private void DispatchDueMidi(double now)
         {
             while (midiCursor < plan.midi.Count)
             {
                 var e = plan.midi[midiCursor];
-                if (e.tick >= loopEnd || DspAt(e.tick) > now) break;
+                if (e.tick >= loopEnd) break;
+                double due = DspAt(e.tick);
+                // Only anticipate NOTE OFF where a new note of the same pitch
+                // starts at precisely that tick. Other note durations are intact.
+                bool earlyRelease = due > now && due <= now + SamePitchRetriggerReleaseLead &&
+                    HasSamePitchRetriggerAtTick(midiCursor);
+                if (due > now && !earlyRelease) break;
                 midiCursor++;
+                if (due < now - 0.020) lateMidiEvents++;
                 if (!trackControllers.TryGetValue(e.trackIndex, out HelmController controller) || controller == null)
                     continue;
                 if (e.type == SongEventPlanner.EventType.NoteOff)
@@ -685,12 +740,21 @@ namespace ZPunk.DAW
 
         private void DispatchSample(SongEventPlanner.Event e, double target, double now, long eventCycle)
         {
-            if (target < now - 0.02 || !TrackAudible(e.trackIndex)) return;
+            if (!TrackAudible(e.trackIndex)) return;
+            double lateness = now - target;
+            if (lateness > MaxRecoverableSampleLateness)
+            {
+                droppedSampleEvents++;
+                return; // Too old: playing it now would cause an obvious flam.
+            }
             var key = new ScheduledSampleKey(eventCycle, e);
             if (!scheduledSamples.Add(key)) return;
             TrackData track = song.tracks[e.trackIndex];
             float velocity = Mathf.Clamp01(e.velocity / 127f) * Mathf.Clamp01(track.volume);
-            double scheduledAt = Math.Max(now + 0.005, target);
+            // Give late events at least one scheduling buffer of lead time.
+            // On-time events retain their exact DSP timestamps.
+            double scheduledAt = lateness > 0.0 ? now + 0.012 : Math.Max(now + 0.005, target);
+            if (lateness > 0.020) recoveredSampleEvents++;
             if (e.type == SongEventPlanner.EventType.Drum)
                 drums.ScheduleDAWDrum(e.value, scheduledAt, velocity);
             else if (e.type == SongEventPlanner.EventType.Chop)
