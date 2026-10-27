@@ -1094,8 +1094,13 @@ namespace ZPunk.DAW
 
         private void FollowArrangementPlayhead()
         {
+            // Collect/WAV bounce uses the transport for audio rendering, not live
+            // navigation. Do not follow the export head into empty timeline bars.
+            // Otherwise the viewport stays at the end after the bounce and clips
+            // at the beginning appear to have disappeared.
             if (timelineViewport == null || transport == null || !transport.IsPlaying ||
-                !transport.SongMode || playheadPointerId >= 0 || gesture != null) return;
+                transport.IsExportingOneShot || !transport.SongMode ||
+                playheadPointerId >= 0 || gesture != null) return;
             float width = timelineViewport.contentViewport.resolvedStyle.width;
             if (float.IsNaN(width) || width <= 1f) return;
             float x = TickToPixel(transport.CurrentTick);

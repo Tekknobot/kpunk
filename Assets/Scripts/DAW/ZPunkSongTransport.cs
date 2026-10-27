@@ -114,6 +114,8 @@ namespace ZPunk.DAW
 
         public bool SongMode => songMode;
         public bool IsPlaying => playing;
+        // A real-time export is transport playback, but must not drive the editor viewport.
+        public bool IsExportingOneShot => exportingOneShot;
         public long CurrentTick { get; private set; }
         public double SongAnchorDsp => anchorDsp;
 

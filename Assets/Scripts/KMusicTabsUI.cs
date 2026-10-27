@@ -976,8 +976,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
         }
     }
     // Uses a saved, immutable 2.2.0 project snapshot for every pass.
-    // One pass is the exact master mix; five isolated passes retain original
-    // volumes and effects but bypass solo/mute on the isolated track.
+    // One pass is the exact master mix; only tracks with scheduled musical events
+    // receive isolated passes, retaining their original volumes and effects while
+    // bypassing solo/mute on the isolated track.
     private void OnCollectClicked()
     {
         if (collectRoutine != null)
@@ -1015,6 +1016,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
         string error = null;
         string zipPath = null;
         SongData snapshot = null;
+        // Decided from the immutable snapshot, not the live editor or cached UI state.
+        bool[] renderStem = new bool[5];
+        int totalPasses = 1; // The master mix is always rendered.
         ZPunkCollectPackage bundle = null;
         ZPunkWavCapture recorder = null;
         KMusicPlayerUI samplePlayer = FindObjectOfType<KMusicPlayerUI>();
@@ -1043,8 +1047,24 @@ public sealed class KMusicTabsUI : MonoBehaviour
                 if (!projects.TryCreateCollectedSnapshot(out string json, out snapshot, out string title,
                     out string id, out string saveError))
                     throw new IOException(saveError);
-                if (!SongEventPlanner.HasEvents(snapshot))
+                // Compile the actual events, so a clip with no notes/hits does not
+                // trigger a full-length silent stem. This also respects linked and
+                // looped clips, clip offsets, and the song's export length.
+                var planned = SongEventPlanner.Build(snapshot);
+                if (planned.samples.Count == 0 && planned.midi.Count == 0)
                     throw new InvalidOperationException("Create an arrangement before collection.");
+                foreach (var e in planned.samples)
+                    if (e.trackIndex >= 0 && e.trackIndex < renderStem.Length)
+                        renderStem[e.trackIndex] = true;
+                foreach (var e in planned.midi)
+                    if (e.type == SongEventPlanner.EventType.NoteOn &&
+                        e.trackIndex >= 0 && e.trackIndex < renderStem.Length)
+                        renderStem[e.trackIndex] = true;
+                for (int i = 0; i < renderStem.Length; i++)
+                    if (renderStem[i]) totalPasses++;
+                Debug.Log("[ZPUNK Collect] Rendering " + (totalPasses - 1) +
+                    " populated stems; skipping " + (renderStem.Length - totalPasses + 1) +
+                    " empty stems.");
                 double seconds = snapshot.lengthTicks * 60.0 /
                     (Mathf.Clamp(snapshot.bpm, 1f, 400f) * SongData.TicksPerQuarter);
                 if (seconds > 900 || seconds < 0.001)
@@ -1064,9 +1084,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
             catch (Exception e) { error = e.Message; Debug.LogWarning("[ZPUNK Collect] " + e); }
 
             if (error == null) yield return null;
-            // Master then DRUMS, BASS, SYNTH, PADS, CHOPS: same start anchor.
-            for (int pass = -1; pass < 5 && error == null && !cancelCollect; pass++)
+            // Master then populated DRUMS, BASS, SYNTH, PADS, CHOPS: same start anchor.
+            // Empty tracks are omitted entirely, avoiding both real-time capture and
+            // unnecessary silent WAV files in the collected package.
+            int currentPass = 0;
+            for (int pass = -1; pass < renderStem.Length && error == null && !cancelCollect; pass++)
             {
+                if (pass >= 0 && !renderStem[pass]) continue;
+                currentPass++;
                 double endDsp = 0;
                 float deadline = 0;
                 string dest = null;
@@ -1095,7 +1120,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
                         int progress = Mathf.Clamp(Mathf.RoundToInt((float)
                             ((AudioSettings.dspTime - transport.SongAnchorDsp) /
                             Math.Max(.01, endDsp - transport.SongAnchorDsp) * 100f)), 0, 100);
-                        ExportMessage("COLLECT: " + trackName + " " + progress + "% (" + (pass + 2) + "/6) — keep ZPUNK open.", false);
+                        ExportMessage("COLLECT: " + trackName + " " + progress + "% (" + currentPass + "/" + totalPasses + ") — keep ZPUNK open.", false);
                     }
                     yield return null;
                 }
@@ -1138,6 +1163,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
             collectRecorder = null;
             collectRoutine = null;
             SetCollectBusy(false);
+            // The project snapshot/save can update the live song document. Rebind
+            // and redraw the arrangement now, just as returning to ARRANGE does,
+            // without navigating away from the current tab or changing the clip data.
+            if (arrangement != null && workspace == "arrange")
+            {
+                try { arrangement.OnShown(); }
+                catch (Exception e) { Debug.LogWarning("[ZPUNK Collect] Arrangement refresh: " + e); }
+            }
             if (cancelCollect) ExportMessage("COLLECT: canceled; temporary files removed.", false);
             else if (error != null) ExportMessage("COLLECT: " + error, true);
         }

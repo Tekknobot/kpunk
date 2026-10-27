@@ -197,53 +197,6 @@ Lead/UG Psycho Marcatos.helm
 Lead/UG Reverb Is in Your Hands.helm
 Lead/UG Welcome to The Solo My Friend.helm
 Lead/UG Write More Tracks in Lydian.helm
-Pad/CM Epic.helm
-Pad/CM Soothing.helm
-Pad/CM Stars.helm
-Pad/COA Ambient Metallic.helm
-Pad/COA Broken Old Analog.helm
-Pad/COA Crispy Pad Organ.helm
-Pad/COA Digital Enigma.helm
-Pad/COA Digital Wind Ensemble 1.helm
-Pad/COA Digital Wind Ensemble 2.helm
-Pad/COA Hard Brass Synth Ensemble.helm
-Pad/COA Lofi Soft Pad 1.helm
-Pad/COA Lofi Soft Pad 2.helm
-Pad/COA Lofi Soft Pad 3.helm
-Pad/COA Pulsating Pad.helm
-Pad/COA Resonant Pad.helm
-Pad/COA Sad Scifi Strings 1.helm
-Pad/COA Sad Scifi Strings 2.helm
-Pad/COA Sad Scifi Strings 3.helm
-Pad/COA Scifi Interference.helm
-Pad/COA Soft Neo Church Organ.helm
-Pad/COA Soft Scifi Pad 1.helm
-Pad/COA Soft Scifi Pad 2.helm
-Pad/COA Soft Scifi Pad 3.helm
-Pad/COA Soft Scifi Pad 4.helm
-Pad/COA Soft Scifi Pad 5.helm
-Pad/COA Soft Scifi Pad 6.helm
-Pad/MT Chamber Chatter.helm
-Pad/MT Electrobike Cruise.helm
-Pad/MT Fluffy Landscape.helm
-Pad/MT Hypnotizing Pulse.helm
-Pad/MT Pulsing Daisies.helm
-Pad/MT Stuck in the Basement.helm
-Pad/MT Talk Radio.helm
-Pad/MT Waiting for Takeoff.helm
-Pad/MT Wandering Lost.helm
-Pad/MT Watching the Clock.helm
-Pad/SF Mandolin.helm
-Pad/SF OSC 2.helm
-Pad/SF Soft Pulse 1.helm
-Pad/SF Soft Pulse 2.helm
-Pad/UG Aren't You Bored with SAW+LPF.helm
-Pad/UG Chorales in Space.helm
-Pad/UG Her Skin Was So Soft.helm
-Pad/UG I Dream of Antarctica.helm
-Pad/UG No String Machine Can Do This.helm
-Pad/UG Obi-Wan Will Help You.helm
-Pad/UG The Earth Pulses with Music.helm
 Pad/ZOR Classic House 90s Warm Strings.helm
 Pad/ZOR Classic House Chicago Organ Bed.helm
 Pad/ZOR Classic House Deep Mist.helm

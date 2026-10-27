@@ -298,6 +298,7 @@ namespace ZPunk.DAW
                 "\nTime signature: " + song.numerator + "/" + song.denominator +
                 "\nProject ID: " + manifest.projectId + "\n\n" +
                 "Import all WAV files in Audio Stems/ at bar 1; their starts are aligned.\n" +
+                "Only tracks with scheduled playback events are included as stems; empty tracks are omitted.\n" +
                 "The Master WAV is the full reference mix. MIDI contains notes/triggers only.\n" +
                 "Samples/ contains the original CHOPS source, available rendered warps and selected drum-kit audio.\n" +
                 "ZPUNK Project/Original_Project.json is an archival snapshot, not a desktop DAW session.\n" +
@@ -325,8 +326,27 @@ namespace ZPunk.DAW
                 using (var validateStream = File.OpenRead(partial))
                 using (var validate = new ZipArchive(validateStream, ZipArchiveMode.Read))
                 {
-                    if (validate.Entries.Count < 10)
-                        throw new InvalidDataException("Collected ZIP is incomplete.");
+                    // A project may contain only one populated track. Verify the
+                    // required handoff files rather than requiring all five stems.
+                    string prefix = DisplayName + "/";
+                    var masterEntry = validate.GetEntry(prefix + DisplayName + "_Master.wav");
+                    if (masterEntry == null || masterEntry.Length <= 44 ||
+                        validate.GetEntry(prefix + "MIDI/" + DisplayName + ".mid") == null ||
+                        validate.GetEntry(prefix + "README.txt") == null ||
+                        validate.GetEntry(prefix + "ZPUNK Project/Original_Project.json") == null ||
+                        validate.GetEntry(prefix + "ZPUNK Project/Sample_Map.json") == null)
+                        throw new InvalidDataException("Collected ZIP is missing a required file.");
+                    int stemCount = 0;
+                    foreach (string stem in Stems)
+                    {
+                        var entry = validate.GetEntry(prefix + "Audio Stems/" + stem + ".wav");
+                        if (entry == null) continue;
+                        if (entry.Length <= 44)
+                            throw new InvalidDataException("Collected stem contains no PCM: " + stem);
+                        stemCount++;
+                    }
+                    if (stemCount == 0)
+                        throw new InvalidDataException("Collected ZIP contains no playable stems.");
                     foreach (var entry in validate.Entries)
                         if (entry.Length < 1 && !entry.FullName.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
                             throw new InvalidDataException("A collected entry was empty: " + entry.FullName);
