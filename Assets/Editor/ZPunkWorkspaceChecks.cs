@@ -7,7 +7,7 @@ using UnityEngine.UIElements;
 /// <summary>Audits the UI tree wired to Main.unity. Does not modify a scene.</summary>
 public static class ZPunkWorkspaceChecks
 {
-    [MenuItem("ZPunk/2.0/Validate Workspace UI")]
+    [MenuItem("ZPUNK/Diagnostics/2.0/Validate Workspace UI")]
     public static void ValidateWorkspace()
     {
         const string source = "Assets/Resources/KMusic/UI/Main.uxml";

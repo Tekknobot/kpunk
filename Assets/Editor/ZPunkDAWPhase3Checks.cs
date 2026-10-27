@@ -6,7 +6,7 @@ using ZPunk.DAW;
 
 public static class ZPunkDAWPhase3Checks
 {
-    [MenuItem("ZPunk/2.0/Run Phase 3 Arrangement Checks")]
+    [MenuItem("ZPUNK/Diagnostics/2.0/Run Phase 3 Arrangement Checks")]
     public static void Run()
     {
         try

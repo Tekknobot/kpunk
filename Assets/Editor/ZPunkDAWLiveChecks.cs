@@ -6,7 +6,7 @@ using ZPunk.DAW;
 
 public static class ZPunkDAWLiveChecks
 {
-    [MenuItem("ZPunk/2.0/Run Live DAW Document Checks")]
+    [MenuItem("ZPUNK/Diagnostics/2.0/Run Live DAW Document Checks")]
     public static void Run()
     {
         var song = new SongData();

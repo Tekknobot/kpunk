@@ -10,7 +10,7 @@ using UnityEngine.UIElements;
 /// </summary>
 public static class ZPunkSafeAreaWorkspaceChecks
 {
-    [MenuItem("ZPunk/2.0/Validate Safe Workspace")]
+    [MenuItem("ZPUNK/Diagnostics/2.0/Validate Safe Workspace")]
     public static void Validate()
     {
         var tree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(

@@ -6,7 +6,7 @@ using ZPunk.DAW;
 /// <summary>Editor-only, deterministic song event planner checks; no audio devices required.</summary>
 public static class ZPunkDAWPhase2Checks
 {
-    [MenuItem("ZPunk/2.0/Run Phase 2 Arrangement Checks")]
+    [MenuItem("ZPUNK/Diagnostics/2.0/Run Phase 2 Arrangement Checks")]
     public static void Run()
     {
         var song = new SongData { lengthTicks = 4 * SongData.TicksPerBar4, bpm = 128 };

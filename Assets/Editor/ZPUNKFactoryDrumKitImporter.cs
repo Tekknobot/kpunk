@@ -24,7 +24,7 @@ public static class ZPUNKFactoryDrumKitImporter
     private static readonly string[] VoiceNames =
         { "kick", "snare", "clap", "hatClosed", "hatOpen", "ride", "rim", "crash" };
 
-    [MenuItem("Tools/ZPUNK/Import Factory Drum Kits")]
+    [MenuItem("ZPUNK/Factory Drum Kits/Import Factory Drum Kits")]
     public static void ImportKits()
     {
         if (!File.Exists(ManifestPath))
@@ -112,7 +112,7 @@ public static class ZPUNKFactoryDrumKitImporter
                   "Original kits were preserved. Reopen the kit selector or restart Play Mode if needed.");
     }
 
-    [MenuItem("Tools/ZPUNK/Validate Factory Drum Samples")]
+    [MenuItem("ZPUNK/Factory Drum Kits/Validate Factory Drum Samples")]
     public static void ValidateSamples()
     {
         if (!File.Exists(ManifestPath)) { Debug.LogError("Missing manifest: " + ManifestPath); return; }

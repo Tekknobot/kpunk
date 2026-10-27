@@ -14,7 +14,7 @@ public static class HelmPresetIndexBuilder
     private const string RelRoot = "HelmPresets";
     private const string IndexName = "presets_index.txt";
 
-    [MenuItem("KMusic/Helm/Build Preset Index")]
+    [MenuItem("ZPUNK/Helm/Build Preset Index")]
     public static void BuildIndex()
     {
         string root = Path.Combine(Application.streamingAssetsPath, RelRoot);

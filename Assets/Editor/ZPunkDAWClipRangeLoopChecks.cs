@@ -7,7 +7,7 @@ using ZPunk.DAW;
 /// <summary>Non-audio checks for the 128-note editor model, 16 chops and manual song loops.</summary>
 public static class ZPunkDAWClipRangeLoopChecks
 {
-    [MenuItem("ZPunk/2.0/Run Clip Range and Loop Checks")]
+    [MenuItem("ZPUNK/Diagnostics/2.0/Run Clip Range and Loop Checks")]
     public static void Run()
     {
         var song = new SongData { arrangementAuthored = true, lengthTicks = 5 * SongData.TicksPerBar4 };

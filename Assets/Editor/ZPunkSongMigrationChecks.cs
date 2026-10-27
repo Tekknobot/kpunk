@@ -8,7 +8,7 @@ using ZPunk.DAW;
 // Editor-only checks: can run without modifying scenes, slot files or PlayerPrefs.
 public static class ZPunkSongMigrationChecks
 {
-    [MenuItem("ZPunk/2.0/Run Song Migration Checks")]
+    [MenuItem("ZPUNK/Diagnostics/2.0/Run Song Migration Checks")]
     public static void Run()
     {
         var bank = new PatternBank.PatternBankSave();
