@@ -438,8 +438,8 @@ namespace ZPunk.DAW
             Corners(keyboardFrame, 5);
             keyboardBody.Add(keyboardFrame);
 
-            // White keys first, then black keys in front. Each key owns its
-            // pointer stream so different fingers can play simultaneous notes.
+            // White keys first, then black keys on top. The frame owns each
+            // touch stream so fingers can slide and play chords independently.
             for (int i = 0; i < 14; i++)
                 AddAuditionKey(i, WhiteSemitones[i % 7] + (i / 7) * 12, false);
             for (int i = 0; i < 14; i++)
@@ -448,6 +448,11 @@ namespace ZPunk.DAW
                 AddAuditionKey(i, WhiteSemitones[i % 7] + (i / 7) * 12 + 1, true);
             }
             keyboardFrame.RegisterCallback<GeometryChangedEvent>(LayoutAuditionKeys);
+            keyboardFrame.RegisterCallback<PointerDownEvent>(AuditionDown);
+            keyboardFrame.RegisterCallback<PointerMoveEvent>(AuditionMove);
+            keyboardFrame.RegisterCallback<PointerUpEvent>(AuditionUp);
+            keyboardFrame.RegisterCallback<PointerCancelEvent>(AuditionCancel);
+            keyboardFrame.RegisterCallback<PointerCaptureOutEvent>(AuditionCaptureLost);
             RefreshAuditionHeader();
         }
 
@@ -470,11 +475,10 @@ namespace ZPunk.DAW
             visual.style.borderRightColor = black ? Face : Dim;
             visual.style.borderBottomColor = Face;
             key.visual = visual;
-            // Use the current octave when pressed, not when the view was built.
-            visual.RegisterCallback<PointerDownEvent>(evt => AuditionDown(evt, key));
-            visual.RegisterCallback<PointerUpEvent>(evt => AuditionUp(evt, key));
-            visual.RegisterCallback<PointerCancelEvent>(evt => AuditionCancel(evt, key));
-            visual.RegisterCallback<PointerCaptureOutEvent>(evt => AuditionCaptureLost(evt, key));
+            // Route all touches through the frame: it owns pointer capture, so a
+            // finger can glide across neighbouring keys instead of staying bound
+            // to the key where the touch began. The keys are visual-only targets.
+            visual.pickingMode = PickingMode.Ignore;
             auditionKeys.Add(key);
             keyboardFrame.Add(visual);
         }
@@ -536,62 +540,138 @@ namespace ZPunk.DAW
             RefreshAuditionHeader();
         }
 
-        private void AuditionDown(PointerDownEvent evt, AuditionKey key)
+        // Capture each finger on the stationary keyboard frame, not on its
+        // initial key. UI Toolkit then continues sending moves during a slide,
+        // including when a finger briefly moves beyond the keyboard edge.
+        private AuditionKey AuditionKeyAt(Vector3 panelPosition)
         {
-            if (evt.button != 0 || !keyboardOpen) return;
-            // One voice per active pointer. No clip or transport operations.
-            if (auditionPresses.ContainsKey(evt.pointerId)) return;
+            if (keyboardFrame == null || !keyboardOpen || auditionKeys.Count < 14)
+                return null;
+            var point = new Vector2(panelPosition.x, panelPosition.y);
+            Rect bounds = keyboardFrame.worldBound;
+            if (bounds.width <= 0f || !bounds.Contains(point)) return null;
+
+            // Black keys have priority in the upper section (they overlap the
+            // whites). Resolve against their actual scaled panel bounds.
+            for (int i = auditionKeys.Count - 1; i >= 14; --i)
+            {
+                AuditionKey blackKey = auditionKeys[i];
+                if (blackKey.black && blackKey.visual.worldBound.Contains(point))
+                    return blackKey;
+            }
+
+            // Resolve the remaining area continuously, including the tiny
+            // decorative gaps between white keys, to avoid skipped notes.
+            int index = Mathf.Clamp(Mathf.FloorToInt(
+                (point.x - bounds.xMin) / bounds.width * 14f), 0, 13);
+            return auditionKeys[index];
+        }
+
+        private void AuditionDown(PointerDownEvent evt)
+        {
+            if (evt.button != 0 || !keyboardOpen ||
+                auditionPresses.ContainsKey(evt.pointerId)) return;
+            AuditionKey key = AuditionKeyAt(evt.position);
+            if (key == null) return;
             HelmController controller = Controller();
-            int midi = (KeyboardOctave + 1) * 12 + key.semitone;
-            if (controller == null || !controller.isActiveAndEnabled || midi < 0 || midi > 127)
+            if (controller == null || !controller.isActiveAndEnabled) return;
+
+            var press = new AuditionPress { controller = controller, key = null, midi = -1 };
+            auditionPresses.Add(evt.pointerId, press);
+            keyboardFrame.CapturePointer(evt.pointerId);
+            SetAuditionKey(press, key);
+            evt.StopPropagation();
+        }
+
+        private void AuditionMove(PointerMoveEvent evt)
+        {
+            if (!auditionPresses.TryGetValue(evt.pointerId, out AuditionPress press))
                 return;
+            // A slide gives a fresh note at every new key, without needing to
+            // lift the finger. Outside the keys, release the sounding note but
+            // retain capture, allowing a slide back onto the keyboard.
+            SetAuditionKey(press, AuditionKeyAt(evt.position));
+            evt.StopPropagation();
+        }
+
+        private void AuditionUp(PointerUpEvent evt)
+        {
+            if (!auditionPresses.ContainsKey(evt.pointerId)) return;
+            ReleaseAuditionPointer(evt.pointerId);
+            if (keyboardFrame != null && keyboardFrame.HasPointerCapture(evt.pointerId))
+                keyboardFrame.ReleasePointer(evt.pointerId);
+            evt.StopPropagation();
+        }
+
+        private void AuditionCancel(PointerCancelEvent evt)
+        {
+            if (!auditionPresses.ContainsKey(evt.pointerId)) return;
+            ReleaseAuditionPointer(evt.pointerId);
+            if (keyboardFrame != null && keyboardFrame.HasPointerCapture(evt.pointerId))
+                keyboardFrame.ReleasePointer(evt.pointerId);
+            evt.StopPropagation();
+        }
+
+        private void AuditionCaptureLost(PointerCaptureOutEvent evt)
+        {
+            ReleaseAuditionPointer(evt.pointerId);
+        }
+
+        // Helm exposes note pitch rather than a per-touch voice handle. Two
+        // fingers on the same pitch therefore share one NoteOn, and the note is
+        // released only when the last finger leaves it.
+        private bool OtherAuditionHolds(HelmController controller, int midi,
+            AuditionPress excluded)
+        {
+            foreach (var other in auditionPresses.Values)
+                if (other != excluded && other.controller == controller && other.midi == midi)
+                    return true;
+            return false;
+        }
+
+        private void SetAuditionKey(AuditionPress press, AuditionKey newKey)
+        {
+            if (press.key == newKey) return;
+            AuditionKey oldKey = press.key;
+            int oldMidi = press.midi;
+            press.key = null;
+            press.midi = -1;
+
+            if (oldMidi >= 0 && !OtherAuditionHolds(press.controller, oldMidi, press))
+            {
+                try { if (press.controller != null) press.controller.NoteOff(oldMidi); }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("[ZPUNK SOUND] Audition note-off failed: " + ex.Message);
+                }
+            }
+            if (oldKey != null) RefreshAuditionKey(oldKey);
+
+            if (newKey == null) return;
+            int newMidi = (KeyboardOctave + 1) * 12 + newKey.semitone;
+            if (newMidi < 0 || newMidi > 127 || press.controller == null ||
+                !press.controller.isActiveAndEnabled) return;
             try
             {
-                controller.NoteOn(midi, .85f);
-                auditionPresses.Add(evt.pointerId, new AuditionPress {
-                    controller = controller, key = key, midi = midi });
-                key.visual.CapturePointer(evt.pointerId);
-                RefreshAuditionKey(key);
+                if (!OtherAuditionHolds(press.controller, newMidi, press))
+                    press.controller.NoteOn(newMidi, .85f);
+                press.key = newKey;
+                press.midi = newMidi;
+                RefreshAuditionKey(newKey);
             }
             catch (Exception ex)
             {
                 Debug.LogWarning("[ZPUNK SOUND] Audition note-on failed: " + ex.Message);
             }
-            evt.StopPropagation();
         }
 
-        private void AuditionUp(PointerUpEvent evt, AuditionKey key)
+        private void ReleaseAuditionPointer(int pointerId)
         {
-            ReleaseAuditionPointer(evt.pointerId, key);
-            if (key.visual.HasPointerCapture(evt.pointerId))
-                key.visual.ReleasePointer(evt.pointerId);
-            evt.StopPropagation();
-        }
-
-        private void AuditionCancel(PointerCancelEvent evt, AuditionKey key)
-        {
-            ReleaseAuditionPointer(evt.pointerId, key);
-            if (key.visual.HasPointerCapture(evt.pointerId))
-                key.visual.ReleasePointer(evt.pointerId);
-            evt.StopPropagation();
-        }
-
-        private void AuditionCaptureLost(PointerCaptureOutEvent evt, AuditionKey key)
-        {
-            ReleaseAuditionPointer(evt.pointerId, key);
-        }
-
-        private void ReleaseAuditionPointer(int pointerId, AuditionKey key)
-        {
-            if (!auditionPresses.TryGetValue(pointerId, out AuditionPress press) ||
-                press.key != key) return;
+            if (!auditionPresses.TryGetValue(pointerId, out AuditionPress press)) return;
+            // Keep the current pointer in the collection while looking for
+            // other holders; SetAuditionKey explicitly excludes this press.
+            SetAuditionKey(press, null);
             auditionPresses.Remove(pointerId);
-            try { if (press.controller != null) press.controller.NoteOff(press.midi); }
-            catch (Exception ex)
-            {
-                Debug.LogWarning("[ZPUNK SOUND] Audition note-off failed: " + ex.Message);
-            }
-            RefreshAuditionKey(key);
         }
 
         private void RefreshAuditionKey(AuditionKey key)
@@ -607,14 +687,13 @@ namespace ZPunk.DAW
         private void ReleaseAllAuditionNotes()
         {
             if (auditionPresses.Count == 0) return;
-            // Never call Helm AllNotesOff: that would also kill song playback.
+            // Don't use Helm AllNotesOff: that would also stop the song's notes.
             var pointers = new List<int>(auditionPresses.Keys);
             foreach (int id in pointers)
             {
-                if (!auditionPresses.TryGetValue(id, out AuditionPress press)) continue;
-                ReleaseAuditionPointer(id, press.key);
-                if (press.key.visual != null && press.key.visual.HasPointerCapture(id))
-                    press.key.visual.ReleasePointer(id);
+                ReleaseAuditionPointer(id);
+                if (keyboardFrame != null && keyboardFrame.HasPointerCapture(id))
+                    keyboardFrame.ReleasePointer(id);
             }
         }
 
