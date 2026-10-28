@@ -110,6 +110,12 @@ namespace ZPunk.DAW
             {
                 int[] harmony = MakeHarmonyPlan(bars, genre, minor, progressionChoice,
                                                  progressionBarOffset, harmonyDegrees);
+                // Compute once per clip. All three instrument tracks see the same
+                // chord identities even when generated in separate passes.
+                var chordPlan = new ZPunkChordLibrary.Chord[bars];
+                for (int bar = 0; bar < bars; bar++)
+                    chordPlan[bar] = ZPunkChordLibrary.ForBar(genre, style, minor,
+                        harmony[bar], progressionChoice, bar, progressionBarOffset);
                 List<NoteEvent> bestNotes = null;
                 double bestScore = double.MinValue;
                 // All candidates are deterministic and editable. Score BEFORE
@@ -120,9 +126,11 @@ namespace ZPunk.DAW
                     clip.notes.Clear();
                     var candidateRng = new Random(CandidateSeed(seed, candidate, harmony, bars));
                     GenerateMidiCandidate(clip, kind, genre, style, bars, key, minor,
-                                          harmony, synthChords, harmonyVoices, tempoBand, candidateRng);
+                                          harmony, chordPlan, synthChords, harmonyVoices,
+                                          tempoBand, candidateRng);
                     double score = ScoreCandidate(clip, kind, genre, style, minor, key,
-                                                  harmony, synthChords && kind == TrackKind.Synth,
+                                                  harmony, chordPlan,
+                                                  synthChords && kind == TrackKind.Synth,
                                                   harmonyVoices, tempoBand);
                     if (bestNotes == null || score > bestScore)
                     {
@@ -247,10 +255,12 @@ namespace ZPunk.DAW
         }
 
         // 0 = original genre-specific harmony for backwards compatibility.
-        // 1..8 = shared, explicitly selected progressions across BASS/SYNTH/PADS.
-        // All are diatonic to the current major or natural-minor key; array values
-        // are ZERO-BASED scale degrees, not MIDI semitones.
-        public const int ProgressionChoiceCount = 9;
+        // 1..8 = original diatonic progressions, shared across BASS/SYNTH/PADS.
+        // 9..12 = MIDI-derived extended/borrowed progressions. The legacy arrays
+        // remain ZERO-BASED scale degrees; new chromatic chord roots are in the library.
+        // Eight legacy choices remain in their original positions. Four advanced
+        // MIDI progressions are appended, so saved project choices keep their meaning.
+        public const int ProgressionChoiceCount = 9 + ZPunkChordLibrary.LibraryProgressionCount;
         private static readonly int[][] MinorProgressions = {
             new[] { 0, 5, 2, 6 }, // i - VI - III - VII, classic 90s eurodance
             new[] { 0, 6, 5, 6 }, // i - VII - VI - VII, anthemic turnaround
@@ -282,12 +292,16 @@ namespace ZPunk.DAW
 
         public static int[] ProgressionFor(int genre, bool minor, int choice)
         {
+            if (ZPunkChordLibrary.IsLibraryChoice(choice))
+                return ZPunkChordLibrary.LibraryDegrees(minor, choice);
             if (choice < 1 || choice >= ProgressionChoiceCount) return Progression(genre, minor);
             return minor ? MinorProgressions[choice - 1] : MajorProgressions[choice - 1];
         }
 
         public static string ProgressionLabel(int genre, bool minor, int choice)
         {
+            if (ZPunkChordLibrary.IsLibraryChoice(choice))
+                return choice.ToString("00") + "  " + ZPunkChordLibrary.ProgressionLabel(choice);
             if (choice < 1 || choice >= ProgressionChoiceCount) return "GENRE DEFAULT";
             return choice.ToString("00") + "  " +
                 (minor ? MinorProgressionLabels[choice - 1] : MajorProgressionLabels[choice - 1]);
@@ -296,6 +310,8 @@ namespace ZPunk.DAW
         // Musical names for the CURRENT key, e.g., A minor: Am - F - C - G.
         public static string ProgressionChordNames(int genre, int key, bool minor, int choice)
         {
+            if (ZPunkChordLibrary.IsLibraryChoice(choice))
+                return ZPunkChordLibrary.LibraryChordNames(key, minor, choice, Keys);
             int[] degrees = ProgressionFor(genre, minor, choice);
             string[] names = new string[degrees.Length];
             for (int i = 0; i < degrees.Length; i++)
@@ -560,10 +576,30 @@ namespace ZPunk.DAW
             return copy;
         }
 
+        private static bool SameChord(ZPunkChordLibrary.Chord left, ZPunkChordLibrary.Chord right)
+        {
+            if (left.RootSemitones != right.RootSemitones ||
+                left.Intervals.Length != right.Intervals.Length) return false;
+            for (int i = 0; i < left.Intervals.Length; i++)
+                if (left.Intervals[i] != right.Intervals[i]) return false;
+            return true;
+        }
+
+        // Strong melodic beats target exact chord classes (including chromatic borrowed
+        // tones), while the original genre-specific rhythmic contour stays unchanged.
+        private static int[] ChordReferencePitches(ZPunkChordLibrary.Chord chord, int key)
+        {
+            var notes = new int[chord.Intervals.Length];
+            for (int i = 0; i < notes.Length; i++)
+                notes[i] = 60 + key + chord.RootSemitones + chord.Intervals[i];
+            return notes;
+        }
+
         private static void GenerateMidiCandidate(ClipContentData clip, TrackKind kind, int g, int s,
                                                   int bars, int key, bool minor,
-                                                  int[] harmony, bool synthChords,
-                                                  int[][] harmonyVoices, int tempoBand, Random r)
+                                                  int[] harmony, ZPunkChordLibrary.Chord[] chordPlan,
+                                                  bool synthChords, int[][] harmonyVoices,
+                                                  int tempoBand, Random r)
         {
             int motif = r.Next(0, 16);
             int rhythm = r.Next(0, 4);
@@ -574,27 +610,34 @@ namespace ZPunk.DAW
             {
                 int degree = harmony[bar];
                 int nextDegree = harmony[(bar + 1) % bars]; // Actual loop destination.
+                var chord = chordPlan[bar];
+                var nextChord = chordPlan[(bar + 1) % bars];
                 if (kind == TrackKind.Bass)
                     ComposeBass(clip, g, s, bar, bars, key, minor, degree, nextDegree,
-                                motif, rhythm, character, tempoBand, r);
+                                chord, nextChord, motif, rhythm, character, tempoBand, r);
                 else if (kind == TrackKind.Pads || (kind == TrackKind.Synth && synthChords))
                 {
                     bool pads = kind == TrackKind.Pads;
                     // Skip an odd bar only when the previous bar REALLY contains a
                     // two-bar held pad; otherwise the skipped bar becomes silent.
                     if (pads && bar > 0 && bar % 2 == 1 && harmony[bar - 1] == degree &&
-                        ShouldHoldPad(g, s, character))
+                        SameChord(chordPlan[bar - 1], chord) && ShouldHoldPad(g, s, character))
                         continue;
-                    int[] chord = ComposeVoicing(degree, key, minor, g, s, pads, character,
-                                                 previousVoicing, r);
+                    int[] voicing = ComposeVoicing(chord, key, pads, character,
+                                                  previousVoicing);
+                    bool sustainedAcrossNext = bar + 1 < bars &&
+                        SameChord(chord, chordPlan[bar + 1]);
                     ComposeChordRhythm(clip, g, s, bar, bars, degree, harmony, pads,
-                                       chord, rhythm, character, tempoBand, r);
-                    previousVoicing = chord;
+                                       voicing, rhythm, character, tempoBand, r,
+                                       sustainedAcrossNext);
+                    previousVoicing = voicing;
                 }
                 else
                     ComposeMelody(clip, g, s, bar, bars, key, minor, degree, motif, rhythm,
-                                  character, harmonyVoices != null && bar < harmonyVoices.Length
-                                  ? harmonyVoices[bar] : null, ref previousMelodyPitch, tempoBand, r);
+                                  character, harmonyVoices != null && bar < harmonyVoices.Length &&
+                                  harmonyVoices[bar] != null && harmonyVoices[bar].Length > 0
+                                  ? harmonyVoices[bar] : ChordReferencePitches(chord, key),
+                                  ref previousMelodyPitch, tempoBand, r);
             }
             // Never force a tick-zero note into intentionally offbeat chords/stabs.
             // Clip placement is already aligned by the arrangement's tick clock.
@@ -629,9 +672,9 @@ namespace ZPunk.DAW
             return best;
         }
 
-        private static int BassRoot(int key, int degree, bool minor)
+        private static int BassRootFromSemitone(int semitone)
         {
-            int pitch = Pitch(36, key, degree, minor);
+            int pitch = 36 + semitone;
             while (pitch >= 48) pitch -= 12;
             while (pitch < 36) pitch += 12;
             return pitch;
@@ -802,13 +845,17 @@ namespace ZPunk.DAW
 
         private static void ComposeBass(ClipContentData c, int g, int s, int bar, int bars,
                                         int key, bool minor, int degree, int nextDegree,
+                                        ZPunkChordLibrary.Chord chord,
+                                        ZPunkChordLibrary.Chord nextChord,
                                         int motif, int rhythm, int character, int tempoBand, Random r)
         {
-            int root = BassRoot(key, degree, minor);
-            int nextRoot = BassRoot(key, nextDegree, minor);
-            int fifth = Scale(degree + 4, minor) - Scale(degree, minor);
-            int third = Scale(degree + 2, minor) - Scale(degree, minor);
-            int seventh = Scale(degree + 6, minor) - Scale(degree, minor);
+            int root = BassRootFromSemitone(key + chord.RootSemitones);
+            int nextRoot = BassRootFromSemitone(key + nextChord.RootSemitones);
+            // Keep octave jumps, kick-pocket syncopation and note lengths exactly as
+            // before; only the harmonic targets follow the richer progression.
+            int fifth = chord.ToneNearest(7, 7);
+            int third = chord.ToneNearest(4, 3);
+            int seventh = chord.ToneNearest(10, 10);
             int[][] grids = BassRhythms(g, s);
             // A / answer / development / reprise, retaining the original motifs.
             int variant = Mod(rhythm + (bar == 1 ? 1 : bar == 2 ? 2 : 0), grids.Length);
@@ -844,7 +891,8 @@ namespace ZPunk.DAW
                 }
                 // One deliberately placed pickup, not a random chromatic run.
                 if (i == steps.Length - 1 && step >= 12 && (bar == bars - 1 || bar % 2 == 1) &&
-                    (motif + character + bar) % 3 != 0 && nextDegree != degree)
+                    (motif + character + bar) % 3 != 0 &&
+                    nextChord.RootSemitones != chord.RootSemitones)
                     pitch = BassApproach(root, nextRoot);
                 pitch = FoldPitch(pitch, pitch >= 48 ? 51 : 42, 35, 60);
                 int gap = i + 1 < steps.Length ? steps[i + 1] - step : 16 - step;
@@ -864,40 +912,17 @@ namespace ZPunk.DAW
 
         // Whole-voicing search: avoid crossing, congestion and large jumps between
         // chord changes. Select from valid inversions, not independent voice indices.
-        private static int[] ComposeVoicing(int degree, int key, bool minor, int g, int s,
-                                            bool pads, int character, int[] previous, Random r)
+        private static int[] ComposeVoicing(ZPunkChordLibrary.Chord chord, int key,
+                                            bool pads, int character, int[] previous)
         {
-            int[] offsets;
-            if (g == 2)
-                offsets = s == 1 ? new[] { 0, 4, 8 } :
-                    character % 2 == 0 ? new[] { 0, 2, 4 } : new[] { 0, 4, 6 };
-            else if (g == 0)
-                offsets = character % 3 == 0 ? new[] { 2, 6, 8 } : new[] { 0, 2, 6, 8 };
-            else if (g == 4)
-                offsets = character % 2 == 0 ? new[] { 2, 6, 8 } : new[] { 0, 2, 6, 8 };
-            else if (g == 1)
-            {
-                // House piano/organ vocabulary: four and five-voice seventh/ninth
-                // voicings with real thirds/fifths (not simply dyads or clusters).
-                // Alternate richness with register clarity and smooth inversions.
-                if (s == 1) offsets = character % 2 == 0 ?
-                    new[] { 0, 2, 4, 6, 8 } : new[] { 0, 2, 6, 8 };
-                else if (s == 3) offsets = character % 2 == 0 ?
-                    new[] { 0, 2, 4, 6, 8 } : new[] { 0, 2, 4, 6 };
-                else offsets = character % 3 == 0 ?
-                    new[] { 0, 2, 4, 6, 8 } : new[] { 0, 2, 4, 6 };
-            }
-            else if (g == 3)
-                offsets = character % 2 == 0 ? new[] { 0, 2, 4, 6 } : new[] { 2, 4, 6, 8 };
-            else
-                offsets = character % 3 == 0 ? new[] { 2, 4, 6, 8 } : new[] { 0, 2, 6, 8 };
-            int root = Pitch(48, key, degree, minor);
+            int[] offsets = chord.Intervals;
+            int root = 48 + key + chord.RootSemitones;
             int[][] choices = new int[offsets.Length][];
             int low = pads ? 51 : 54, high = pads ? 81 : 83;
             for (int i = 0; i < offsets.Length; i++)
             {
                 var values = new List<int>(4);
-                int fundamental = root + Scale(degree + offsets[i], minor) - Scale(degree, minor);
+                int fundamental = root + offsets[i];
                 for (int octave = -4; octave <= 3; octave++)
                 {
                     int v = fundamental + octave * 12;
@@ -910,11 +935,10 @@ namespace ZPunk.DAW
             double bestCost = double.MaxValue;
             SearchVoicings(choices, 0, current, previous, pads, character, ref winner, ref bestCost);
             if (winner != null) return winner;
-            // Defensive fallback if the available voicing range ever changes.
+            // Preserve all chord identities when a narrow mobile register is requested.
             int[] fallback = new int[offsets.Length];
             for (int i = 0; i < offsets.Length; i++)
-                fallback[i] = FoldPitch(root + Scale(degree + offsets[i], minor) - Scale(degree, minor),
-                                        60 + 4 * i, low, high);
+                fallback[i] = FoldPitch(root + offsets[i], 60 + 4 * i, low, high);
             Array.Sort(fallback);
             return fallback;
         }
@@ -943,7 +967,17 @@ namespace ZPunk.DAW
                 int aim = pads ? 55 + i * 5 : 60 + i * 5;
                 cost += Math.Abs(sorted[i] - aim) * .42;
                 if (previous != null)
-                    cost += Math.Abs(sorted[i] - previous[Math.Min(i, previous.Length - 1)]) * 2.5;
+                {
+                    // Nearest-voice matching handles a chord gaining/losing an
+                    // extension without forcing an octave leap in another voice.
+                    int nearest = int.MaxValue;
+                    foreach (int oldNote in previous)
+                        nearest = Math.Min(nearest, Math.Abs(sorted[i] - oldNote));
+                    cost += nearest * 2.4;
+                    // Also keep the highest chord voice moving like a melody.
+                    if (i == sorted.Length - 1)
+                        cost += Math.Abs(sorted[i] - previous[previous.Length - 1]) * 1.3;
+                }
                 if (pads && sorted[i] < 55) cost += 9;
             }
             // An initial voicing may be different for each generation without
@@ -1002,14 +1036,16 @@ namespace ZPunk.DAW
 
         private static void ComposeChordRhythm(ClipContentData c, int g, int s, int bar,
                                                 int bars, int degree, int[] harmony, bool pads,
-                                                int[] notes, int rhythm, int character, int tempoBand, Random r)
+                                                int[] notes, int rhythm, int character, int tempoBand,
+                                                Random r, bool sameNextChord)
         {
             int[] hits = ChordRhythms(g, s, pads, rhythm + character, bar);
             if (!pads && g == 1 && tempoBand < 0 && s != 1)
                 hits = ShapeChordStabs(hits, s == 3 ? 15 : 11);
             // Keep PADS separate from the busy rhythmic SYNTH-stab vocabulary.
             bool longHold = pads && ShouldHoldPad(g, s, character) &&
-                            bar + 1 < bars && harmony[bar + 1] == degree && bar % 2 == 0;
+                            bar + 1 < bars && harmony[bar + 1] == degree &&
+                            sameNextChord && bar % 2 == 0;
             for (int hit = 0; hit < hits.Length; hit++)
             {
                 int step = hits[hit];
@@ -1049,7 +1085,8 @@ namespace ZPunk.DAW
         // Cheap deterministic ranking, with density, harmonic, rhythmic and register
         // checks. Genre-specific preferences prevent over-penalizing minimal techno.
         private static double ScoreCandidate(ClipContentData c, TrackKind kind, int g, int s,
-                                              bool minor, int key, int[] harmony, bool chords,
+                                              bool minor, int key, int[] harmony,
+                                              ZPunkChordLibrary.Chord[] chordPlan, bool chords,
                                               int[][] externalVoices, int tempoBand)
         {
             if (c.notes.Count == 0) return double.MinValue;
@@ -1082,7 +1119,9 @@ namespace ZPunk.DAW
                 int[] chord = externalVoices != null && bar < externalVoices.Length &&
                               externalVoices[bar] != null && externalVoices[bar].Length > 0 && !harmonic
                     ? externalVoices[bar] : null;
-                bool chordTone = IsChordTone(n.pitch, key, harmony[bar], minor, chord);
+                bool chordTone = chord != null
+                    ? IsChordTone(n.pitch, key, harmony[bar], minor, chord)
+                    : chordPlan[bar].Contains(n.pitch, key);
                 if ((step % 4 == 0 || harmonic || kind == TrackKind.Bass) && chordTone) score += .72;
                 else if (step % 4 == 0 && !chordTone) score -= 2.5;
                 if (kind == TrackKind.Bass && (n.pitch < 35 || n.pitch > 60)) score -= 10;
