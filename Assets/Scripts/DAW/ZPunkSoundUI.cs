@@ -29,6 +29,30 @@ namespace ZPunk.DAW
 
         private VisualElement root, moduleLayout, trackBar;
         private ScrollView pageScroll;
+        // Fixed audition drawer is a sibling of the scrolling modules, not a child.
+        // It sends only live MIDI note events to the current Helm controller.
+        private VisualElement keyboardDrawer, keyboardBody, keyboardFrame;
+        private Button keyboardToggle, octaveDown, octaveUp;
+        private Label octaveCaption;
+        private bool keyboardOpen;
+        private int bassOctave = 2, synthOctave = 4, padsOctave = 3;
+        private readonly List<AuditionKey> auditionKeys = new List<AuditionKey>();
+        private readonly Dictionary<int, AuditionPress> auditionPresses = new Dictionary<int, AuditionPress>();
+        private static readonly int[] WhiteSemitones = { 0, 2, 4, 5, 7, 9, 11 };
+        private static readonly int[] BlackAfterWhite = { 0, 1, 3, 4, 5 };
+        private sealed class AuditionKey
+        {
+            public int semitone;
+            public int whiteIndex;
+            public bool black;
+            public VisualElement visual;
+        }
+        private sealed class AuditionPress
+        {
+            public HelmController controller;
+            public AuditionKey key;
+            public int midi;
+        }
         private Label subhead, presetName, instrumentStatus;
         private readonly List<Macro> macros = new List<Macro>();
         private readonly List<Switch> switches = new List<Switch>();
@@ -167,6 +191,7 @@ namespace ZPunk.DAW
 
         public void Initialize(VisualElement host, VisualElement ignoredLegacyTree)
         {
+            ReleaseAllAuditionNotes();
             root = host;
             if (root == null) return;
             root.UnregisterCallback<PointerDownEvent>(OnKnobDown, TrickleDown.TrickleDown);
@@ -177,6 +202,11 @@ namespace ZPunk.DAW
             root.Clear();
             macros.Clear(); switches.Clear(); moduleCells.Clear();
             selectors.Clear(); knobTargets.Clear();
+            auditionKeys.Clear();
+            keyboardOpen = false;
+            keyboardDrawer = keyboardBody = keyboardFrame = null;
+            keyboardToggle = octaveDown = octaveUp = null;
+            octaveCaption = null;
             lastModuleWidth = -1f;
             dragging = null; dragPointer = -1;
             root.RegisterCallback<PointerDownEvent>(OnKnobDown, TrickleDown.TrickleDown);
@@ -261,6 +291,7 @@ namespace ZPunk.DAW
             moduleLayout.style.width = new Length(100, LengthUnit.Percent);
             pageScroll.Add(moduleLayout);
             moduleLayout.RegisterCallback<GeometryChangedEvent>(OnLayoutChanged);
+            BuildAuditionDrawer(); // Outside pageScroll: remains accessible while knobs scroll.
 
             BuildModule("OSCILLATORS", Pink, null, null, new[] {
                 K("osc1.vol", "OSC 1 LEVEL", Param.kOsc1Volume),
@@ -335,6 +366,274 @@ namespace ZPunk.DAW
             OnShown();
         }
 
+        // ---------------------------------------------------------------------
+        // Fixed, performance-only keyboard. Does not edit SongData, the piano
+        // roll, generation history, a project, or any track/clip event list.
+        // ---------------------------------------------------------------------
+        private int KeyboardOctave
+        {
+            get { return selected == TrackKind.Bass ? bassOctave :
+                selected == TrackKind.Pads ? padsOctave : synthOctave; }
+        }
+
+        private void BuildAuditionDrawer()
+        {
+            keyboardDrawer = new VisualElement();
+            keyboardDrawer.style.flexShrink = 0;
+            keyboardDrawer.style.marginTop = 5;
+            keyboardDrawer.style.marginBottom = 5;
+            keyboardDrawer.style.paddingTop = 5;
+            keyboardDrawer.style.borderTopWidth = 1;
+            keyboardDrawer.style.borderTopColor = Tile;
+            root.Add(keyboardDrawer);
+
+            var header = new VisualElement();
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.alignItems = Align.Center;
+            header.style.height = 43;
+            header.style.flexShrink = 0;
+            keyboardDrawer.Add(header);
+            var heading = T("KEYBOARD  /  AUDITION", 12, Dim);
+            heading.style.unityFontStyleAndWeight = FontStyle.Bold;
+            heading.style.flexGrow = 1;
+            heading.style.marginLeft = 4;
+            header.Add(heading);
+            keyboardToggle = Action("SHOW KEYS  +", ToggleAuditionDrawer);
+            keyboardToggle.style.minHeight = 38;
+            keyboardToggle.style.marginRight = 3;
+            header.Add(keyboardToggle);
+
+            keyboardBody = new VisualElement();
+            keyboardBody.style.display = DisplayStyle.None; // Closed by default.
+            keyboardBody.style.paddingTop = 4;
+            keyboardBody.style.paddingBottom = 4;
+            keyboardDrawer.Add(keyboardBody);
+
+            var tools = new VisualElement();
+            tools.style.flexDirection = FlexDirection.Row;
+            tools.style.alignItems = Align.Center;
+            tools.style.height = 39;
+            tools.style.marginBottom = 5;
+            keyboardBody.Add(tools);
+            octaveCaption = T("", 12, Dim);
+            octaveCaption.style.flexGrow = 1;
+            octaveCaption.style.marginLeft = 4;
+            tools.Add(octaveCaption);
+            octaveDown = Action("-", () => ShiftKeyboardOctave(-1));
+            octaveDown.style.minHeight = 36;
+            octaveDown.style.width = 46;
+            tools.Add(octaveDown);
+            octaveUp = Action("+", () => ShiftKeyboardOctave(1));
+            octaveUp.style.minHeight = 36;
+            octaveUp.style.width = 46;
+            octaveUp.style.marginLeft = 6;
+            tools.Add(octaveUp);
+
+            keyboardFrame = new VisualElement();
+            keyboardFrame.style.position = Position.Relative;
+            keyboardFrame.style.height = 118;
+            keyboardFrame.style.flexShrink = 0;
+            keyboardFrame.style.backgroundColor = Face;
+            keyboardFrame.style.overflow = Overflow.Hidden;
+            Corners(keyboardFrame, 5);
+            keyboardBody.Add(keyboardFrame);
+
+            // White keys first, then black keys in front. Each key owns its
+            // pointer stream so different fingers can play simultaneous notes.
+            for (int i = 0; i < 14; i++)
+                AddAuditionKey(i, WhiteSemitones[i % 7] + (i / 7) * 12, false);
+            for (int i = 0; i < 14; i++)
+            {
+                if (Array.IndexOf(BlackAfterWhite, i % 7) < 0) continue;
+                AddAuditionKey(i, WhiteSemitones[i % 7] + (i / 7) * 12 + 1, true);
+            }
+            keyboardFrame.RegisterCallback<GeometryChangedEvent>(LayoutAuditionKeys);
+            RefreshAuditionHeader();
+        }
+
+        private void AddAuditionKey(int whiteIndex, int semitone, bool black)
+        {
+            var key = new AuditionKey { semitone = semitone, whiteIndex = whiteIndex, black = black };
+            var visual = new VisualElement();
+            visual.style.position = Position.Absolute;
+            visual.style.top = 0;
+            visual.style.borderBottomLeftRadius = 4;
+            visual.style.borderBottomRightRadius = 4;
+            visual.style.borderTopLeftRadius = black ? 0 : 3;
+            visual.style.borderTopRightRadius = black ? 0 : 3;
+            visual.style.backgroundColor = black ? new Color(.055f, .068f, .088f) :
+                new Color(.94f, .95f, .98f);
+            visual.style.borderLeftWidth = black ? 1 : .6f;
+            visual.style.borderRightWidth = black ? 1 : .6f;
+            visual.style.borderBottomWidth = 1;
+            visual.style.borderLeftColor = black ? Face : Dim;
+            visual.style.borderRightColor = black ? Face : Dim;
+            visual.style.borderBottomColor = Face;
+            key.visual = visual;
+            // Use the current octave when pressed, not when the view was built.
+            visual.RegisterCallback<PointerDownEvent>(evt => AuditionDown(evt, key));
+            visual.RegisterCallback<PointerUpEvent>(evt => AuditionUp(evt, key));
+            visual.RegisterCallback<PointerCancelEvent>(evt => AuditionCancel(evt, key));
+            visual.RegisterCallback<PointerCaptureOutEvent>(evt => AuditionCaptureLost(evt, key));
+            auditionKeys.Add(key);
+            keyboardFrame.Add(visual);
+        }
+
+        private void LayoutAuditionKeys(GeometryChangedEvent evt)
+        {
+            float width = evt.newRect.width;
+            if (width <= 0 || float.IsNaN(width)) return;
+            float whiteWidth = width / 14f;
+            const float whiteHeight = 118f;
+            // Put black keys on the boundary between adjacent white keys.
+            // Index lookup uses their semitone rather than relying on child order.
+            foreach (var key in auditionKeys)
+            {
+                if (!key.black)
+                {
+                    key.visual.style.left = key.whiteIndex * whiteWidth + .5f;
+                    key.visual.style.width = Mathf.Max(1f, whiteWidth - 1f);
+                    key.visual.style.height = whiteHeight;
+                }
+                else
+                {
+                    float blackWidth = whiteWidth * .64f;
+                    key.visual.style.left = (key.whiteIndex + 1) * whiteWidth - blackWidth * .5f;
+                    key.visual.style.width = blackWidth;
+                    key.visual.style.height = 72f;
+                }
+            }
+        }
+
+        private void ToggleAuditionDrawer()
+        {
+            keyboardOpen = !keyboardOpen;
+            if (!keyboardOpen) ReleaseAllAuditionNotes();
+            if (keyboardBody != null)
+                keyboardBody.style.display = keyboardOpen ? DisplayStyle.Flex : DisplayStyle.None;
+            if (keyboardToggle != null)
+                keyboardToggle.text = keyboardOpen ? "HIDE KEYS  -" : "SHOW KEYS  +";
+            RefreshAuditionHeader();
+        }
+
+        private void RefreshAuditionHeader()
+        {
+            int octave = KeyboardOctave;
+            if (octaveCaption != null)
+                octaveCaption.text = selected.ToString().ToUpperInvariant() +
+                    "  /  OCTAVE " + octave + "–" + (octave + 1);
+            if (octaveDown != null) octaveDown.SetEnabled(octave > 0);
+            if (octaveUp != null) octaveUp.SetEnabled(octave < 7);
+        }
+
+        private void ShiftKeyboardOctave(int delta)
+        {
+            ReleaseAllAuditionNotes();
+            int octave = Mathf.Clamp(KeyboardOctave + delta, 0, 7);
+            if (selected == TrackKind.Bass) bassOctave = octave;
+            else if (selected == TrackKind.Pads) padsOctave = octave;
+            else synthOctave = octave;
+            RefreshAuditionHeader();
+        }
+
+        private void AuditionDown(PointerDownEvent evt, AuditionKey key)
+        {
+            if (evt.button != 0 || !keyboardOpen) return;
+            // One voice per active pointer. No clip or transport operations.
+            if (auditionPresses.ContainsKey(evt.pointerId)) return;
+            HelmController controller = Controller();
+            int midi = (KeyboardOctave + 1) * 12 + key.semitone;
+            if (controller == null || !controller.isActiveAndEnabled || midi < 0 || midi > 127)
+                return;
+            try
+            {
+                controller.NoteOn(midi, .85f);
+                auditionPresses.Add(evt.pointerId, new AuditionPress {
+                    controller = controller, key = key, midi = midi });
+                key.visual.CapturePointer(evt.pointerId);
+                RefreshAuditionKey(key);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[ZPUNK SOUND] Audition note-on failed: " + ex.Message);
+            }
+            evt.StopPropagation();
+        }
+
+        private void AuditionUp(PointerUpEvent evt, AuditionKey key)
+        {
+            ReleaseAuditionPointer(evt.pointerId, key);
+            if (key.visual.HasPointerCapture(evt.pointerId))
+                key.visual.ReleasePointer(evt.pointerId);
+            evt.StopPropagation();
+        }
+
+        private void AuditionCancel(PointerCancelEvent evt, AuditionKey key)
+        {
+            ReleaseAuditionPointer(evt.pointerId, key);
+            if (key.visual.HasPointerCapture(evt.pointerId))
+                key.visual.ReleasePointer(evt.pointerId);
+            evt.StopPropagation();
+        }
+
+        private void AuditionCaptureLost(PointerCaptureOutEvent evt, AuditionKey key)
+        {
+            ReleaseAuditionPointer(evt.pointerId, key);
+        }
+
+        private void ReleaseAuditionPointer(int pointerId, AuditionKey key)
+        {
+            if (!auditionPresses.TryGetValue(pointerId, out AuditionPress press) ||
+                press.key != key) return;
+            auditionPresses.Remove(pointerId);
+            try { if (press.controller != null) press.controller.NoteOff(press.midi); }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[ZPUNK SOUND] Audition note-off failed: " + ex.Message);
+            }
+            RefreshAuditionKey(key);
+        }
+
+        private void RefreshAuditionKey(AuditionKey key)
+        {
+            bool pressed = false;
+            foreach (var press in auditionPresses.Values)
+                if (press.key == key) { pressed = true; break; }
+            if (key.visual != null)
+                key.visual.style.backgroundColor = pressed ? Aqua :
+                    key.black ? new Color(.055f, .068f, .088f) : new Color(.94f, .95f, .98f);
+        }
+
+        private void ReleaseAllAuditionNotes()
+        {
+            if (auditionPresses.Count == 0) return;
+            // Never call Helm AllNotesOff: that would also kill song playback.
+            var pointers = new List<int>(auditionPresses.Keys);
+            foreach (int id in pointers)
+            {
+                if (!auditionPresses.TryGetValue(id, out AuditionPress press)) continue;
+                ReleaseAuditionPointer(id, press.key);
+                if (press.key.visual != null && press.key.visual.HasPointerCapture(id))
+                    press.key.visual.ReleasePointer(id);
+            }
+        }
+
+        public void OnHidden()
+        {
+            ReleaseAllAuditionNotes();
+        }
+
+        private void OnDisable() { ReleaseAllAuditionNotes(); }
+        private void OnDestroy() { ReleaseAllAuditionNotes(); }
+        private void OnApplicationPause(bool paused)
+        {
+            if (paused) ReleaseAllAuditionNotes();
+        }
+        private void OnApplicationFocus(bool focused)
+        {
+            if (!focused) ReleaseAllAuditionNotes();
+        }
+
         private void AddModuleHint(string message)
         {
             if (moduleCells.Count == 0) return;
@@ -407,6 +706,7 @@ namespace ZPunk.DAW
         }
         private void Select(TrackKind track)
         {
+            if (selected != track) ReleaseAllAuditionNotes();
             if (dragging != null && root != null && root.HasPointerCapture(dragPointer))
                 root.ReleasePointer(dragPointer);
             dragging = null; dragPointer = -1;
@@ -420,9 +720,13 @@ namespace ZPunk.DAW
             {
                 var kind = (TrackKind)requestedTrack;
                 if (kind == TrackKind.Bass || kind == TrackKind.Synth || kind == TrackKind.Pads)
+                {
+                    if (selected != kind) ReleaseAllAuditionNotes();
                     selected = kind;
+                }
             }
             if (root == null) return;
+            RefreshAuditionHeader();
             FindServices();
             ClearPendingDistortion();
             foreach (var entry in selectors)
@@ -448,6 +752,7 @@ namespace ZPunk.DAW
         }
         private void ChangePreset(int direction)
         {
+            ReleaseAllAuditionNotes();
             FindServices();
             if (selected == TrackKind.Bass) rack?.StepBassPreset(direction);
             else if (selected == TrackKind.Synth && mainPicker != null)
@@ -551,6 +856,9 @@ namespace ZPunk.DAW
                     : "PAD PRESETS UNAVAILABLE";
             if (pendingController != controller || pendingPreset != preset)
             {
+                // A preset/project change can reset the native voice state.
+                // Release only notes owned by this drawer, never transport notes.
+                ReleaseAllAuditionNotes();
                 pendingDistortion.Clear();
                 pendingController = controller;
                 pendingPreset = preset;

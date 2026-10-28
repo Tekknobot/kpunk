@@ -1228,6 +1228,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
     }
     private void ApplyPages()
     {
+        // End audition touches before SOUND is hidden; the Helm channels are
+        // shared with song playback, so never use global AllNotesOff here.
+        if (workspace != "sound" && sound != null) sound.OnHidden();
         if(pages==null)return;
         foreach(var child in pages.Children())
             child.style.display=DisplayStyle.None;
