@@ -1,4 +1,4 @@
-﻿// Copyright 2017 Matt Tytel
+// Copyright 2017 Matt Tytel
 
 using UnityEngine;
 
@@ -163,7 +163,10 @@ namespace AudioHelm
             return lastSampledTime;
         }
 
-        void FixedUpdate()
+        // DSP is independent of Unity FixedUpdate. At 30 FPS FixedUpdate can run
+        // zero or several times between visible frames; drive Helm beat phase from
+        // the latest audio clock every rendered frame instead.
+        void Update()
         {
             if (pause_)
                 return;

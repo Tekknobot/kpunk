@@ -131,6 +131,89 @@ public class KMusicDrumSequencer : MonoBehaviour
     // not reached their start time yet. Track future reservations explicitly so
     // rapidly repeating kick/hat hits do not cancel pending or sounding voices.
     private readonly Dictionary<AudioSource, double> _dawDrumVoiceBusyUntil = new();
+    private readonly Dictionary<AudioSource, double> _dawDrumVoiceStartsAt = new();
+    private readonly Dictionary<AudioSource, double> _dawChopVoiceStartsAt = new();
+    private readonly Dictionary<AudioSource, double> _dawChopVoiceBusyUntil = new();
+    private readonly Dictionary<AudioSource, double> _dawChopVoiceNaturalEnd = new();
+
+    /// <summary>Prepare DAW PCM voices and resolve applied chops before PLAY's DSP anchor.
+    /// This avoids component allocation and sample loading in the lookahead path.</summary>
+    public void PrepareDAWPlayback(bool needsChops,
+        IList<SongEventPlanner.Event> sampleEvents = null, float playbackBpm = 120f)
+    {
+        if (routeDrumsToMixer)
+        {
+            for (int lane = 1; lane <= 8; lane++)
+            {
+                if (!_clipByDrumId.TryGetValue(lane, out AudioClip clip) || clip == null) continue;
+                var hits = new List<long>();
+                if (sampleEvents != null)
+                    foreach (var e in sampleEvents)
+                        if (e.type == SongEventPlanner.EventType.Drum && e.value == lane - 1)
+                            hits.Add(e.tick);
+                if (hits.Count == 0) continue;
+                // Size the pool for the densest stretch of this lane's actual
+                // song events. No component allocations on busy 16th-note loops.
+                hits.Sort();
+                double durationTicks = clip.length *
+                    (SongData.TicksPerQuarter * Math.Max(1f, playbackBpm) / 60.0);
+                int concurrent = 1, right = 0;
+                for (int left = 0; left < hits.Count; left++)
+                {
+                    if (right < left) right = left;
+                    while (right < hits.Count && hits[right] - hits[left] < durationTicks)
+                        right++;
+                    concurrent = Math.Max(concurrent, right - left);
+                }
+                int warm = Mathf.Clamp(concurrent + 1, Math.Max(1, drumVoicesPerLane), 12);
+                GetOrCreateDrumVoice(lane, clip, -1.0, warm);
+            }
+        }
+        if (needsChops)
+        {
+            EnsureAppliedChopsLoaded();
+            if (_appliedClip != null) EnsureSampleVoices();
+        }
+    }
+
+    /// <summary>Discard only events which have NOT started yet when edits/tempo
+    /// changes invalidate committed times. Playing audio tails are preserved.</summary>
+    public void CancelFutureDAWVoices()
+    {
+        double now = AudioSettings.dspTime;
+        foreach (var item in _dawDrumVoiceStartsAt)
+        {
+            AudioSource src = item.Key;
+            if (src == null || item.Value <= now) continue;
+            src.Stop();
+            _dawDrumVoiceBusyUntil.Remove(src);
+        }
+        _dawDrumVoiceStartsAt.Clear();
+        foreach (var item in _dawChopVoiceStartsAt)
+        {
+            if (item.Key == null || item.Value <= now) continue;
+            item.Key.Stop();
+            _dawChopVoiceBusyUntil.Remove(item.Key);
+            _dawChopVoiceNaturalEnd.Remove(item.Key);
+        }
+        // An earlier chop may have been truncated at the cancelled future hit.
+        // Restore its natural end rather than leaving a phantom choke behind.
+        foreach (var entry in _dawChopVoiceNaturalEnd)
+        {
+            if (entry.Key == null || entry.Value <= now) continue;
+            try
+            {
+                entry.Key.SetScheduledEndTime(entry.Value);
+                _dawChopVoiceBusyUntil[entry.Key] = entry.Value;
+            }
+            catch (Exception) { /* expired or no longer scheduled */ }
+        }
+        // Preserve busy times for already-playing tails. Only cancel reservations
+        // that have not started and can safely be rescheduled.
+        _dawChopVoiceStartsAt.Clear();
+        // The old sampler fallback does not expose individual PlayScheduled
+        // reservations. Route-to-mixer mode is the supported precise DAW path.
+    }
 
     private KMusicApp _app;
     private ParameterBus _bus;
@@ -208,7 +291,8 @@ public class KMusicDrumSequencer : MonoBehaviour
         WireMuteButtons(_root);
     }
 
-    private AudioSource GetOrCreateDrumVoice(int drumId, AudioClip clip, double requestedDsp = -1.0)
+    private AudioSource GetOrCreateDrumVoice(int drumId, AudioClip clip,
+        double requestedDsp = -1.0, int minimumVoices = 0)
     {
         drumId = Mathf.Clamp(drumId, 1, 8);
 
@@ -220,7 +304,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         }
 
         // Lazily create voices for this drum
-        while (pool.Count < Mathf.Max(1, drumVoicesPerLane))
+        while (pool.Count < Mathf.Max(1, drumVoicesPerLane, minimumVoices))
         {
             var go = new GameObject($"Drum{drumId:00}_Voice{pool.Count}");
             go.transform.SetParent(this.transform, false);
@@ -269,7 +353,7 @@ public class KMusicDrumSequencer : MonoBehaviour
                 }
                 if (busyUntil < earliestEnd) { earliestEnd = busyUntil; chosen = i; }
             }
-            if (!foundFree && pool.Count < 8)
+            if (!foundFree && pool.Count < 12)
             {
                 // Add a voice only when truly required; no extra voices on
                 // ordinary projects. Cap at eight per lane for mobile memory.
@@ -291,6 +375,12 @@ public class KMusicDrumSequencer : MonoBehaviour
             }
         }
         var voice = pool[chosen];
+        // Never steal a voice which is still playing or reserved in the future:
+        // Stop() would cut the *old* hit as soon as the *next* hit is queued.
+        if (requestedDsp >= 0.0 && voice != null &&
+            _dawDrumVoiceBusyUntil.TryGetValue(voice, out double voiceBusyUntil) &&
+            voiceBusyUntil > AudioSettings.dspTime + 0.0001)
+            return null;
         _drumVoiceCursor[drumId] = (chosen + 1) % pool.Count;
 
         if (voice != null)
@@ -333,6 +423,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         var meter = src.GetComponent<ZPunkSampleChannelMeter>();
         if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, src.pitch));
         src.PlayScheduled(dspTime);
+        _dawDrumVoiceStartsAt[src] = dspTime;
         _dawDrumVoiceBusyUntil[src] = dspTime + Math.Max(0.01, clip.length / Mathf.Max(.1f, src.pitch));
     }
 
@@ -364,15 +455,41 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (end01 <= start01) return;
         EnsureSampleVoices();
         if (_sampleVoicePool.Count == 0) return;
-        // Monophonic chops: schedule previous voices to end precisely where
-        // the incoming slice begins. Do not Stop() them early during lookahead.
-        int voiceIndex = _dawChopVoiceCursor++ % _sampleVoicePool.Count;
+        // Choose a voice with no active/pending reservation. Stopping an active
+        // AudioSource here would cut the PREVIOUS chop during future lookahead.
+        double nowDsp = AudioSettings.dspTime;
+        int voiceIndex = -1;
+        for (int offset = 0; offset < _sampleVoicePool.Count; offset++)
+        {
+            int candidate = (_dawChopVoiceCursor + offset) % _sampleVoicePool.Count;
+            var voice = _sampleVoicePool[candidate];
+            if (voice != null && (!_dawChopVoiceBusyUntil.TryGetValue(voice, out double until) ||
+                                  until <= nowDsp + 0.0001))
+            { voiceIndex = candidate; break; }
+        }
+        if (voiceIndex < 0 && _sampleVoicePool.Count < 16)
+        {
+            int previousCount = _sampleVoicePool.Count;
+            EnsureSampleVoices(previousCount + 1);
+            voiceIndex = previousCount;
+        }
+        if (voiceIndex < 0) return; // Never steal scheduled/sounding audio.
+        _dawChopVoiceCursor = (voiceIndex + 1) % _sampleVoicePool.Count;
+        // Monophonic chops: schedule existing voices to end precisely when the
+        // next slice begins, not immediately when it is queued.
         for (int i = 0; i < _sampleVoicePool.Count; i++)
         {
             if (i == voiceIndex) continue;
             var previous = _sampleVoicePool[i];
             if (previous == null || previous.clip == null) continue;
-            try { previous.SetScheduledEndTime(dspTime); }
+            try
+            {
+                if (!_dawChopVoiceBusyUntil.TryGetValue(previous, out double until) || until > dspTime)
+                {
+                    previous.SetScheduledEndTime(dspTime);
+                    _dawChopVoiceBusyUntil[previous] = dspTime;
+                }
+            }
             catch (Exception) { /* voice may already have finished */ }
         }
         var src = _sampleVoicePool[voiceIndex];
@@ -392,6 +509,9 @@ public class KMusicDrumSequencer : MonoBehaviour
         src.timeSamples = Mathf.Clamp((int)(start01 * _appliedClip.samples), 0, _appliedClip.samples - 1);
         src.PlayScheduled(dspTime);
         src.SetScheduledEndTime(dspTime + duration);
+        _dawChopVoiceStartsAt[src] = dspTime;
+        _dawChopVoiceBusyUntil[src] = dspTime + duration;
+        _dawChopVoiceNaturalEnd[src] = dspTime + duration;
     }
 
     /// <summary>
@@ -412,6 +532,9 @@ public class KMusicDrumSequencer : MonoBehaviour
         _appliedRevisionSeen = -1;
         _didLoadAppliedChops = false;
         _dawChopVoiceCursor = 0;
+        _dawChopVoiceStartsAt.Clear();
+        _dawChopVoiceBusyUntil.Clear();
+        _dawChopVoiceNaturalEnd.Clear();
     }
 
     /// <summary>Cancel any scheduled DAW voices on stop, seek or load.</summary>
@@ -424,6 +547,10 @@ public class KMusicDrumSequencer : MonoBehaviour
         foreach (AudioSource source in _sampleVoicePool)
             if (source != null) source.Stop();
         _dawChopVoiceCursor = 0;
+        _dawDrumVoiceStartsAt.Clear();
+        _dawChopVoiceStartsAt.Clear();
+        _dawChopVoiceBusyUntil.Clear();
+        _dawChopVoiceNaturalEnd.Clear();
         if (_sampler != null) _sampler.AllNotesOff();
         SetAllPlayheads(-1);
     }
@@ -1989,11 +2116,11 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         _appliedRevisionSeen = rev;
     }
 
-    private void EnsureSampleVoices()
+    private void EnsureSampleVoices(int extraMinimum = 0)
     {
         // Enough voices to schedule adjacent mono chops ahead without cutting
         // currently sounding audio when the next event is being queued.
-        int target = Mathf.Max(8, Mathf.Clamp(sampleVoices, 1, 32));
+        int target = Mathf.Max(8, Mathf.Clamp(sampleVoices, 1, 32), extraMinimum);
 
         // If pool already exists, top up if needed.
         while (_sampleVoicePool.Count < target)

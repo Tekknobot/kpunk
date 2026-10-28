@@ -10,27 +10,41 @@ using UnityEngine.Audio;
 namespace ZPunk.DAW
 {
     /// <summary>
-    /// ZPunk 2.0 song transport. Arrangement mode is permanently enabled.
-    /// Drums/chops are DSP scheduled. Audio Helm's public HelmController NoteOn API is
-    /// immediate, so melodic events dispatch on the Unity frame closest to their DSP time.
-    /// No claim of sample-accurate synth scheduling is made by this implementation.
+    /// DSP-anchored arrangement transport. Sample events use Unity PlayScheduled;
+    /// melodic tracks use Helm's native audio-thread sequencers (when available).
+    /// Update() handles UI/cursor and feeds the sample lookahead, not note timing.
     /// </summary>
     [DefaultExecutionOrder(250)]
     public sealed class ZPunkSongTransport : MonoBehaviour
     {
-        [SerializeField, Range(0.04f, 0.20f)] private float audioLookahead = 0.10f;
-        [SerializeField, Range(0.02f, 0.30f)] private float startDelay = 0.15f;
+        [SerializeField, Range(0.08f, 0.35f)] private float audioLookahead = 0.18f;
+        [SerializeField, Range(0.08f, 0.50f)] private float startDelay = 0.24f;
         [SerializeField] private bool verbose;
-        // Unity/AudioHelm MIDI events use the main thread. For an exact-pitch
-        // repeat, release the previous note a little before its retrigger so
-        // native Helm receives the off/on on distinct audio callbacks more often.
-        // This is deliberately limited to touching same-pitch notes; all other
-        // notes keep their authored release time.
+        // Only used when native Helm sequencing is unavailable. Native notes
+        // are placed on Helm's audio clock instead of being sent from Update.
         private const double SamePitchRetriggerReleaseLead = 0.025;
         // Android devices running at 30 FPS may dispatch a DSP lookahead frame
         // late. Recover a modestly late sample event rather than dropping it.
         // Larger hitches are still discarded to avoid a machine-gun catch-up.
         private const double MaxRecoverableSampleLateness = 0.065;
+        private double minSampleScheduleLead = 0.012;
+        private readonly List<IntPtr> nativeMidiSequencers = new List<IntPtr>();
+        private readonly Dictionary<IntPtr, int> nativeMidiTracks = new Dictionary<IntPtr, int>();
+        private readonly Dictionary<IntPtr, bool> nativeMidiEnabled = new Dictionary<IntPtr, bool>();
+        private bool nativeMidiActive;
+        private bool activeLoopEnabled;
+
+        private struct MidiSpan
+        {
+            public int track, pitch, velocity;
+            public long start, end;
+        }
+        private struct PendingMidi
+        {
+            public long start;
+            public int velocity;
+        }
+
         private int lateMidiEvents;
         private int recoveredSampleEvents;
         private int droppedSampleEvents;
@@ -139,6 +153,310 @@ namespace ZPunk.DAW
             if (projects == null) projects = FindObjectOfType<KMusicProjectManager>();
             if (app == null) app = FindObjectOfType<KMusicApp>();
             if (clock == null) clock = FindObjectOfType<AudioHelmClock>();
+        }
+
+        // Build actual note spans once, including durations and overlapping-pitch
+        // pairing. NoteOff-before-NoteOn ordering is preserved at clip joins.
+        private static List<MidiSpan> BuildMidiSpans(SongEventPlanner.Plan source)
+        {
+            var spans = new List<MidiSpan>();
+            var pending = new Dictionary<int, Queue<PendingMidi>>();
+            foreach (var e in source.midi)
+            {
+                int key = e.trackIndex * 128 + e.value;
+                if (!pending.TryGetValue(key, out var notes))
+                    pending[key] = notes = new Queue<PendingMidi>();
+                if (e.type == SongEventPlanner.EventType.NoteOn)
+                    notes.Enqueue(new PendingMidi { start = e.tick, velocity = e.velocity });
+                else if (notes.Count > 0)
+                {
+                    var on = notes.Dequeue();
+                    if (e.tick > on.start)
+                        spans.Add(new MidiSpan { track = e.trackIndex, pitch = e.value,
+                            velocity = on.velocity, start = on.start, end = e.tick });
+                }
+            }
+            // Malformed/unclosed notes cannot hang the native synth indefinitely.
+            foreach (var item in pending)
+                foreach (var on in item.Value)
+                    if (source.lengthTicks > on.start)
+                        spans.Add(new MidiSpan { track = item.Key / 128, pitch = item.Key % 128,
+                            velocity = on.velocity, start = on.start, end = source.lengthTicks });
+            spans.Sort((a, b) => {
+                int c = a.track.CompareTo(b.track);
+                if (c != 0) return c;
+                c = a.pitch.CompareTo(b.pitch);
+                return c != 0 ? c : a.start.CompareTo(b.start);
+            });
+            // Native Helm pitch gates cannot represent multiple independently held
+            // voices of the exact same pitch/channel. End the preceding voice on
+            // the next retrigger, without affecting other simultaneous pitches.
+            for (int i = 0; i + 1 < spans.Count; i++)
+            {
+                MidiSpan prior = spans[i], following = spans[i + 1];
+                if (prior.track == following.track && prior.pitch == following.pitch &&
+                    prior.end > following.start)
+                {
+                    prior.end = following.start;
+                    spans[i] = prior;
+                }
+            }
+            return spans;
+        }
+
+        private void AddNativeSegment(List<MidiSpan> spans, long rangeStart,
+            long rangeEnd, double startBeat, bool looping)
+        {
+            if (rangeEnd <= rangeStart) return;
+            double durationSixteenths = (double)(rangeEnd - rangeStart) / SongData.TicksPerSixteenth;
+            // A native Helm sequencer is an audio-thread event engine, separate
+            // from the UI/inspector sequencers disabled in arrangement mode.
+            foreach (var controllerEntry in trackControllers)
+            {
+                if (controllerEntry.Value == null) continue;
+                int track = controllerEntry.Key;
+                bool hasNotes = false;
+                foreach (var span in spans)
+                    if (span.track == track && span.start < rangeEnd && span.end > rangeStart)
+                    { hasNotes = true; break; }
+                if (!hasNotes) continue;
+                IntPtr seq = AudioHelm.Native.CreateSequencer();
+                if (seq == IntPtr.Zero) throw new InvalidOperationException("Helm native sequencer allocation failed.");
+                nativeMidiSequencers.Add(seq); // own immediately, including exception paths
+                nativeMidiTracks[seq] = track;
+                nativeMidiEnabled[seq] = false;
+                AudioHelm.Native.EnableSequencer(seq, false); // never sound during construction
+                // Helm returns a bool, but the stock wrapper does not interpret
+                // it as a success code (unchanged/default channels may return false).
+                AudioHelm.Native.ChangeSequencerChannel(seq, controllerEntry.Value.channel);
+                AudioHelm.Native.ChangeSequencerLength(seq, (float)durationSixteenths);
+                AudioHelm.Native.LoopSequencer(seq, looping);
+                AudioHelm.Native.SetSequencerStart(seq, startBeat);
+                for (int spanIndex = 0; spanIndex < spans.Count; spanIndex++)
+                {
+                    var span = spans[spanIndex];
+                    if (span.track != track || span.start >= rangeEnd || span.end <= rangeStart)
+                        continue;
+                    long localStart = Math.Max(rangeStart, span.start);
+                    long localEnd = Math.Min(rangeEnd, span.end);
+                    if (localEnd <= localStart) continue;
+                    float from = (float)((double)(localStart - rangeStart) / SongData.TicksPerSixteenth);
+                    float to = (float)((double)(localEnd - rangeStart) / SongData.TicksPerSixteenth);
+                    // Ensure native NoteOff is inside the pattern, and separate a
+                    // same-pitch release/retrigger by ~1 ms rather than 25 ms.
+                    float epsilon = Mathf.Clamp(bpm / 15000f, 0.001f, 0.02f);
+                    bool touchingNext = spanIndex + 1 < spans.Count &&
+                        spans[spanIndex + 1].track == span.track &&
+                        spans[spanIndex + 1].pitch == span.pitch &&
+                        spans[spanIndex + 1].start == localEnd;
+                    if (localEnd == rangeEnd || touchingNext)
+                        to = Mathf.Max(from + 0.0001f, to - epsilon);
+                    if (AudioHelm.Native.CreateNote(seq, span.pitch,
+                        Mathf.Clamp01(span.velocity / 127f), from, to) == IntPtr.Zero)
+                        throw new InvalidOperationException("Helm native MIDI note allocation failed.");
+                }
+            }
+        }
+
+        private bool PrepareNativeMidi(double nativeOriginBeat = 0.0, long midiStartTick = -1)
+        {
+            DisposeNativeMidi();
+            if (clock == null || plan == null || plan.midi.Count == 0) return false;
+            try
+            {
+                if (midiStartTick < 0) midiStartTick = startTick;
+                var spans = BuildMidiSpans(plan);
+                if (song.arrangementLoopEnabled && midiStartTick != loopStart)
+                {
+                    // The first (partial) traversal is one-shot; all subsequent
+                    // traversals use a separately prepared, perfectly periodic loop.
+                    AddNativeSegment(spans, midiStartTick, loopEnd, nativeOriginBeat, false);
+                    double firstBeats = (double)(loopEnd - midiStartTick) / SongData.TicksPerQuarter;
+                    AddNativeSegment(spans, loopStart, loopEnd, nativeOriginBeat + firstBeats, true);
+                }
+                else
+                    AddNativeSegment(spans, midiStartTick, loopEnd, nativeOriginBeat, song.arrangementLoopEnabled);
+                return nativeMidiSequencers.Count > 0;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[ZPUNK TIMING] Native MIDI setup failed; using frame-timed fallback: " + ex);
+                DisposeNativeMidi();
+                return false;
+            }
+        }
+
+        private void SyncNativeMidiAudibility()
+        {
+            if (!nativeMidiActive) return;
+            var stoppedChannels = new HashSet<int>();
+            foreach (IntPtr seq in nativeMidiSequencers)
+            {
+                if (!nativeMidiTracks.TryGetValue(seq, out int track)) continue;
+                bool shouldEnable = TrackAudible(track);
+                bool wasEnabled = nativeMidiEnabled.TryGetValue(seq, out bool previous) && previous;
+                if (shouldEnable == wasEnabled) continue;
+                AudioHelm.Native.EnableSequencer(seq, shouldEnable);
+                nativeMidiEnabled[seq] = shouldEnable;
+                if (!shouldEnable && trackControllers.TryGetValue(track, out HelmController ctl) &&
+                    ctl != null && stoppedChannels.Add(ctl.channel))
+                    ctl.AllNotesOff(); // never leak muted/isolated tracks into stem exports
+            }
+        }
+
+        private void EnableNativeMidi()
+        {
+            try
+            {
+                nativeMidiActive = nativeMidiSequencers.Count > 0;
+                SyncNativeMidiAudibility();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("[ZPUNK TIMING] Native MIDI could not start; using fallback: " + ex);
+                DisposeNativeMidi();
+            }
+        }
+
+        private void DisposeNativeMidi()
+        {
+            nativeMidiActive = false;
+            foreach (IntPtr seq in nativeMidiSequencers)
+            {
+                if (seq == IntPtr.Zero) continue;
+                try { AudioHelm.Native.EnableSequencer(seq, false); }
+                catch (Exception ex) { if (verbose) Debug.LogWarning("Helm disable: " + ex.Message); }
+                try { AudioHelm.Native.DeleteSequencer(seq); }
+                catch (Exception ex) { Debug.LogWarning("[ZPUNK TIMING] Helm cleanup: " + ex.Message); }
+            }
+            nativeMidiSequencers.Clear();
+            nativeMidiTracks.Clear();
+            nativeMidiEnabled.Clear();
+        }
+
+        private void ConfigureScheduleBuffer()
+        {
+            AudioSettings.GetDSPBufferSize(out int size, out int buffers);
+            int rate = Math.Max(8000, AudioSettings.outputSampleRate);
+            minSampleScheduleLead = Math.Max(0.012, 2.0 * size / rate);
+            // Keep two complete audio blocks plus a frame-stall margin in hand.
+            // Existing Unity scenes serialize their old 0.10 s lookahead, so
+            // enforce the floor at runtime rather than relying on field defaults.
+            audioLookahead = Mathf.Max(audioLookahead, 0.18f, (float)Math.Min(0.35,
+                minSampleScheduleLead * 2.0 + 0.070));
+        }
+
+        private long ExactPlayheadTick(double now)
+        {
+            return (long)Math.Max(0.0, Math.Floor(now < anchorDsp
+                ? startTick : startTick + (now - anchorDsp) / secondsPerTick));
+        }
+
+        // Returns the Helm beat that coincides with our current DSP anchor;
+        // unlike restarting the native clock, this preserves all other tracks.
+        private double NativeBeatAtAnchor()
+        {
+            return AudioHelmClock.GetGlobalBeatTime() +
+                AudioHelmClock.GetGlobalBpm() *
+                (anchorDsp - AudioHelmClock.GetLastSampledTime()) / 60.0;
+        }
+
+        private void ResetFutureSamples(long atTick)
+        {
+            if (drums != null) drums.CancelFutureDAWVoices();
+            scheduledSamples.Clear();
+            sampleCursor = 0;
+            prefetchedLoopSamples = 0;
+            cycle = 0;
+            while (sampleCursor < plan.samples.Count && plan.samples[sampleCursor].tick < atTick)
+                sampleCursor++;
+        }
+
+        private static Dictionary<int, SongEventPlanner.Event> HeldMidiNotes(
+            SongEventPlanner.Plan source, long atTick)
+        {
+            var held = new Dictionary<int, SongEventPlanner.Event>();
+            if (source == null) return held;
+            foreach (var e in source.midi)
+            {
+                if (e.tick >= atTick) break;
+                int key = e.trackIndex * 128 + e.value;
+                if (e.type == SongEventPlanner.EventType.NoteOn) held[key] = e;
+                else held.Remove(key);
+            }
+            return held;
+        }
+
+        private void RestoreHeldMidi(long atTick)
+        {
+            foreach (var entry in HeldMidiNotes(plan, atTick).Values)
+                if (TrackAudible(entry.trackIndex) &&
+                    trackControllers.TryGetValue(entry.trackIndex, out HelmController controller) &&
+                    controller != null)
+                    controller.NoteOn(entry.value, Mathf.Clamp01(entry.velocity / 127f));
+        }
+
+        private static bool MidiPlanEquals(SongEventPlanner.Plan a, SongEventPlanner.Plan b)
+        {
+            if (a == null || b == null || a.midi.Count != b.midi.Count) return false;
+            for (int i = 0; i < a.midi.Count; i++)
+            {
+                var x = a.midi[i]; var y = b.midi[i];
+                if (x.tick != y.tick || x.trackIndex != y.trackIndex || x.type != y.type ||
+                    x.value != y.value || x.velocity != y.velocity) return false;
+            }
+            return true;
+        }
+
+        private void RefreshNativeMidiWithoutStoppingSamples(long position)
+        {
+            // Native sequencers share the clock but not the PCM scheduler. Rebuild
+            // MIDI at the *current absolute beat*; don't pause/restart the song.
+            double newStartBeat = NativeBeatAtAnchor() +
+                (double)(position - startTick) / SongData.TicksPerQuarter;
+            DisposeNativeMidi();
+            StopAllSynthNotes();
+            midiCursor = 0;
+            while (midiCursor < plan.midi.Count && plan.midi[midiCursor].tick < position)
+                midiCursor++;
+            bool nativeReady = PrepareNativeMidi(newStartBeat, position);
+            if (nativeReady) EnableNativeMidi();
+            // Only currently sounding MIDI voices are re-articulated. Future
+            // notes resume on Helm's native beat grid without a frame-rate gap.
+            RestoreHeldMidi(position);
+        }
+
+        /// <summary>Changing the loop so it no longer contains the playhead
+        /// requires a deliberate seek. Otherwise editing never restarts PCM.</summary>
+        private void SeekLive(long newTick)
+        {
+            // Unlike StopSong/PlaySong, this preserves the edited in-memory
+            // arrangement and never reloads an older project snapshot.
+            newTick = Math.Max(0L, Math.Min(loopEnd - 1, newTick));
+            DisposeNativeMidi();
+            StopAllSynthNotes();
+            if (drums != null) drums.StopDAWVoices();
+            startTick = newTick;
+            CurrentTick = newTick;
+            sampleCursor = midiCursor = 0;
+            prefetchedLoopSamples = 0;
+            scheduledSamples.Clear();
+            cycle = 0;
+            SkipBefore(newTick);
+            ConfigureScheduleBuffer();
+            if (drums != null)
+                drums.PrepareDAWPlayback(plan.samples.Exists(e => e.type == SongEventPlanner.EventType.Chop),
+                    plan.samples, bpm);
+            bool nativeReady = PrepareNativeMidi();
+            anchorDsp = AudioSettings.dspTime + Math.Max(startDelay, audioLookahead + 0.04f);
+            if (clock != null)
+            {
+                clock.bpm = bpm;
+                clock.pause = false;
+                clock.StartScheduled(anchorDsp);
+            }
+            if (nativeReady) EnableNativeMidi();
+            liveRevision++;
         }
 
         // ZPunk 2.0 is permanently in arrangement mode. Retain the legacy
@@ -279,9 +597,16 @@ namespace ZPunk.DAW
             long length = Math.Max(1L, plan.lengthTicks);
             loopStart = song.arrangementLoopEnabled ? Math.Max(0L, Math.Min(length - 1, song.loopStartTick)) : 0;
             loopEnd = song.arrangementLoopEnabled ? Math.Max(loopStart + 1, Math.Min(length, song.loopEndTick)) : length;
+            activeLoopEnabled = song.arrangementLoopEnabled;
             startTick = Math.Max(0L, Math.Min(length - 1, fromTick));
             if (song.arrangementLoopEnabled && startTick >= loopEnd) startTick = loopStart;
-            anchorDsp = AudioSettings.dspTime + Math.Max(startDelay, audioLookahead + 0.02f);
+            // Initialize pools and load the applied chop before starting the clock;
+            // no GameObject creation or sample IO is allowed at the first downbeat.
+            ConfigureScheduleBuffer();
+            drums.PrepareDAWPlayback(plan.samples.Exists(e => e.type == SongEventPlanner.EventType.Chop),
+                    plan.samples, bpm);
+            bool nativeReady = PrepareNativeMidi();
+            anchorDsp = AudioSettings.dspTime + Math.Max(startDelay, audioLookahead + 0.04f);
             sampleCursor = 0;
             midiCursor = 0;
             cycle = 0;
@@ -298,44 +623,33 @@ namespace ZPunk.DAW
             if (clock != null)
             {
                 clock.bpm = bpm;
-                clock.pause = false; // Keep native synth output alive; old HelmSequencers are disabled.
+                clock.pause = false; // Keep native synth output alive; editor sequencers stay disabled.
+                clock.StartScheduled(anchorDsp); // Native MIDI zero-beat matches PlayScheduled PCM time.
             }
+            if (nativeReady) EnableNativeMidi();
             playing = true;
             if (verbose)
                 Debug.Log($"[ZPunk DAW] PLAY events: {plan.samples.Count} samples, {plan.midi.Count} MIDI, from tick {startTick}");
             return true;
         }
 
-        /// <summary>
-        /// Apply edits while the DAW plays. Keep the playhead in musical ticks; recompute
-        /// future events and retime the DSP anchor when BPM changes. Audio Helm note
-        /// events are immediate/frame timed, and already queued samples can finish.
-        /// </summary>
-        /// <summary>Retimes the current DSP position without dropping held MIDI voices.</summary>
+        /// <summary>Change tempo with a continuous fractional-tick phase. Native
+        /// Helm notes follow BPM changes; queued PCM starts are rescheduled.</summary>
         public void SetLiveTempo(float nextBpm, SongData updated)
         {
             if (exportingOneShot) return;
             if (updated != null) song = updated;
-            if (!playing) return;
+            if (!playing || plan == null) return;
             double now = AudioSettings.dspTime;
-            // Preserve the fractional musical phase, not the last displayed whole
-            // tick (which can lag by one 30-fps mobile frame).
             bool beforeStart = now < anchorDsp;
             double exactTick = beforeStart ? startTick :
                 startTick + (now - anchorDsp) / secondsPerTick;
-            long atTick = (long)Math.Max(0.0, Math.Floor(exactTick));
             bpm = Mathf.Clamp(nextBpm, 1f, 400f);
             secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
             if (!beforeStart)
                 anchorDsp = now - (exactTick - startTick) * secondsPerTick;
             if (clock != null) clock.bpm = bpm;
-            // Replay the scheduler's lookahead against the new tempo. Already queued
-            // events retain their old DSP time and are deduplicated by identity;
-            // previously *unscheduled* events must not be discarded wholesale.
-            sampleCursor = 0;
-            while (plan != null && sampleCursor < plan.samples.Count &&
-                   plan.samples[sampleCursor].tick < atTick) sampleCursor++;
-            prefetchedLoopSamples = 0;
+            ResetFutureSamples((long)Math.Max(0.0, Math.Floor(exactTick)));
             liveRevision++;
         }
 
@@ -347,19 +661,22 @@ namespace ZPunk.DAW
             // Do not kill sustained notes just to update the fader.
             if (trackControllers.Count == 0) ResolveControllers();
             ApplyAllTrackGains();
+            if (nativeMidiActive) SyncNativeMidiAudibility();
         }
 
         public void ApplyLiveSong(SongData updated)
         {
-            if (exportingOneShot) return;
-            if (updated == null) return;
+            if (exportingOneShot || updated == null) return;
             Resolve();
-            song = updated;
-            if (trackControllers.Count == 0) ResolveControllers();
-            ApplyAllTrackGains();
-            if (!playing || plan == null) return;
+            if (!playing || plan == null)
+            {
+                song = updated;
+                if (trackControllers.Count == 0) ResolveControllers();
+                ApplyAllTrackGains();
+                return;
+            }
             SongEventPlanner.Plan next;
-            try { next = SongEventPlanner.Build(song); }
+            try { next = SongEventPlanner.Build(updated); }
             catch (Exception ex)
             {
                 Debug.LogWarning("[ZPunk DAW] Live edit rejected: " + ex.Message);
@@ -370,104 +687,46 @@ namespace ZPunk.DAW
             double exactTick = beforeStart ? startTick :
                 startTick + (now - anchorDsp) / secondsPerTick;
             long position = (long)Math.Max(0.0, Math.Floor(exactTick));
-            if (Math.Abs(song.bpm - bpm) > .01f)
+            bool midiChanged = !MidiPlanEquals(plan, next);
+            bool tempoChanged = Math.Abs(updated.bpm - bpm) > .01f;
+            long oldLoopStart = loopStart, oldLoopEnd = loopEnd;
+            bool oldLoopEnabled = activeLoopEnabled;
+            song = updated;
+            plan = next;
+            bpm = Mathf.Clamp(song.bpm, 1f, 400f);
+            if (tempoChanged)
             {
-                bpm = Mathf.Clamp(song.bpm, 1f, 400f);
                 secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
-                // Fractional-tick phase continuity avoids a frame-sized tempo jump.
                 if (!beforeStart)
                     anchorDsp = now - (exactTick - startTick) * secondsPerTick;
                 if (clock != null) clock.bpm = bpm;
             }
-            // A future-only edit (especially DUP) must not retrigger notes already
-            // sounding. Compare the actual held pitches at the current tick.
-            bool heldNotesUnchanged = beforeStart || SameHeldNotes(plan, next, position);
-            if (heldNotesUnchanged && !beforeStart)
-            {
-                // The plan can be identical while a mute/solo edit changes which
-                // held voices should actually sound. The meter tracks real NoteOn
-                // dispatches, so detect notes that need starting or stopping.
-                foreach (var held in HeldMidiNotes(next, position).Values)
-                {
-                    bool shouldSound = TrackAudible(held.trackIndex);
-                    bool isSounding = meterNoteVelocities.TryGetValue(held.trackIndex, out var notes) &&
-                        notes.ContainsKey(held.value);
-                    if (shouldSound != isSounding) { heldNotesUnchanged = false; break; }
-                }
-            }
-            plan = next;
             long length = Math.Max(1L, plan.lengthTicks);
             loopStart = song.arrangementLoopEnabled ? Math.Max(0L, Math.Min(length - 1, song.loopStartTick)) : 0;
             loopEnd = song.arrangementLoopEnabled ? Math.Max(loopStart + 1, Math.Min(length, song.loopEndTick)) : length;
-            sampleCursor = 0;
-            midiCursor = 0;
-            prefetchedLoopSamples = 0;
-            // Skip events genuinely in the past, not every event in the lookahead.
-            // The scheduledSamples set prevents duplicate DSP starts after rebuilding.
-            while (sampleCursor < plan.samples.Count && plan.samples[sampleCursor].tick < position)
-                sampleCursor++;
-            while (midiCursor < plan.midi.Count && plan.midi[midiCursor].tick < position)
-                midiCursor++;
+            bool loopChanged = oldLoopStart != loopStart || oldLoopEnd != loopEnd ||
+                oldLoopEnabled != song.arrangementLoopEnabled;
+            activeLoopEnabled = song.arrangementLoopEnabled;
             ResolveControllers();
-            if (!heldNotesUnchanged)
+            ApplyAllTrackGains();
+            if (nativeMidiActive) SyncNativeMidiAudibility();
+            if (position >= loopEnd)
             {
-                // Only an edit affecting sounding MIDI voices warrants a release.
-                StopAllSynthNotes();
-                var held = HeldMidiNotes(plan, position);
-                foreach (var entry in held.Values)
-                {
-                    if (TrackAudible(entry.trackIndex) &&
-                        trackControllers.TryGetValue(entry.trackIndex, out HelmController active) && active != null)
-                    {
-                        active.NoteOn(entry.value, Mathf.Clamp01(entry.velocity / 127f));
-                        MeterNoteOn(entry.trackIndex, entry.value, entry.velocity / 127f);
-                    }
-                }
+                SeekLive(loopStart);
+                return;
+            }
+            ResetFutureSamples(position);
+            // Merely editing drums, chops or mixer state never kills synths.
+            // Rebuild Helm only when MIDI notes or the loop structure changed.
+            if (midiChanged || loopChanged)
+                RefreshNativeMidiWithoutStoppingSamples(position);
+            else
+            {
+                midiCursor = 0;
+                while (midiCursor < plan.midi.Count && plan.midi[midiCursor].tick < position)
+                    midiCursor++;
             }
             liveRevision++;
-            // If the loop is shortened past the playhead, jump to its beginning.
-            if (position >= loopEnd) SeekLive(loopStart);
-        }
-
-        private static Dictionary<int, SongEventPlanner.Event> HeldMidiNotes(
-            SongEventPlanner.Plan source, long atTick)
-        {
-            var held = new Dictionary<int, SongEventPlanner.Event>();
-            if (source == null) return held;
-            foreach (var e in source.midi)
-            {
-                if (e.tick > atTick) break;
-                int id = e.trackIndex * 128 + e.value;
-                if (e.type == SongEventPlanner.EventType.NoteOn) held[id] = e;
-                else held.Remove(id);
-            }
-            return held;
-        }
-
-        private static bool SameHeldNotes(SongEventPlanner.Plan original,
-            SongEventPlanner.Plan updated, long atTick)
-        {
-            var before = HeldMidiNotes(original, atTick);
-            var after = HeldMidiNotes(updated, atTick);
-            if (before.Count != after.Count) return false;
-            foreach (var item in before)
-                if (!after.TryGetValue(item.Key, out var newer) ||
-                    newer.velocity != item.Value.velocity || newer.tick != item.Value.tick)
-                    return false;
-            return true;
-        }
-
-        private void SeekLive(long newTick)
-        {
-            double now = AudioSettings.dspTime;
-            startTick = newTick;
-            anchorDsp = now + Math.Max(.035f, audioLookahead);
-            CurrentTick = newTick;
-            sampleCursor = 0;
-            midiCursor = 0;
-            prefetchedLoopSamples = 0;
-            if (plan != null) SkipBefore(newTick);
-            if (drums != null) drums.StopDAWVoices();
         }
 
         private void ResolveControllers()
@@ -654,14 +913,15 @@ namespace ZPunk.DAW
                 }
             }
 
-            // Audio Helm dispatch is limited to Unity frame accuracy.
-            DispatchDueMidi(now);
+            // The native Helm audio thread advances all melodic notes independently
+            // of Unity FPS. Fallback is used only when native setup failed.
+            if (!nativeMidiActive) DispatchDueMidi(now);
             if (verbose && Time.unscaledTime >= nextTimingReport)
             {
                 if (lateMidiEvents > 0 || recoveredSampleEvents > 0 || droppedSampleEvents > 0)
                     Debug.LogWarning($"[ZPUNK TIMING] Last 8s: MIDI >20ms late={lateMidiEvents}, " +
                         $"sample hits recovered={recoveredSampleEvents}, sample hits dropped={droppedSampleEvents}. " +
-                        "Helm MIDI is frame-dispatched; high counts suggest frame stalls.");
+                        "DSP lookahead missed a deadline; increase lead or reduce CPU pressure.");
                 lateMidiEvents = 0;
                 recoveredSampleEvents = 0;
                 droppedSampleEvents = 0;
@@ -670,7 +930,9 @@ namespace ZPunk.DAW
 
             if (now >= endDsp)
             {
-                StopAllSynthNotes();
+                // Native loop voices are already scheduled through this boundary.
+                // Do not issue AllNotesOff at the frame boundary (causes a gap).
+                if (!nativeMidiActive) StopAllSynthNotes();
                 if (song.arrangementLoopEnabled)
                 {
                     // Preserve the original DSP phase rather than starting a new loop at Update time.
@@ -686,13 +948,14 @@ namespace ZPunk.DAW
                     prefetchedLoopSamples = 0;
                     SkipBefore(loopStart);
                     CurrentTick = loopStart;
-                    // Don't wait for another Update frame to fire boundary MIDI.
-                    DispatchDueMidi(now);
+                    // Legacy fallback only; native MIDI already crossed the boundary.
+                    if (!nativeMidiActive) DispatchDueMidi(now);
                 }
                 else StopSong();
             }
         }
 
+        // Fallback for platforms without native Helm scheduling.
         // A touching same-pitch repeat has NoteOff and NoteOn at the same tick.
         // Sending both native commands in a single Unity frame can collapse the
         // audible retrigger, especially on a 30 FPS phone. Give the release a
@@ -752,13 +1015,13 @@ namespace ZPunk.DAW
             }
             var key = new ScheduledSampleKey(eventCycle, e);
             if (!scheduledSamples.Add(key)) return;
-            TrackData track = song.tracks[e.trackIndex];
             // Track volume already runs through ApplyDAWTrackMix's PCM gain stage.
             // The AudioSource must receive only note velocity, never track gain twice.
             float velocity = Mathf.Clamp01(e.velocity / 127f);
             // Give late events at least one scheduling buffer of lead time.
             // On-time events retain their exact DSP timestamps.
-            double scheduledAt = lateness > 0.0 ? now + 0.012 : Math.Max(now + 0.005, target);
+            double scheduledAt = lateness > 0.0
+                ? now + minSampleScheduleLead : Math.Max(now + minSampleScheduleLead, target);
             if (lateness > 0.020) recoveredSampleEvents++;
             if (e.type == SongEventPlanner.EventType.Drum)
                 drums.ScheduleDAWDrum(e.value, scheduledAt, velocity);
@@ -796,6 +1059,7 @@ namespace ZPunk.DAW
             bool wasExporting = exportingOneShot;
             playing = false;
             scheduledSamples.Clear();
+            activeLoopEnabled = false;
             meterNoteVelocities.Clear();
             meterEnvelope.Clear();
             meterLastTime.Clear();
@@ -803,6 +1067,7 @@ namespace ZPunk.DAW
             isolatedExportTrack = -1;
             pendingExportSnapshot = null;
             paused = false;
+            DisposeNativeMidi();
             StopAllSynthNotes();
             if (drums != null)
             {
