@@ -92,6 +92,186 @@ namespace ZPunk.DAW
             public TransientHint(float position, bool isKick, float intensity = 1f)
             { position01 = position; kick = isKick; strength = intensity; }
         }
+        /// <summary>One numbered quarter-note in ORIGINAL song coordinates.
+        /// Detected attacks refine source positions but never change beat numbers.
+        /// This is a tempo-grid estimate, not variable-tempo warping.</summary>
+        public struct SourceBeat
+        {
+            public int index;
+            public float seconds;
+            public bool hitAligned;
+            public SourceBeat(int number, float time, bool aligned)
+            { index = number; seconds = time; hitAligned = aligned; }
+        }
+
+        /// <summary>
+        /// Scan the original intro for sustained audible material. A small adaptive
+        /// noise threshold and three consecutive RMS windows avoid one-off clicks.
+        /// A quiet intro is not necessarily a downbeat: beat inference is separate.
+        /// Work in bounded buffers and yield for mobile responsiveness.
+        /// </summary>
+        public static IEnumerator DetectLeadingSilence(AudioClip source,
+            Action<float> complete, Func<bool> cancelled = null)
+        {
+            if (source == null || source.frequency <= 0 || source.samples <= 0)
+            { complete?.Invoke(0f); yield break; }
+            const int hop = 512;
+            const int chunk = 8192;
+            int channels = source.channels;
+            int limit = Mathf.Min(source.samples, source.frequency * 30);
+            var levels = new List<float>(Mathf.CeilToInt(limit / (float)hop));
+            var buffer = new float[chunk * channels];
+            double energy = 0;
+            int accumulated = 0;
+            float peak = 0f;
+            for (int at = 0; at < limit; at += chunk)
+            {
+                if (cancelled != null && cancelled()) yield break;
+                int count = Mathf.Min(chunk, limit - at);
+                if (!source.GetData(buffer, at))
+                { complete?.Invoke(0f); yield break; }
+                for (int i = 0; i < count; i++)
+                {
+                    double monoEnergy = 0;
+                    for (int channel = 0; channel < channels; channel++)
+                    {
+                        float sample = buffer[i * channels + channel];
+                        monoEnergy += sample * (double)sample;
+                    }
+                    energy += monoEnergy / channels;
+                    if (++accumulated != hop) continue;
+                    float rms = (float)Math.Sqrt(energy / accumulated);
+                    levels.Add(rms);
+                    peak = Mathf.Max(peak, rms);
+                    accumulated = 0;
+                    energy = 0;
+                }
+                yield return null;
+            }
+            if (levels.Count == 0 || peak < .0004f)
+            { complete?.Invoke(0f); yield break; }
+            // -58 dBFS floor, while rejecting low-level hiss in a louder file.
+            float threshold = Mathf.Max(.00125f, peak * .024f);
+            int firstWindow = -1;
+            for (int i = 0; i + 2 < levels.Count; i++)
+            {
+                if (levels[i] > threshold && levels[i + 1] > threshold &&
+                    levels[i + 2] > threshold)
+                { firstWindow = i; break; }
+            }
+            complete?.Invoke(firstWindow < 0 ? 0f :
+                Mathf.Max(0f, (firstWindow * hop - hop) / (float)source.frequency));
+        }
+
+        /// <summary>
+        /// Estimate the first reliable QUARTER-NOTE pulse near the beginning.
+        /// Bar-one ambiguity cannot be solved from kicks/snares in every song;
+        /// user HEAD remains the authoritative way to identify downbeat 1.
+        /// </summary>
+        public static bool EstimateFirstPulse(List<TransientHint> hits,
+            float durationSeconds, float bpm, float audibleStartSeconds,
+            out float originSeconds, out float confidence)
+        {
+            originSeconds = Mathf.Clamp(audibleStartSeconds, 0f, durationSeconds);
+            confidence = 0f;
+            if (hits == null || hits.Count < 5 || bpm < 30f ||
+                durationSeconds <= 0f) return false;
+            double beat = 60.0 / bpm;
+            double searchEnd = Math.Min(durationSeconds, audibleStartSeconds + 35.0);
+            double tolerance = Math.Min(.052, beat * .115);
+            const int bins = 96;
+            double bestScore = 0, total = 0;
+            int bestBin = 0, evidence = 0;
+            foreach (var hit in hits)
+            {
+                double sec = hit.position01 * durationSeconds;
+                if (sec + tolerance < audibleStartSeconds || sec > searchEnd ||
+                    hit.strength < .5f) continue;
+                double weight = Math.Min(2.0, hit.strength) * (hit.kick ? 1.55 : 1.0);
+                total += weight;
+                evidence++;
+            }
+            if (evidence < 5) return false;
+            for (int bin = 0; bin < bins; bin++)
+            {
+                double phase = beat * bin / bins;
+                double score = 0;
+                foreach (var hit in hits)
+                {
+                    double sec = hit.position01 * durationSeconds;
+                    if (sec + tolerance < audibleStartSeconds || sec > searchEnd ||
+                        hit.strength < .5f) continue;
+                    double distance = Math.Abs((sec - phase + beat * 4096.5) % beat - beat * .5);
+                    if (distance >= tolerance) continue;
+                    score += Math.Min(2.0, hit.strength) * (hit.kick ? 1.55 : 1.0) *
+                        (1.0 - distance / tolerance);
+                }
+                if (score > bestScore) { bestScore = score; bestBin = bin; }
+            }
+            confidence = Mathf.Clamp01((float)(bestScore / Math.Max(.00001, total)));
+            if (confidence < .20f || bestScore < 3.0) return false;
+            double phaseSeconds = bestBin * beat / bins;
+            // Walk forward to the first strong attack that belongs to this phase.
+            // Do not align an opening pickup to a later, fabricated bar one.
+            double first = double.MaxValue;
+            foreach (var hit in hits)
+            {
+                double sec = hit.position01 * durationSeconds;
+                if (sec + tolerance < audibleStartSeconds || sec > searchEnd ||
+                    hit.strength < (hit.kick ? .6f : .75f)) continue;
+                double distance = Math.Abs((sec - phaseSeconds + beat * 4096.5) % beat - beat * .5);
+                if (distance < tolerance && sec < first) first = sec;
+            }
+            if (first == double.MaxValue) return false;
+            originSeconds = Mathf.Clamp((float)first, 0f, durationSeconds);
+            return true;
+        }
+
+        /// <summary>
+        /// Create a source-wide numbered beat timeline. Only confident nearby
+        /// attacks refine source positions (<=50ms), and every beat retains an
+        /// evenly spaced target position after the selected-region warp.
+        /// </summary>
+        public static List<SourceBeat> BuildSourceBeatMap(List<TransientHint> hits,
+            float durationSeconds, float bpm, float originSeconds)
+        {
+            var map = new List<SourceBeat>();
+            if (durationSeconds <= 0f || bpm <= 0f) return map;
+            double beat = 60.0 / bpm;
+            int first = Math.Max(-20000, (int)Math.Ceiling(-originSeconds / beat));
+            int last = Math.Min(20000, (int)Math.Floor((durationSeconds - originSeconds) / beat));
+            double tolerance = Math.Min(.050, beat * .115);
+            double previous = -1.0;
+            for (int index = first; index <= last; index++)
+            {
+                double ideal = originSeconds + index * beat;
+                double refined = ideal;
+                double best = double.NegativeInfinity;
+                if (index != 0 && hits != null)
+                {
+                    foreach (var hint in hits)
+                    {
+                        if (hint.strength < (hint.kick ? .50f : .65f)) continue;
+                        double candidate = hint.position01 * durationSeconds;
+                        double distance = Math.Abs(candidate - ideal);
+                        if (distance > tolerance) continue;
+                        double score = 1.0 - .72 * distance / tolerance +
+                            .14 * Math.Min(2.0, hint.strength) + (hint.kick ? .05 : 0);
+                        if (score <= best) continue;
+                        refined = candidate;
+                        best = score;
+                    }
+                }
+                if (refined <= previous + Math.Min(.06, beat * .35))
+                    refined = ideal; // No duplicate/non-monotonic beats.
+                if (refined < 0 || refined > durationSeconds) continue;
+                map.Add(new SourceBeat(index, (float)refined,
+                    best > double.NegativeInfinity && refined != ideal));
+                previous = refined;
+            }
+            return map;
+        }
+
         private struct AttackCandidate
         {
             public int frame;
@@ -316,9 +496,13 @@ namespace ZPunk.DAW
             int minimumSpacing = Mathf.RoundToInt(rate * .075f);
             // Keep the strongest candidate in each ~75ms neighborhood.
             var picked = new List<AttackCandidate>();
+            int preserveIntroThrough = Mathf.Min(clip.samples,
+                Mathf.RoundToInt(clip.frequency * 35f));
             foreach (var hit in candidates)
             {
-                if (hit.strength < threshold) continue;
+                float localThreshold = hit.frame < preserveIntroThrough ?
+                    threshold * .65f : threshold;
+                if (hit.strength < localThreshold) continue;
                 if (picked.Count > 0 && hit.frame - picked[picked.Count - 1].frame < minimumSpacing)
                 {
                     if (hit.strength > picked[picked.Count - 1].strength)
@@ -326,13 +510,24 @@ namespace ZPunk.DAW
                 }
                 else picked.Add(hit);
             }
-            // A very long song would otherwise display thousands of guides.
-            // Keep a bounded set of the strongest; return in chronological order.
+            // Reserve candidates from the opening 35 seconds as well as the
+            // strongest from the rest. Otherwise a loud ending can evict the
+            // opening beat evidence from a long imported song entirely.
             const int maxHints = 256;
             if (picked.Count > maxHints)
             {
-                picked.Sort((a, b) => b.strength.CompareTo(a.strength));
-                picked.RemoveRange(maxHints, picked.Count - maxHints);
+                int introEnd = Mathf.Min(clip.samples,
+                    Mathf.RoundToInt(clip.frequency * 35f));
+                var intro = picked.FindAll(h => h.frame < introEnd);
+                var later = picked.FindAll(h => h.frame >= introEnd);
+                intro.Sort((a, b) => b.strength.CompareTo(a.strength));
+                later.Sort((a, b) => b.strength.CompareTo(a.strength));
+                if (intro.Count > 96) intro.RemoveRange(96, intro.Count - 96);
+                int remaining = maxHints - intro.Count;
+                if (later.Count > remaining) later.RemoveRange(remaining, later.Count - remaining);
+                picked.Clear();
+                picked.AddRange(intro);
+                picked.AddRange(later);
                 picked.Sort((a, b) => a.frame.CompareTo(b.frame));
             }
             progress?.Invoke(.86f);
@@ -554,7 +749,9 @@ namespace ZPunk.DAW
             float beatAnchor01 = -1f,
             Action<List<TimeMapPoint>> timeMapReady = null,
             IList<float> chopBoundaries01 = null,
-            IList<float> amberHitGuides01 = null)
+            IList<float> amberHitGuides01 = null,
+            int gridBeatsPerChop = 0,
+            IList<float> sourceGridBeats01 = null)
         {
             if (original == null) { complete?.Invoke(null, "NO SAMPLE"); yield break; }
             if (sourceBpm <= 0f || targetBpm <= 0f)
@@ -576,6 +773,19 @@ namespace ZPunk.DAW
             if (longCount > int.MaxValue - 4096 || longCount < 1024)
             { complete?.Invoke(null, "EXCEEDS UNITY AUDIOCLIP LIMIT"); yield break; }
             int outputCount = (int)longCount;
+            bool fixedBeatGrid = chopBoundaries01 != null && chopBoundaries01.Count >= 2 &&
+                (gridBeatsPerChop == 1 || gridBeatsPerChop == 2 || gridBeatsPerChop == 4);
+            if (fixedBeatGrid)
+            {
+                // Beat-anchored source markers may shift by a few milliseconds.
+                // Do NOT inherit those shifts in the warped loop's total duration:
+                // the last boundary must still end at an exact project beat.
+                long fixedFrames = (long)Math.Round((chopBoundaries01.Count - 1) *
+                    (double)gridBeatsPerChop * sampleRate * 60.0 / targetBpm);
+                if (fixedFrames < 1024 || fixedFrames > int.MaxValue - 4096)
+                { complete?.Invoke(null, "GRID REGION TOO LONG"); yield break; }
+                outputCount = (int)fixedFrames;
+            }
             // Native AudioClip memory is additive: the source, destination and
             // CHOPS voices may coexist during rendering. On low-RAM phones,
             // preserving the original is safer than an oversized allocation.
@@ -654,6 +864,8 @@ namespace ZPunk.DAW
             // An FFT envelope peak can lag the visually refined amber marker;
             // the marker's source coordinate MUST be the warp control point.
             bool guidedChops = chopBoundaries01 != null && chopBoundaries01.Count >= 2;
+            bool explicitGrid = guidedChops &&
+                (gridBeatsPerChop == 1 || gridBeatsPerChop == 2 || gridBeatsPerChop == 4);
             if (anchoredBeats || guidedChops)
             {
                 // The user's HEAD position explicitly establishes beat 1. Each
@@ -682,14 +894,29 @@ namespace ZPunk.DAW
                     // accumulate drift across all sixteen defined slices.
                     float maxBeatCorrection = Mathf.Min(sampleRate * .020f, targetBeat * .06f);
                     int previousSource = 0, previousDestination = 0;
-                    for (int marker = 1; marker < chopBoundaries01.Count - 1; marker++)
+                    bool hasGlobalBeatMap = explicitGrid && sourceGridBeats01 != null &&
+                        sourceGridBeats01.Count == (chopBoundaries01.Count - 1) *
+                            gridBeatsPerChop + 1;
+                    for (int marker = 1; marker < chopBoundaries01.Count - 1 &&
+                        !hasGlobalBeatMap; marker++)
                     {
                         int src = Mathf.RoundToInt(Mathf.Clamp01(chopBoundaries01[marker]) * original.samples);
                         int unshifted = Mathf.RoundToInt(src * ratio);
-                        int beatTarget = Mathf.RoundToInt(targetAnchor +
-                            Mathf.Round((unshifted - targetAnchor) / targetBeat) * targetBeat);
-                        int dst = Mathf.Abs(beatTarget - unshifted) <= maxBeatCorrection
-                            ? beatTarget : unshifted;
+                        // Only GRID chops have numbered musical destinations.
+                        // HIT/FREE chops retain their original groove instead
+                        // of being moved wholesale toward the nearest beat.
+                        int dst;
+                        if (explicitGrid)
+                        {
+                            dst = Mathf.RoundToInt(marker * gridBeatsPerChop * targetBeat);
+                        }
+                        else
+                        {
+                            int beatTarget = Mathf.RoundToInt(targetAnchor +
+                                Mathf.Round((unshifted - targetAnchor) / targetBeat) * targetBeat);
+                            dst = Mathf.Abs(beatTarget - unshifted) <= maxBeatCorrection
+                                ? beatTarget : unshifted;
+                        }
                         if (src < edgeGuard || src > original.samples - edgeGuard ||
                             dst < edgeGuard || dst > outputCount - edgeGuard ||
                             src - previousSource < sampleRate * .050f ||
@@ -699,8 +926,65 @@ namespace ZPunk.DAW
                         previousSource = src;
                         previousDestination = dst;
                     }
-                    // Ghost/transient hints remain visual only here; the user's
-                    // slice markers are the sole warp handles for this region.
+                    // For half-bar and full-bar chopping, beat 2/3/4 can
+                    // occur INSIDE a chop. Anchor those strong amber attacks
+                    // to their numbered project beats too; otherwise only the
+                    // bar edges are correct and the kick/snare inside may drift.
+                    // Work in source coordinates from the immutable PCM, using
+                    // the already-snapped chop edges as local beat references.
+                    int expectedBeats = (chopBoundaries01.Count - 1) * gridBeatsPerChop;
+                    if (hasGlobalBeatMap)
+                    {
+                        // Song-wide source beat numbers survive region cropping.
+                        // Marker 0/output 0 and the closing beat/output end are
+                        // implicit endpoints. Only interiors need warp points.
+                        for (int beatIndex = 1; beatIndex < expectedBeats; beatIndex++)
+                        {
+                            int src = Mathf.RoundToInt(Mathf.Clamp01(
+                                sourceGridBeats01[beatIndex]) * original.samples);
+                            int dst = Mathf.RoundToInt(beatIndex * targetBeat);
+                            if (src > edgeGuard && src < original.samples - edgeGuard &&
+                                dst > edgeGuard && dst < outputCount - edgeGuard)
+                                proposed.Add(new WarpPoint(src, dst));
+                        }
+                    }
+                    else if (explicitGrid && gridBeatsPerChop > 1 &&
+                        amberHitGuides01 != null && amberHitGuides01.Count > 0)
+                    {
+                        float innerWindow = sampleRate * Mathf.Min(.050f,
+                            .115f * 60f / sourceBpm);
+                        for (int segment = 0; segment < chopBoundaries01.Count - 1; segment++)
+                        {
+                            float left = Mathf.Clamp01(chopBoundaries01[segment]) * original.samples;
+                            float right = Mathf.Clamp01(chopBoundaries01[segment + 1]) * original.samples;
+                            if (right - left <= sampleRate * .12f) continue;
+                            for (int inner = 1; inner < gridBeatsPerChop; inner++)
+                            {
+                                // Interpolate between the actual detected chop
+                                // boundary hits, not an unrelated file-start grid.
+                                float ideal = Mathf.Lerp(left, right,
+                                    inner / (float)gridBeatsPerChop);
+                                float nearest = -1f, smallestDistance = innerWindow;
+                                foreach (float guide01 in amberHitGuides01)
+                                {
+                                    float candidate = Mathf.Clamp01(guide01) * original.samples;
+                                    float distance = Mathf.Abs(candidate - ideal);
+                                    if (distance >= smallestDistance) continue;
+                                    smallestDistance = distance;
+                                    nearest = candidate;
+                                }
+                                if (nearest < edgeGuard || nearest > original.samples - edgeGuard)
+                                    continue;
+                                int beatIndex = segment * gridBeatsPerChop + inner;
+                                int destination = Mathf.RoundToInt(beatIndex * targetBeat);
+                                if (destination < edgeGuard || destination > outputCount - edgeGuard)
+                                    continue;
+                                proposed.Add(new WarpPoint(Mathf.RoundToInt(nearest), destination));
+                            }
+                        }
+                    }
+                    // In FREE/HIT mode, guide candidates remain visual only.
+                    // They never drag intentionally loose manual slices to grid.
                 }
                 else for (int beat = firstBeat; beat <= lastBeat; beat++)
                 {
@@ -868,7 +1152,8 @@ namespace ZPunk.DAW
                 if (Mathf.Abs(points[i].destination - points[i].source * ratio) >
                     sampleRate * .0015f) { movedAttack = true; break; }
             }
-            if (!movedAttack && Mathf.Abs(ratio - 1f) < .0001f)
+            if (!movedAttack && Mathf.Abs(ratio - 1f) < .0001f &&
+                outputCount == original.samples)
             {
                 progress?.Invoke(1f, "ALREADY ALIGNED");
                 complete?.Invoke(original, anchoredBeats || guidedChops ? "BEATS ALREADY ALIGNED" :

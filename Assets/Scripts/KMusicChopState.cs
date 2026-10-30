@@ -149,7 +149,9 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
 
                     // 0.0 is an explicit playable slice start; only the end
                     // of the sample is a non-playable closing boundary.
-                    if (t >= 0.9999f)
+                    bool isClosingEnd = lastMarkerIsEndOnly &&
+                        i == userMarkers01.Count - 1;
+                    if (t >= 0.9999f && !isClosingEnd)
                         continue;
 
                     markers.Add(t);
@@ -300,11 +302,14 @@ public static void SaveAppliedFromClip(AudioClip clip, string resourcesPathOrNul
             if (exactMarkers01 != null)
             {
                 markers.Clear();
-                foreach (float position in exactMarkers01)
+                for (int i = 0; i < exactMarkers01.Length; i++)
                 {
+                    float position = exactMarkers01[i];
                     if (float.IsNaN(position) || float.IsInfinity(position)) continue;
                     float clamped = Mathf.Clamp01(position);
-                    if (clamped >= .9999f) continue;
+                    bool isClosingEnd = exactClosingMarker &&
+                        i == exactMarkers01.Length - 1;
+                    if (clamped >= .9999f && !isClosingEnd) continue;
                     markers.Add(clamped);
                 }
                 markers.Sort();

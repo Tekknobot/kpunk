@@ -1070,7 +1070,7 @@ namespace ZPunk.DAW
             samplerPage.Add(primaryRow);
 
             // Bar slicing complements transient slicing, with exact divisions
-            // derived from the live arrangement BPM and the waveform HEAD.
+            // derived from the original source BPM and the waveform HEAD.
             var barSliceRow = new VisualElement();
             barSliceRow.style.flexDirection = FlexDirection.Row;
             barSliceRow.style.alignItems = Align.Center;
@@ -2048,7 +2048,8 @@ namespace ZPunk.DAW
                 samplerSelectedMarker.text = samplePlayer != null ? samplePlayer.DawSelectedMarkerLabel : "NO MARKER SELECTED";
             if (samplerHitSliceStatus != null)
                 samplerHitSliceStatus.text = samplePlayer != null ?
-                    samplePlayer.DawHitSliceStatus + " / UP TO 16 PADS" : "NO SAMPLE";
+                    samplePlayer.DawHitSliceStatus + " / " +
+                    samplePlayer.DawMusicalGridStatus + " / UP TO 16 PADS" : "NO SAMPLE";
             bool hitsBusy = samplePlayer != null && samplePlayer.DawHitAnalysisRunning;
             if (samplerHitProgressLabel != null)
             {
@@ -2075,8 +2076,8 @@ namespace ZPunk.DAW
                 samplerGridButton.style.color = enabled ? Accent : Ink;
             }
             if (samplerSnapButton != null)
-                samplerSnapButton.text = samplePlayer != null && samplePlayer.DawTransientSnapEnabled
-                    ? "HIT SNAP" : "SNAP OFF";
+                samplerSnapButton.text = samplePlayer != null ?
+                    samplePlayer.DawSnapModeLabel : "HIT SNAP";
             for (int i = 0; i < samplerChopPads.Count; ++i)
             {
                 Button button = samplerChopPads[i];
