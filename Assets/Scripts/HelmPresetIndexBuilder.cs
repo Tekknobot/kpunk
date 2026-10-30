@@ -6,8 +6,8 @@ using UnityEditor;
 using UnityEngine;
 
 /// <summary>
-/// Builds a preset index file used at runtime to load Helm presets.
-/// Editor-only tool — safe for Android/iOS builds.
+/// Builds a preset index file used at runtime to load Helm presets
+/// Editor-only tool — safe for Android/iOS builds
 /// </summary>
 public static class HelmPresetIndexBuilder
 {
