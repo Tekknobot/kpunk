@@ -674,47 +674,33 @@ namespace ZPunk.DAW
                 var proposed = new List<WarpPoint>();
                 if (guidedChops)
                 {
-                    // Selected chop boundaries are authoritative. Snap only
-                    // when they are near the beat they appear to represent,
-                    // avoiding destructive moves to intentionally offbeat chops.
-                    float closeEnough = targetBeat * .26f;
-                    int previousSource = -1, previousDestination = -1;
+                    // Marker-first warp: user-created boundaries are temporal
+                    // anchors even when deliberately placed off the beat. Apply
+                    // only a very small (<20ms) beat correction to a marker
+                    // already near the destination grid; do not drag a hit by
+                    // a quarter-beat. The map stays reversible, and WSOLA cannot
+                    // accumulate drift across all sixteen defined slices.
+                    float maxBeatCorrection = Mathf.Min(sampleRate * .020f, targetBeat * .06f);
+                    int previousSource = 0, previousDestination = 0;
                     for (int marker = 1; marker < chopBoundaries01.Count - 1; marker++)
                     {
                         int src = Mathf.RoundToInt(Mathf.Clamp01(chopBoundaries01[marker]) * original.samples);
-                        int dst = Mathf.RoundToInt(targetAnchor +
-                            Mathf.Round((src * ratio - targetAnchor) / targetBeat) * targetBeat);
-                        if (Mathf.Abs(dst - src * ratio) > closeEnough ||
-                            src < edgeGuard || src > original.samples - edgeGuard ||
+                        int unshifted = Mathf.RoundToInt(src * ratio);
+                        int beatTarget = Mathf.RoundToInt(targetAnchor +
+                            Mathf.Round((unshifted - targetAnchor) / targetBeat) * targetBeat);
+                        int dst = Mathf.Abs(beatTarget - unshifted) <= maxBeatCorrection
+                            ? beatTarget : unshifted;
+                        if (src < edgeGuard || src > original.samples - edgeGuard ||
                             dst < edgeGuard || dst > outputCount - edgeGuard ||
-                            src <= previousSource || dst <= previousDestination) continue;
+                            src - previousSource < sampleRate * .050f ||
+                            dst - previousDestination < sampleRate * .050f * ratio)
+                            continue;
                         proposed.Add(new WarpPoint(src, dst));
                         previousSource = src;
                         previousDestination = dst;
                     }
-                    // Only strong cached original-PCM amber guides near a
-                    // quarter-note target may create additional anchors.
-                    // The selected chop boundaries take precedence if nearby.
-                    if (amberHitGuides01 != null)
-                    {
-                        foreach (float normalized in amberHitGuides01)
-                        {
-                            int src = Mathf.RoundToInt(Mathf.Clamp01(normalized) * original.samples);
-                            int dst = Mathf.RoundToInt(targetAnchor +
-                                Mathf.Round((src * ratio - targetAnchor) / targetBeat) * targetBeat);
-                            if (src < edgeGuard || src > original.samples - edgeGuard ||
-                                dst < edgeGuard || dst > outputCount - edgeGuard ||
-                                Mathf.Abs(dst - src * ratio) > targetBeat * .16f) continue;
-                            bool nearChop = false;
-                            foreach (var point in proposed)
-                            {
-                                if (Mathf.Abs(point.source - src) < sampleRate * .085f ||
-                                    Mathf.Abs(point.destination - dst) < sampleRate * .085f)
-                                { nearChop = true; break; }
-                            }
-                            if (!nearChop) proposed.Add(new WarpPoint(src, dst));
-                        }
-                    }
+                    // Ghost/transient hints remain visual only here; the user's
+                    // slice markers are the sole warp handles for this region.
                 }
                 else for (int beat = firstBeat; beat <= lastBeat; beat++)
                 {

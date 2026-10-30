@@ -1069,6 +1069,36 @@ namespace ZPunk.DAW
             primaryRow.Add(samplerWarpButton);
             samplerPage.Add(primaryRow);
 
+            // Bar slicing complements transient slicing, with exact divisions
+            // derived from the live arrangement BPM and the waveform HEAD.
+            var barSliceRow = new VisualElement();
+            barSliceRow.style.flexDirection = FlexDirection.Row;
+            barSliceRow.style.alignItems = Align.Center;
+            barSliceRow.style.height = 43;
+            barSliceRow.style.marginBottom = 4;
+            var barSliceTitle = Txt("SLICE BARS", 10, Muted);
+            barSliceTitle.style.width = 85;
+            barSliceTitle.style.flexShrink = 0;
+            barSliceRow.Add(barSliceTitle);
+            foreach (int division in new[] { 1, 2, 4 })
+            {
+                int beats = division;
+                var fraction = beats == 1 ? "1/4" : beats == 2 ? "1/2" : "1/1";
+                var button = Btn(fraction, () =>
+                {
+                    FindSampler();
+                    samplePlayer?.DawSliceBars(beats);
+                    RefreshSampler();
+                }, 58);
+                button.style.flexGrow = 1;
+                button.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                button.style.minWidth = 0;
+                button.style.height = 39;
+                button.style.marginRight = beats == 4 ? 0 : 5;
+                barSliceRow.Add(button);
+            }
+            samplerPage.Add(barSliceRow);
+
             samplerHitSliceStatus = Txt("SET HEAD ON A MAIN HIT, THEN SLICE HITS", 10, Muted);
             samplerHitSliceStatus.style.whiteSpace = WhiteSpace.Normal;
             samplerHitSliceStatus.style.marginBottom = 3;
@@ -1314,7 +1344,11 @@ namespace ZPunk.DAW
                 {
                     FindSampler();
                     bool available = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
-                    generatorSampleKeyButton?.SetEnabled(available);
+                    if (generatorSampleKeyButton != null)
+                    {
+                        generatorSampleKeyButton.SetEnabled(available || sampleKeyGuideEnabled);
+                        generatorSampleKeyButton.text = sampleKeyGuideEnabled ? "RESET KEY ROWS" : "USE SAMPLE KEY";
+                    }
                     generatorSampleKeyHint.text = samplePlayer == null ? "NO SAMPLE" :
                         samplePlayer.DawSampleKeyAnalyzing ? "ANALYZING SAMPLE" :
                         available ? samplePlayer.DawPitchedKeyText + " / " + samplePlayer.DawSampleKeyConfidence + " EST." :
@@ -1457,6 +1491,17 @@ namespace ZPunk.DAW
             generatorSampleKeyButton = Btn("USE SAMPLE KEY", () =>
             {
                 FindSampler();
+                if (sampleKeyGuideEnabled)
+                {
+                    // Reset every MIDI row to the original alternating keyboard
+                    // colors. Do not alter the generator's selected key or notes.
+                    sampleKeyGuideEnabled = false;
+                    sampleKeyGuideSampleId = null;
+                    ApplySampleKeyGuide();
+                    RefreshClipSampleKeyReference();
+                    RefreshGeneratorPanel();
+                    return;
+                }
                 if (samplePlayer == null || !samplePlayer.DawSampleKeyAvailable) return;
                 generatorKey = samplePlayer.DawPitchedKeyTonic;
                 generatorMinor = samplePlayer.DawSampleKeyMinor;
@@ -1655,7 +1700,11 @@ namespace ZPunk.DAW
                     (progressionChoice > 0 ? " / all parts follow these chords" : " / original genre harmony");
             FindSampler();
             bool hasSampleKey = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
-            if (generatorSampleKeyButton != null) generatorSampleKeyButton.SetEnabled(hasSampleKey);
+            if (generatorSampleKeyButton != null)
+            {
+                generatorSampleKeyButton.SetEnabled(hasSampleKey || sampleKeyGuideEnabled);
+                generatorSampleKeyButton.text = sampleKeyGuideEnabled ? "RESET KEY ROWS" : "USE SAMPLE KEY";
+            }
             if (generatorSampleKeyHint != null)
                 generatorSampleKeyHint.text = samplePlayer == null ? "NO SAMPLE" :
                     samplePlayer.DawSampleKeyAnalyzing ? "ANALYZING SAMPLE" :

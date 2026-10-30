@@ -420,7 +420,6 @@ MonoBehaviour:
   routeDrumsToMixer: 1
   drumVoicesPerLane: 4
   sampleMasterVolume: 1
-  maxChopDurationSeconds: 4
   sampleMasterSliderName: SampleMasterVol
   uiDocument: {fileID: 161364351}
   playButtonName: PlayButton
@@ -500,7 +499,7 @@ AudioSource:
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 24300002, guid: 09156e7a2a9be2540871dda397a09286, type: 2}
   m_audioClip: {fileID: 0}
-  m_Resource: {fileID: 1619980078}
+  m_Resource: {fileID: 1712359738}
   m_PlayOnAwake: 1
   m_Volume: 1
   m_Pitch: 1
@@ -828,7 +827,7 @@ AudioClip:
     m_Offset: 0
     m_Size: 0
   m_EditorCompressionFormat: 0
---- !u!83 &358927778
+--- !u!83 &317606693
 AudioClip:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -1202,7 +1201,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!83 &1619980078
+--- !u!83 &1712359738
 AudioClip:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}

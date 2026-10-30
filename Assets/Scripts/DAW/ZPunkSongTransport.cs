@@ -420,10 +420,20 @@ namespace ZPunk.DAW
             while (midiCursor < plan.midi.Count && plan.midi[midiCursor].tick < position)
                 midiCursor++;
             bool nativeReady = PrepareNativeMidi(newStartBeat, position);
-            if (nativeReady) EnableNativeMidi();
-            // Only currently sounding MIDI voices are re-articulated. Future
-            // notes resume on Helm's native beat grid without a frame-rate gap.
-            RestoreHeldMidi(position);
+            if (nativeReady)
+            {
+                // The newly built native sequencers already contain each held
+                // note as a clipped span starting at position. Sending another
+                // controller.NoteOn creates an unmatched voice whose native
+                // NoteOff may NOT release it (often heard until loop wrap).
+                EnableNativeMidi();
+            }
+            else
+            {
+                // The frame-scheduled fallback needs the held notes restored;
+                // its own NOTE OFF events subsequently release them.
+                RestoreHeldMidi(position);
+            }
         }
 
         /// <summary>Changing the loop so it no longer contains the playhead

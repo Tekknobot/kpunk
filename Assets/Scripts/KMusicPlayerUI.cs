@@ -132,12 +132,26 @@ public class KMusicPlayerUI : MonoBehaviour
         out float start01, out float end01)
     {
         start01 = end01 = 0f;
-        // A closing marker is essential: the implicit last chop otherwise
-        // extends to the end of a multi-minute song.
-        if (!_closingHitMarker || sourceMarkers == null || sourceMarkers.Count < 2 ||
-            _clip == null) return false;
+        if (sourceMarkers == null || sourceMarkers.Count < 2 || _clip == null)
+            return false;
         start01 = sourceMarkers[0];
-        end01 = sourceMarkers[sourceMarkers.Count - 1];
+        if (_closingHitMarker || sourceMarkers.Count >= 17)
+        {
+            // Auto-slice and 17 manually positioned boundaries have an explicit
+            // end; there are at most 16 playable starts before it.
+            end01 = sourceMarkers[sourceMarkers.Count - 1];
+        }
+        else if (sourceMarkers.Count == 16)
+        {
+            // Sixteen manual START markers also define a completed chop set.
+            // Infer the missing end from the final interval instead of warping
+            // the rest of a multi-minute recording as a giant final chop.
+            float last = sourceMarkers[sourceMarkers.Count - 1];
+            float previous = sourceMarkers[sourceMarkers.Count - 2];
+            float gap = Mathf.Max(MinMarkerGapSeconds / _clip.length, last - previous);
+            end01 = Mathf.Min(1f, last + gap);
+        }
+        else return false; // Incomplete manual markers: retain original audio.
         return end01 > start01 && (end01 - start01) * _clip.length >= .15f;
     }
 
@@ -798,6 +812,53 @@ public class KMusicPlayerUI : MonoBehaviour
               Mathf.RoundToInt(60f / beatInterval) + " BPM EST. / " +
               hitsMatched + " HIT MATCHES / ORIGINAL AUDIO"
             : "SLICED " + pads + " FREE-HIT CHOPS / BEAT UNCERTAIN";
+        UpdateTrackTitle(_sliceHitsFeedback);
+        if (_autoWarpEnabled) QueueWarp(true);
+    }
+
+    /// <summary>
+    /// Divide the active waveform into 1/4, 1/2, or 1 bar per pad (4/4).
+    /// Starts from HEAD and generates at most sixteen pads plus a final END
+    /// marker. These markers are stored in original-audio coordinates by the
+    /// existing persistence path, so WARP OFF is always reversible.
+    /// </summary>
+    public void DawSliceBars(int beatsPerSlice)
+    {
+        if (_clip == null || DawSampleDuration <= 0f)
+        { _sliceHitsFeedback = "LOAD A SAMPLE FIRST"; return; }
+        if (_warpProcessing)
+        { _sliceHitsFeedback = "WAIT FOR WARP TO FINISH"; return; }
+        if (beatsPerSlice != 1 && beatsPerSlice != 2 && beatsPerSlice != 4)
+            return;
+        float duration = DawSampleDuration;
+        float startSeconds = Mathf.Clamp01(_scrub01) * duration;
+        float spacing = (60f / Mathf.Max(1f, CurrentSongTempo())) * beatsPerSlice;
+        if (duration - startSeconds < spacing - .001f)
+        { _sliceHitsFeedback = "MOVE HEAD EARLIER / NOT ENOUGH AUDIO"; return; }
+        var boundaries = new List<float>(17) { Mathf.Clamp01(startSeconds / duration) };
+        for (int i = 1; i <= 16; i++)
+        {
+            float at = startSeconds + i * spacing;
+            if (at > duration + .001f) break;
+            boundaries.Add(Mathf.Clamp01(at / duration));
+        }
+        if (boundaries.Count < 2) return;
+        _chops01.Clear();
+        _chops01.AddRange(boundaries);
+        _closingHitMarker = true;
+        _selectedMarkerIndex = 0;
+        _chopArmed = true;
+        _markerAddMode = true;
+        if (_wave != null) _wave.MarkersDraggable = true;
+        SyncMarkersToWave();
+        UpdateMarkerNavigatorUI();
+        PersistMarkersIfPossible();
+        _scrub01 = boundaries[0];
+        SeekTo01(_scrub01);
+        _wave?.FocusSlice01(boundaries[0], boundaries[1]);
+        _sliceHitsFeedback = "SLICED " + (boundaries.Count - 1) + " x " +
+            (beatsPerSlice == 1 ? "1/4" : beatsPerSlice == 2 ? "1/2" : "1/1") +
+            " BAR / FROM HEAD";
         UpdateTrackTitle(_sliceHitsFeedback);
         if (_autoWarpEnabled) QueueWarp(true);
     }
@@ -3356,7 +3417,7 @@ public class KMusicPlayerUI : MonoBehaviour
         startTime = Mathf.Clamp(start01 * activeLength, 0f, Mathf.Max(0f, activeLength - .001f));
         // Preview the same bounded duration heard in the sequenced chop engine.
         if (_chopEngine == null) _chopEngine = FindObjectOfType<KMusicDrumSequencer>();
-        float cap = _chopEngine != null ? _chopEngine.MaxChopDurationSeconds : 4f;
+        float cap = _chopEngine != null ? _chopEngine.MaxChopDurationSeconds : 8f;
         float endTime = Mathf.Clamp(end01 * activeLength, startTime, activeLength);
 
         if (_markerPreviewCoroutine != null)

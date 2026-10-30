@@ -333,9 +333,9 @@ public class KMusicDrumSequencer : MonoBehaviour
     [Range(0f, 1f)] public float sampleMasterVolume = 1f;
 
     [Header("Chop Playback")]
-    [Tooltip("Maximum time in seconds for any sequenced or auditioned chop. Shorter marker-defined slices are unaffected.")]
-    [SerializeField, Range(0.1f, 12f)] private float maxChopDurationSeconds = 4f;
-    public float MaxChopDurationSeconds => Mathf.Clamp(maxChopDurationSeconds, 0.1f, 12f);
+    // Eight seconds per hit, including old scenes that serialized a 4-second
+    // inspector cap. Never extend shorter marker-defined slices.
+    public float MaxChopDurationSeconds => 8f;
 
     // Optional UI control name (Slider or KnobElement root name)
     public string sampleMasterSliderName = "SampleMasterVol";
