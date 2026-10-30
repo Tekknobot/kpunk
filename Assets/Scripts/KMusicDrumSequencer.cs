@@ -126,6 +126,9 @@ public class KMusicDrumSequencer : MonoBehaviour
         }
     }
 
+    private const int MaxDrumVoicesPerLane = 64;
+    // The old hard cap of 12 silently lost rapid hats when a kit used long
+    // samples. Sources are allocated only for lanes that actually contain hits.
     private readonly Dictionary<int, int> _drumVoiceCursor = new();
     // isPlaying is false for some voices that have been PlayScheduled but have
     // not reached their start time yet. Track future reservations explicitly so
@@ -139,7 +142,8 @@ public class KMusicDrumSequencer : MonoBehaviour
     /// <summary>Prepare DAW PCM voices and resolve applied chops before PLAY's DSP anchor.
     /// This avoids component allocation and sample loading in the lookahead path.</summary>
     public void PrepareDAWPlayback(bool needsChops,
-        IList<SongEventPlanner.Event> sampleEvents = null, float playbackBpm = 120f)
+        IList<SongEventPlanner.Event> sampleEvents = null, float playbackBpm = 120f,
+        long loopStartTick = 0, long loopEndTick = 0, float lookaheadSeconds = 0.35f)
     {
         if (routeDrumsToMixer)
         {
@@ -152,21 +156,32 @@ public class KMusicDrumSequencer : MonoBehaviour
                         if (e.type == SongEventPlanner.EventType.Drum && e.value == lane - 1)
                             hits.Add(e.tick);
                 if (hits.Count == 0) continue;
-                // Size the pool for the densest stretch of this lane's actual
-                // song events. No component allocations on busy 16th-note loops.
                 hits.Sort();
-                double durationTicks = clip.length *
-                    (SongData.TicksPerQuarter * Math.Max(1f, playbackBpm) / 60.0);
-                int concurrent = 1, right = 0;
-                for (int left = 0; left < hits.Count; left++)
+                // A voice must be free at the moment we QUEUE PlayScheduled,
+                // not merely at the future DSP onset. Count the entire sample
+                // tail PLUS scheduler lead time. Pitch-down lengthens the tail.
+                var shape = _dawDrumShapes[lane - 1];
+                float pitch = shape == null ? 1f :
+                    Mathf.Pow(2f, Mathf.Clamp(shape.tune, -12f, 12f) / 12f);
+                double ticksPerSecond = SongData.TicksPerQuarter *
+                    Math.Max(1f, playbackBpm) / 60.0;
+                double occupiedTicks = (clip.length / Math.Max(0.1f, pitch) +
+                    Math.Max(0.18f, lookaheadSeconds) + 0.06) * ticksPerSecond;
+                int concurrent = MaxEventsInWindow(hits, occupiedTicks);
+                if (loopEndTick > loopStartTick)
+                    concurrent = Math.Max(concurrent,
+                        MaxLoopEventsInWindow(hits, loopStartTick, loopEndTick, occupiedTicks));
+                // Two spare voices cover buffer boundaries, hit-time rounding
+                // and occasional edits without needing allocations during PLAY.
+                int warm = Mathf.Clamp(concurrent + 2,
+                    Math.Max(1, drumVoicesPerLane), MaxDrumVoicesPerLane);
+                // Do not reconfigure a sounding voice while prewarming during
+                // a live edit. Only create additional idle sources when needed.
+                if (_drumVoicePools.TryGetValue(lane, out var pool) && pool != null)
                 {
-                    if (right < left) right = left;
-                    while (right < hits.Count && hits[right] - hits[left] < durationTicks)
-                        right++;
-                    concurrent = Math.Max(concurrent, right - left);
+                    while (pool.Count < warm) CreateDrumVoice(lane, pool);
                 }
-                int warm = Mathf.Clamp(concurrent + 1, Math.Max(1, drumVoicesPerLane), 12);
-                GetOrCreateDrumVoice(lane, clip, -1.0, warm);
+                else GetOrCreateDrumVoice(lane, clip, -1.0, warm);
             }
         }
         if (needsChops)
@@ -174,6 +189,52 @@ public class KMusicDrumSequencer : MonoBehaviour
             EnsureAppliedChopsLoaded();
             if (_appliedClip != null) EnsureSampleVoices();
         }
+    }
+
+    // Maximum queued/active sample starts within one occupancy window.
+    private static int MaxEventsInWindow(List<long> hits, double windowTicks)
+    {
+        int max = 0, right = 0;
+        for (int left = 0; left < hits.Count; ++left)
+        {
+            if (right < left) right = left;
+            while (right < hits.Count && hits[right] - hits[left] < windowTicks)
+                ++right;
+            max = Math.Max(max, right - left);
+            if (max >= MaxDrumVoicesPerLane) return MaxDrumVoicesPerLane;
+        }
+        return max;
+    }
+
+    // A one-traversal event list underestimates polyphony at the loop seam:
+    // the old cycle's samples still ring while the next cycle is prequeued.
+    // Count complete repeated cycles plus the densest circular remainder.
+    private static int MaxLoopEventsInWindow(List<long> hits, long begin, long end,
+        double windowTicks)
+    {
+        long loopTicks = end - begin;
+        if (loopTicks <= 0) return 0;
+        var phases = new List<long>();
+        foreach (long tick in hits)
+            if (tick >= begin && tick < end) phases.Add(tick - begin);
+        if (phases.Count == 0) return 0;
+        // hits are already sorted by the caller.
+        int whole = (int)Math.Min(MaxDrumVoicesPerLane,
+            Math.Floor(windowTicks / loopTicks));
+        long baseline = (long)whole * phases.Count;
+        if (baseline >= MaxDrumVoicesPerLane) return MaxDrumVoicesPerLane;
+        double remainder = windowTicks - whole * (double)loopTicks;
+        int maxExtra = 0, right = 0, count = phases.Count;
+        for (int left = 0; left < count; ++left)
+        {
+            if (right < left) right = left;
+            while (right < left + count &&
+                phases[right % count] + (right >= count ? (double)loopTicks : 0.0)
+                    - phases[left] < remainder)
+                ++right;
+            maxExtra = Math.Max(maxExtra, right - left);
+        }
+        return (int)Math.Min(MaxDrumVoicesPerLane, baseline + maxExtra);
     }
 
     /// <summary>Discard only events which have NOT started yet when edits/tempo
@@ -291,11 +352,29 @@ public class KMusicDrumSequencer : MonoBehaviour
         WireMuteButtons(_root);
     }
 
+    private AudioSource CreateDrumVoice(int drumId, List<AudioSource> pool)
+    {
+        var go = new GameObject($"Drum{drumId:00}_Voice{pool.Count}");
+        go.transform.SetParent(transform, false);
+        var src = go.AddComponent<AudioSource>();
+        src.playOnAwake = false;
+        src.loop = false;
+        src.spatialBlend = 0f;
+        src.volume = 1f;
+        var meter = go.AddComponent<ZPunkSampleChannelMeter>();
+        meter.Gain = GetDrumChannelGain(drumId);
+        ApplyDrumShapeToVoice(src, drumId);
+        var group = GetMixerGroupForDrum(drumId);
+        if (group != null) src.outputAudioMixerGroup = group;
+        ZPunkArrangementFilters.RegisterVoice(src, true);
+        pool.Add(src);
+        return src;
+    }
+
     private AudioSource GetOrCreateDrumVoice(int drumId, AudioClip clip,
         double requestedDsp = -1.0, int minimumVoices = 0)
     {
         drumId = Mathf.Clamp(drumId, 1, 8);
-
         if (!_drumVoicePools.TryGetValue(drumId, out var pool) || pool == null)
         {
             pool = new List<AudioSource>(Mathf.Max(1, drumVoicesPerLane));
@@ -303,42 +382,21 @@ public class KMusicDrumSequencer : MonoBehaviour
             _drumVoiceCursor[drumId] = 0;
         }
 
-        // Lazily create voices for this drum
-        while (pool.Count < Mathf.Max(1, drumVoicesPerLane, minimumVoices))
-        {
-            var go = new GameObject($"Drum{drumId:00}_Voice{pool.Count}");
-            go.transform.SetParent(this.transform, false);
-
-            var src = go.AddComponent<AudioSource>();
-            src.playOnAwake = false;
-            src.loop = false;
-            src.spatialBlend = 0f;
-            src.volume = 1f;
-            var meter = go.AddComponent<ZPunkSampleChannelMeter>();
-            meter.Gain = GetDrumChannelGain(drumId);
-            ApplyDrumShapeToVoice(src, drumId);
-
-            // Route into mixer if provided
-            var g = GetMixerGroupForDrum(drumId);
-            if (g != null) src.outputAudioMixerGroup = g;
-
-            ZPunkArrangementFilters.RegisterVoice(src, true);
-            pool.Add(src);
-        }
+        int minimum = Mathf.Min(MaxDrumVoicesPerLane,
+            Mathf.Max(1, drumVoicesPerLane, minimumVoices));
+        while (pool.Count < minimum) CreateDrumVoice(drumId, pool);
 
         int cur = _drumVoiceCursor.TryGetValue(drumId, out var c) ? c : 0;
         if (cur < 0 || cur >= pool.Count) cur = 0;
-
         int chosen = cur;
         if (requestedDsp >= 0.0)
         {
-            // PlayScheduled requires preparing this AudioSource *now*. Even if
-            // a voice ends before requestedDsp, calling Stop() now would cut its
-            // active tail. Use the current DSP time, not the upcoming hit time.
+            // A voice reserved for a future PlayScheduled or still sounding
+            // must never be Stop()ped for another hit. Check NOW (the moment
+            // clip/volume/Pitch are assigned), not the future target timestamp.
             double nowDsp = AudioSettings.dspTime;
             bool foundFree = false;
-            double earliestEnd = double.MaxValue;
-            for (int offset = 0; offset < pool.Count; offset++)
+            for (int offset = 0; offset < pool.Count; ++offset)
             {
                 int i = (cur + offset) % pool.Count;
                 var candidate = pool[i];
@@ -351,52 +409,35 @@ public class KMusicDrumSequencer : MonoBehaviour
                     foundFree = true;
                     break;
                 }
-                if (busyUntil < earliestEnd) { earliestEnd = busyUntil; chosen = i; }
             }
-            if (!foundFree && pool.Count < 12)
+            if (!foundFree)
             {
-                // Add a voice only when truly required; no extra voices on
-                // ordinary projects. Cap at eight per lane for mobile memory.
-                var go = new GameObject($"Drum{drumId:00}_Voice{pool.Count}");
-                go.transform.SetParent(transform, false);
-                var extra = go.AddComponent<AudioSource>();
-                extra.playOnAwake = false;
-                extra.loop = false;
-                extra.spatialBlend = 0f;
-                extra.volume = 1f;
-                var extraMeter = go.AddComponent<ZPunkSampleChannelMeter>();
-                extraMeter.Gain = GetDrumChannelGain(drumId);
-                ApplyDrumShapeToVoice(extra, drumId);
-                var group = GetMixerGroupForDrum(drumId);
-                if (group != null) extra.outputAudioMixerGroup = group;
-                ZPunkArrangementFilters.RegisterVoice(extra, true);
-                pool.Add(extra);
+                if (pool.Count >= MaxDrumVoicesPerLane) return null;
+                CreateDrumVoice(drumId, pool);
                 chosen = pool.Count - 1;
             }
         }
         var voice = pool[chosen];
-        // Never steal a voice which is still playing or reserved in the future:
-        // Stop() would cut the *old* hit as soon as the *next* hit is queued.
+        // The check also protects against a voice reservation made just before
+        // the current callback, even if the pool was resized during an edit.
         if (requestedDsp >= 0.0 && voice != null &&
             _dawDrumVoiceBusyUntil.TryGetValue(voice, out double voiceBusyUntil) &&
             voiceBusyUntil > AudioSettings.dspTime + 0.0001)
             return null;
         _drumVoiceCursor[drumId] = (chosen + 1) % pool.Count;
-
         if (voice != null)
         {
-            ZPunkArrangementFilters.RegisterVoice(voice, true);
-            voice.clip = clip; // clip can change with kit
-            // keep output group in sync in case inspector changed
+            // Filters were registered when this voice was created and receive
+            // live changes from the shared filter manager. Re-registering at
+            // every sixteenth note adds unnecessary main-thread work.
+            voice.clip = clip;
             var g = GetMixerGroupForDrum(drumId);
             if (g != null) voice.outputAudioMixerGroup = g;
-            // Recover pre-existing voice pools if created before the mixer UI appeared.
             var meter = voice.GetComponent<ZPunkSampleChannelMeter>();
             if (meter == null) meter = voice.gameObject.AddComponent<ZPunkSampleChannelMeter>();
             meter.Gain = GetDrumChannelGain(drumId);
             ApplyDrumShapeToVoice(voice, drumId);
         }
-
         return voice;
     }
 
@@ -408,13 +449,13 @@ public class KMusicDrumSequencer : MonoBehaviour
     }
 
 
-    private void ScheduleDrum(int drumId, double dspTime, float velocityScale = 1f)
+    private bool ScheduleDrum(int drumId, double dspTime, float velocityScale = 1f)
     {
         if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
-            return;
+            return false;
 
         var src = GetOrCreateDrumVoice(drumId, clip, dspTime);
-        if (src == null) return;
+        if (src == null) return false;
 
         // Voice is free now (or the oldest if the eight-voice cap is
         // exhausted). Do not prematurely steal a queued/playing hit.
@@ -425,22 +466,26 @@ public class KMusicDrumSequencer : MonoBehaviour
         src.PlayScheduled(dspTime);
         _dawDrumVoiceStartsAt[src] = dspTime;
         _dawDrumVoiceBusyUntil[src] = dspTime + Math.Max(0.01, clip.length / Mathf.Max(.1f, src.pitch));
+        return true;
     }
 
     /// <summary>DAW DSP event. Drum lane is 0..7, matching SongData.</summary>
-    public void ScheduleDAWDrum(int lane, double dspTime, float velocity)
+    public bool ScheduleDAWDrum(int lane, double dspTime, float velocity)
     {
+        if (lane < 0 || lane >= 8) return false;
         int drumId = lane + 1;
-        if (lane < 0 || lane >= 8 || IsDrumMuted(drumId) || velocity <= 0f) return;
+        if (IsDrumMuted(drumId) || velocity <= 0f) return true;
         float gain = GetDrumInputGain(drumId) * Mathf.Clamp01(velocity);
         if (routeDrumsToMixer)
-            ScheduleDrum(drumId, dspTime, gain);
-        else if (_sampler != null && _clipByDrumId.TryGetValue(drumId, out AudioClip clip) && clip != null)
+            return ScheduleDrum(drumId, dspTime, gain);
+        if (_sampler != null && _clipByDrumId.TryGetValue(drumId, out AudioClip clip) && clip != null)
         {
             int note = _noteByDrumId.TryGetValue(drumId, out int n) ? n : 36;
             _sampler.NoteOnScheduled(note, GetDrumGain(drumId) * Mathf.Clamp01(velocity), dspTime,
                 dspTime + Math.Max(0.05, clip.length));
+            return true;
         }
+        return false;
     }
 
     /// <summary>DAW DSP event. Uses the existing applied chop points and voice pool.</summary>
@@ -560,7 +605,10 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
             return;
 
-        var src = GetOrCreateDrumVoice(drumId, clip);
+        // Editing drum cells while PLAY is active auditions the sample too.
+        // That preview must not Stop() an already queued arrangement hit.
+        double now = AudioSettings.dspTime;
+        var src = GetOrCreateDrumVoice(drumId, clip, now);
         if (src == null) return;
 
         src.Stop();
@@ -568,6 +616,8 @@ public class KMusicDrumSequencer : MonoBehaviour
         var meter = src.GetComponent<ZPunkSampleChannelMeter>();
         if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, src.pitch));
         src.PlayOneShot(clip, Mathf.Clamp01(velocityScale));
+        _dawDrumVoiceStartsAt[src] = now;
+        _dawDrumVoiceBusyUntil[src] = now + Math.Max(0.01, clip.length / Mathf.Max(.1f, src.pitch));
     }
 
     [SerializeField] private UIDocument uiDocument;

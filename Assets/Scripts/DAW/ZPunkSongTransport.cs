@@ -17,8 +17,8 @@ namespace ZPunk.DAW
     [DefaultExecutionOrder(250)]
     public sealed class ZPunkSongTransport : MonoBehaviour
     {
-        [SerializeField, Range(0.08f, 0.35f)] private float audioLookahead = 0.18f;
-        [SerializeField, Range(0.08f, 0.50f)] private float startDelay = 0.24f;
+        [SerializeField, Range(0.12f, 0.50f)] private float audioLookahead = 0.32f;
+        [SerializeField, Range(0.12f, 0.65f)] private float startDelay = 0.38f;
         [SerializeField] private bool verbose;
         // Only used when native Helm sequencing is unavailable. Native notes
         // are placed on Helm's audio clock instead of being sent from Update.
@@ -339,11 +339,11 @@ namespace ZPunk.DAW
             AudioSettings.GetDSPBufferSize(out int size, out int buffers);
             int rate = Math.Max(8000, AudioSettings.outputSampleRate);
             minSampleScheduleLead = Math.Max(0.012, 2.0 * size / rate);
-            // Keep two complete audio blocks plus a frame-stall margin in hand.
-            // Existing Unity scenes serialize their old 0.10 s lookahead, so
-            // enforce the floor at runtime rather than relying on field defaults.
-            audioLookahead = Mathf.Max(audioLookahead, 0.18f, (float)Math.Min(0.35,
-                minSampleScheduleLead * 2.0 + 0.070));
+            // Older scenes serialize the previous 0.10/0.18 s lookahead.
+            // Enforce a safer floor for 16th notes on busy mobile frames.
+            // The extra lead is also accounted for when sizing drum pools.
+            audioLookahead = Mathf.Max(audioLookahead, 0.32f, (float)Math.Min(0.5,
+                minSampleScheduleLead * 2.0 + 0.12));
         }
 
         private long ExactPlayheadTick(double now)
@@ -446,7 +446,8 @@ namespace ZPunk.DAW
             ConfigureScheduleBuffer();
             if (drums != null)
                 drums.PrepareDAWPlayback(plan.samples.Exists(e => e.type == SongEventPlanner.EventType.Chop),
-                    plan.samples, bpm);
+                    plan.samples, bpm, song.arrangementLoopEnabled ? loopStart : 0,
+                    song.arrangementLoopEnabled ? loopEnd : 0, audioLookahead);
             bool nativeReady = PrepareNativeMidi();
             anchorDsp = AudioSettings.dspTime + Math.Max(startDelay, audioLookahead + 0.04f);
             if (clock != null)
@@ -604,7 +605,8 @@ namespace ZPunk.DAW
             // no GameObject creation or sample IO is allowed at the first downbeat.
             ConfigureScheduleBuffer();
             drums.PrepareDAWPlayback(plan.samples.Exists(e => e.type == SongEventPlanner.EventType.Chop),
-                    plan.samples, bpm);
+                    plan.samples, bpm, song.arrangementLoopEnabled ? loopStart : 0,
+                    song.arrangementLoopEnabled ? loopEnd : 0, audioLookahead);
             bool nativeReady = PrepareNativeMidi();
             anchorDsp = AudioSettings.dspTime + Math.Max(startDelay, audioLookahead + 0.04f);
             sampleCursor = 0;
@@ -707,6 +709,12 @@ namespace ZPunk.DAW
             bool loopChanged = oldLoopStart != loopStart || oldLoopEnd != loopEnd ||
                 oldLoopEnabled != song.arrangementLoopEnabled;
             activeLoopEnabled = song.arrangementLoopEnabled;
+            // A live edit can add many hats or extend a clip. Size pools before
+            // the updated pattern enters the DSP scheduling window.
+            if (drums != null)
+                drums.PrepareDAWPlayback(false, plan.samples, bpm,
+                    activeLoopEnabled ? loopStart : 0,
+                    activeLoopEnabled ? loopEnd : 0, audioLookahead);
             ResolveControllers();
             ApplyAllTrackGains();
             if (nativeMidiActive) SyncNativeMidiAudibility();
@@ -916,17 +924,21 @@ namespace ZPunk.DAW
             // The native Helm audio thread advances all melodic notes independently
             // of Unity FPS. Fallback is used only when native setup failed.
             if (!nativeMidiActive) DispatchDueMidi(now);
-            if (verbose && Time.unscaledTime >= nextTimingReport)
+            if (Time.unscaledTime >= nextTimingReport)
             {
-                if (lateMidiEvents > 0 || recoveredSampleEvents > 0 || droppedSampleEvents > 0)
+                // An audible lost hit is always worth reporting, even in a
+                // release build with verbose timing diagnostics disabled.
+                if (droppedSampleEvents > 0 ||
+                    (verbose && (lateMidiEvents > 0 || recoveredSampleEvents > 0)))
                     Debug.LogWarning($"[ZPUNK TIMING] Last 8s: MIDI >20ms late={lateMidiEvents}, " +
                         $"sample hits recovered={recoveredSampleEvents}, sample hits dropped={droppedSampleEvents}. " +
-                        "DSP lookahead missed a deadline; increase lead or reduce CPU pressure.");
+                        "Check main-thread scheduling, missing kit clips or busy sample voices.");
                 lateMidiEvents = 0;
                 recoveredSampleEvents = 0;
                 droppedSampleEvents = 0;
                 nextTimingReport = Time.unscaledTime + 8f;
             }
+
 
             if (now >= endDsp)
             {
@@ -1024,8 +1036,15 @@ namespace ZPunk.DAW
                 ? now + minSampleScheduleLead : Math.Max(now + minSampleScheduleLead, target);
             if (lateness > 0.020) recoveredSampleEvents++;
             if (e.type == SongEventPlanner.EventType.Drum)
-                drums.ScheduleDAWDrum(e.value, scheduledAt, velocity);
-            else if (e.type == SongEventPlanner.EventType.Chop)
+            {
+                if (drums == null || !drums.ScheduleDAWDrum(e.value, scheduledAt, velocity))
+                {
+                    droppedSampleEvents++;
+                    if (verbose) Debug.LogWarning($"[ZPUNK TIMING] Drum lane {e.value + 1} " +
+                        "could not schedule: missing kit sample or all sample voices busy.");
+                }
+            }
+            else if (e.type == SongEventPlanner.EventType.Chop && drums != null)
                 drums.ScheduleDAWChop(e.value, scheduledAt, velocity);
         }
 
