@@ -32,6 +32,12 @@ namespace ZPunk.DAW
         private readonly Dictionary<IntPtr, int> nativeMidiTracks = new Dictionary<IntPtr, int>();
         private readonly Dictionary<IntPtr, bool> nativeMidiEnabled = new Dictionary<IntPtr, bool>();
         private bool nativeMidiActive;
+        // Audio Helm can skip the rest of the running native pattern when its
+        // note list is changed, and freshly created native patterns can miss the
+        // current traversal. Once edited, only that melodic track uses the
+        // already-existing transport-driven MIDI dispatcher until the next PLAY.
+        // Other melodic tracks keep their DSP-clocked native sequencers.
+        private readonly HashSet<int> liveDispatchedMidiTracks = new HashSet<int>();
         private bool activeLoopEnabled;
 
         // The three melodic tracks must remain audible while their piano rolls are
@@ -322,7 +328,7 @@ namespace ZPunk.DAW
         }
 
         private void AddNativeSegment(List<MidiSpan> spans, long rangeStart,
-            long rangeEnd, double startBeat, bool looping)
+            long rangeEnd, double startBeat, bool looping, int onlyTrack = -1)
         {
             if (rangeEnd <= rangeStart) return;
             double durationSixteenths = (double)(rangeEnd - rangeStart) / SongData.TicksPerSixteenth;
@@ -330,6 +336,7 @@ namespace ZPunk.DAW
             {
                 if (controllerEntry.Value == null) continue;
                 int track = controllerEntry.Key;
+                if (onlyTrack >= 0 && track != onlyTrack) continue;
                 // Intentionally allocate an empty pattern for every instrument.
                 // Adding the *first* note to BASS/SYNTH/PADS should not need to
                 // tear down the other instruments or restart the audio clock.
@@ -358,115 +365,135 @@ namespace ZPunk.DAW
             }
         }
 
-        /// <summary>
-        /// Modify the running native Helm notes in-place. Unchanged notes retain
-        /// their pointers and (crucially) their *currently playing voices*.
-        /// This fixes the full-instrument AllNotesOff/restart gap previously
-        /// triggered by every piano-roll tap or drag.
-        /// </summary>
-        private bool UpdateNativeMidiInPlace(long playheadTick, bool retainChangedNoteEnds = false)
+        // AudioHelm's native sequencer owns its own iteration state. In 2.3.1,
+        // CreateNote/DeleteNote/ChangeNote* were called on that *running* state.
+        // The UI/song remained correct, but Helm could then omit notes until PLAY
+        // was restarted. Never mutate a playing native note list.
+        //
+        // Instead, prepare a replacement sequencer for just the edited track,
+        // with the exact present song phase, *while the old one is still playing*.
+        // Swap the prepared sequencers in the same Unity update. Other melodic
+        // tracks, the DSP clock, and drum/chop audio continue uninterrupted.
+        private static int ComparePlaybackEvents(SongEventPlanner.Event a,
+            SongEventPlanner.Event b)
         {
-            if (!nativeMidiActive || nativeMidiSegments.Count == 0) return false;
-            try
+            int order = a.tick.CompareTo(b.tick);
+            if (order != 0) return order;
+            order = a.trackIndex.CompareTo(b.trackIndex);
+            if (order != 0) return order;
+            order = a.type.CompareTo(b.type);
+            if (order != 0) return order;
+            order = a.value.CompareTo(b.value);
+            return order != 0 ? order : a.velocity.CompareTo(b.velocity);
+        }
+
+        private static bool SamePlaybackEvents(List<SongEventPlanner.Event> a,
+            List<SongEventPlanner.Event> b)
+        {
+            if (a == null || b == null) return a == b;
+            if (a.Count != b.Count) return false;
+            // Two simultaneous notes/events have no meaningful list order.
+            // Sorting copies avoids false positives when List.Sort has ties.
+            var left = new List<SongEventPlanner.Event>(a);
+            var right = new List<SongEventPlanner.Event>(b);
+            left.Sort(ComparePlaybackEvents);
+            right.Sort(ComparePlaybackEvents);
+            for (int i = 0; i < left.Count; i++)
+                if (ComparePlaybackEvents(left[i], right[i]) != 0) return false;
+            return true;
+        }
+
+        private static Dictionary<int, List<SongEventPlanner.Event>> MidiEventsByTrack(
+            SongEventPlanner.Plan source)
+        {
+            var result = new Dictionary<int, List<SongEventPlanner.Event>>();
+            if (source == null) return result;
+            foreach (var e in source.midi)
             {
-                var spans = BuildMidiSpans(plan);
-                foreach (var segment in nativeMidiSegments)
+                if (!result.TryGetValue(e.trackIndex, out var events))
+                    result[e.trackIndex] = events = new List<SongEventPlanner.Event>();
+                events.Add(e);
+            }
+            return result;
+        }
+
+        private static HashSet<int> ChangedMidiTracks(SongEventPlanner.Plan previous,
+            SongEventPlanner.Plan replacement)
+        {
+            var oldTracks = MidiEventsByTrack(previous);
+            var newTracks = MidiEventsByTrack(replacement);
+            var changed = new HashSet<int>();
+            foreach (var pair in oldTracks)
+            {
+                newTracks.TryGetValue(pair.Key, out var next);
+                if (!SamePlaybackEvents(pair.Value, next)) changed.Add(pair.Key);
+            }
+            foreach (var pair in newTracks)
+                if (!oldTracks.ContainsKey(pair.Key)) changed.Add(pair.Key);
+            return changed;
+        }
+
+        private void DeleteNativeSegment(NativeMidiSegment segment)
+        {
+            if (segment == null) return;
+            IntPtr seq = segment.sequencer;
+            nativeMidiSegments.Remove(segment);
+            nativeMidiSequencers.Remove(seq);
+            nativeMidiTracks.Remove(seq);
+            nativeMidiEnabled.Remove(seq);
+            if (seq == IntPtr.Zero) return;
+            try { AudioHelm.Native.EnableSequencer(seq, false); }
+            catch (Exception ex) { Debug.LogWarning("[ZPUNK MIDI] Disable: " + ex.Message); }
+            try { AudioHelm.Native.DeleteSequencer(seq); }
+            catch (Exception ex) { Debug.LogWarning("[ZPUNK MIDI] Cleanup: " + ex.Message); }
+        }
+
+        /// <summary>
+        /// Helm's native sequencers are excellent for stable DSP playback, but
+        /// editing the running note list can invalidate their iteration state.
+        /// Rebuilding one mid-cycle has also skipped its first traversal. The
+        /// reliable live path is to retain native playback on untouched tracks
+        /// and dispatch the edited track's MIDI from this same transport clock.
+        /// This does not change the song timeline or disturb the drum/chop DSP
+        /// scheduler. The edited track returns to native on next PLAY/seek.
+        /// </summary>
+        private bool RefreshEditedNativeMidiTracks(SongEventPlanner.Plan previous,
+            SongEventPlanner.Plan replacement, long position)
+        {
+            if (!nativeMidiActive) return false;
+            var changedTracks = ChangedMidiTracks(previous, replacement);
+            if (changedTracks.Count == 0) return true;
+            bool afterStart = AudioSettings.dspTime >= anchorDsp;
+            foreach (int track in changedTracks)
+            {
+                if (!trackControllers.TryGetValue(track, out HelmController controller) ||
+                    controller == null) continue;
+                if (liveDispatchedMidiTracks.Contains(track))
                 {
-                    var desired = NativeNotesForSegment(spans, segment.track,
-                        segment.rangeStart, segment.rangeEnd);
-                    var existing = new Dictionary<NativeNoteKey, Queue<NativeNoteEntry>>();
-                    foreach (var note in segment.notes)
-                    {
-                        if (!existing.TryGetValue(note.key, out var queue))
-                            existing[note.key] = queue = new Queue<NativeNoteEntry>();
-                        queue.Enqueue(note);
-                    }
-                    var keep = new List<NativeNoteEntry>(desired.Count);
-                    var reused = new HashSet<NativeNoteEntry>();
-                    foreach (var spec in desired)
-                    {
-                        NativeNoteEntry old = null;
-                        if (existing.TryGetValue(spec.key, out var matches))
-                            while (matches.Count > 0 && old == null)
-                            {
-                                var candidate = matches.Dequeue();
-                                if (!reused.Contains(candidate)) old = candidate;
-                            }
-                        if (old == null && retainChangedNoteEnds)
-                        {
-                            // LOOP +/- can change a note's truncated END without
-                            // changing the actual note-on. Edit that native note
-                            // rather than deleting it and killing a held voice.
-                            foreach (var candidate in segment.notes)
-                                if (!reused.Contains(candidate) &&
-                                    candidate.key.pitch == spec.key.pitch &&
-                                    candidate.key.start == spec.key.start)
-                                { old = candidate; break; }
-                        }
-                        if (old != null)
-                        {
-                            reused.Add(old);
-                            if (old.from != spec.from)
-                            {
-                                IntPtr changed = AudioHelm.Native.ChangeNoteStart(
-                                    segment.sequencer, old.handle, spec.from);
-                                if (changed == IntPtr.Zero)
-                                    throw new InvalidOperationException("Helm live note start update failed.");
-                                old.handle = changed;
-                            }
-                            if (old.to != spec.to)
-                            {
-                                IntPtr changed = AudioHelm.Native.ChangeNoteEnd(
-                                    segment.sequencer, old.handle, spec.to);
-                                if (changed == IntPtr.Zero)
-                                    throw new InvalidOperationException("Helm live note end update failed.");
-                                old.handle = changed;
-                            }
-                            if (old.velocity != spec.velocity)
-                            {
-                                IntPtr changed = AudioHelm.Native.ChangeNoteVelocity(old.handle,
-                                    Mathf.Clamp01(spec.velocity / 127f));
-                                if (changed != IntPtr.Zero) old.handle = changed;
-                            }
-                            old.key = spec.key;
-                            old.from = spec.from;
-                            old.to = spec.to;
-                            old.velocity = spec.velocity;
-                            keep.Add(old);
-                        }
-                        else
-                        {
-                            spec.handle = AudioHelm.Native.CreateNote(segment.sequencer,
-                                spec.key.pitch, Mathf.Clamp01(spec.velocity / 127f), spec.from, spec.to);
-                            if (spec.handle == IntPtr.Zero)
-                                throw new InvalidOperationException("Helm live note allocation failed.");
-                            keep.Add(spec);
-                        }
-                    }
-                    foreach (var old in segment.notes)
-                    {
-                        if (reused.Contains(old)) continue;
-                        AudioHelm.Native.DeleteNote(segment.sequencer, old.handle);
-                        // A deleted MIDI note may still be held: release only
-                        // that pitch, not other notes or other instruments.
-                        bool segmentStarted = AudioHelmClock.GetGlobalBeatTime() >= segment.startBeat;
-                        if (segmentStarted && old.key.start <= playheadTick &&
-                            playheadTick < old.key.end && TrackAudible(segment.track) &&
-                            trackControllers.TryGetValue(segment.track, out HelmController ctl) && ctl != null)
-                            ctl.NoteOff(old.key.pitch);
-                    }
-                    segment.notes.Clear();
-                    segment.notes.AddRange(keep);
+                    // Subsequent edits only reconcile notes currently held.
+                    // Unchanged voices and other instrument tracks continue.
+                    if (afterStart)
+                        ReconcileFallbackHeldMidi(previous, replacement, position + 1,
+                            -1, track);
+                    continue;
                 }
-                return true;
+
+                // Stop ONLY this track's native sequence; the other two tracks
+                // stay entirely on Audio Helm's audio-thread sequencer.
+                var outgoing = nativeMidiSegments.FindAll(s => s.track == track);
+                foreach (var segment in outgoing) DeleteNativeSegment(segment);
+                liveDispatchedMidiTracks.Add(track);
+
+                // The native note-off ownership has ended. Recreate only notes
+                // held *right now* from the new pattern (if any), and dispatch
+                // all following events from the moving song playhead.
+                controller.AllNotesOff();
+                if (afterStart) RestoreHeldMidi(position + 1, track);
+                if (verbose)
+                    Debug.Log($"[ZPUNK MIDI] Track {track} switched to live dispatch " +
+                        $"at tick {position}; other native sequencers unaffected.");
             }
-            catch (Exception ex)
-            {
-                Debug.LogWarning("[ZPUNK MIDI] In-place live edit failed; native transport retained: " + ex);
-                // Don't stop the other channels, even if an edit failed. The
-                // next playback start will rebuild the full native snapshot.
-                return true;
-            }
+            return true;
         }
 
         private bool PrepareNativeMidi(double nativeOriginBeat = 0.0, long midiStartTick = -1)
@@ -664,6 +691,7 @@ namespace ZPunk.DAW
         private void DisposeNativeMidi()
         {
             nativeMidiActive = false;
+            liveDispatchedMidiTracks.Clear();
             foreach (IntPtr seq in nativeMidiSequencers)
             {
                 if (seq == IntPtr.Zero) continue;
@@ -731,17 +759,19 @@ namespace ZPunk.DAW
             return held;
         }
 
-        private void RestoreHeldMidi(long atTick)
+        private void RestoreHeldMidi(long atTick, int onlyTrack = -1)
         {
             foreach (var entry in HeldMidiNotes(plan, atTick).Values)
-                if (TrackAudible(entry.trackIndex) &&
+                if ((onlyTrack < 0 || entry.trackIndex == onlyTrack) &&
+                    TrackAudible(entry.trackIndex) &&
                     trackControllers.TryGetValue(entry.trackIndex, out HelmController controller) &&
                     controller != null)
                     controller.NoteOn(entry.value, Mathf.Clamp01(entry.velocity / 127f));
         }
 
         private void ReconcileFallbackHeldMidi(SongEventPlanner.Plan previous,
-            SongEventPlanner.Plan replacement, long atTick, long updatedTick = -1)
+            SongEventPlanner.Plan replacement, long atTick, long updatedTick = -1,
+            int onlyTrack = -1)
         {
             // Helm native sequencing is normally active. If the plugin rejects
             // native sequencers, preserve unchanged Update-dispatched notes as well.
@@ -749,12 +779,14 @@ namespace ZPunk.DAW
             var newHeld = HeldMidiNotes(replacement, updatedTick >= 0 ? updatedTick : atTick);
             foreach (var entry in oldHeld)
             {
+                if (onlyTrack >= 0 && entry.Value.trackIndex != onlyTrack) continue;
                 if (!newHeld.ContainsKey(entry.Key) &&
                     trackControllers.TryGetValue(entry.Value.trackIndex, out HelmController ctl) && ctl != null)
                     ctl.NoteOff(entry.Value.value);
             }
             foreach (var entry in newHeld)
             {
+                if (onlyTrack >= 0 && entry.Value.trackIndex != onlyTrack) continue;
                 if (!oldHeld.ContainsKey(entry.Key) && TrackAudible(entry.Value.trackIndex) &&
                     trackControllers.TryGetValue(entry.Value.trackIndex, out HelmController ctl) && ctl != null)
                     ctl.NoteOn(entry.Value.value, Mathf.Clamp01(entry.Value.velocity / 127f));
@@ -763,14 +795,12 @@ namespace ZPunk.DAW
 
         private static bool MidiPlanEquals(SongEventPlanner.Plan a, SongEventPlanner.Plan b)
         {
-            if (a == null || b == null || a.midi.Count != b.midi.Count) return false;
-            for (int i = 0; i < a.midi.Count; i++)
-            {
-                var x = a.midi[i]; var y = b.midi[i];
-                if (x.tick != y.tick || x.trackIndex != y.trackIndex || x.type != y.type ||
-                    x.value != y.value || x.velocity != y.velocity) return false;
-            }
-            return true;
+            return a != null && b != null && SamePlaybackEvents(a.midi, b.midi);
+        }
+
+        private static bool SamplePlanEquals(SongEventPlanner.Plan a, SongEventPlanner.Plan b)
+        {
+            return a != null && b != null && SamePlaybackEvents(a.samples, b.samples);
         }
 
         private void RefreshNativeMidiWithoutStoppingSamples(long position)
@@ -1069,6 +1099,7 @@ namespace ZPunk.DAW
             long position = (long)Math.Max(0.0, Math.Floor(exactTick));
             SongEventPlanner.Plan previousPlan = plan;
             bool midiChanged = !MidiPlanEquals(plan, next);
+            bool samplesChanged = !SamplePlanEquals(plan, next);
             bool tempoChanged = Math.Abs(updated.bpm - bpm) > .01f;
             long length = Math.Max(1L, next.lengthTicks);
             long requestedLoopStart = updated.arrangementLoopEnabled ?
@@ -1117,19 +1148,27 @@ namespace ZPunk.DAW
                 if (nativeMidiActive)
                     RefreshNativeMidiWithoutStoppingSamples(position);
             }
-            if (drums != null)
-                drums.PrepareDAWPlayback(false, plan.samples, bpm,
-                    activeLoopEnabled ? loopStart : 0,
-                    activeLoopEnabled ? loopEnd : 0, audioLookahead);
+            // MIDI edits must not tear down already scheduled drum/chop hits.
+            // Only replan sample voices when sample events or their timing changed.
+            if (samplesChanged || tempoChanged || loopChanged)
+            {
+                if (drums != null)
+                    drums.PrepareDAWPlayback(
+                        plan.samples.Exists(e => e.type == SongEventPlanner.EventType.Chop),
+                        plan.samples, bpm, activeLoopEnabled ? loopStart : 0,
+                        activeLoopEnabled ? loopEnd : 0, audioLookahead);
+                ResetFutureSamples(position);
+            }
             ResolveControllers();
             ApplyAllTrackGains();
             if (nativeMidiActive) SyncNativeMidiAudibility();
-            // Ordinary piano-roll edits keep their existing in-place Helm path.
-            if (midiChanged && !loopChanged && !UpdateNativeMidiInPlace(position))
+            if (midiChanged && !loopChanged &&
+                !RefreshEditedNativeMidiTracks(previousPlan, next, position))
                 ReconcileFallbackHeldMidi(previousPlan, next, position);
-            ResetFutureSamples(position);
             midiCursor = 0;
-            while (midiCursor < plan.midi.Count && plan.midi[midiCursor].tick < position)
+            while (midiCursor < plan.midi.Count &&
+                   (plan.midi[midiCursor].tick < position ||
+                   (!beforeStart && plan.midi[midiCursor].tick == position)))
                 midiCursor++;
             liveRevision++;
         }
@@ -1331,7 +1370,8 @@ namespace ZPunk.DAW
 
             // The native Helm audio thread advances all melodic notes independently
             // of Unity FPS. Fallback is used only when native setup failed.
-            if (!nativeMidiActive) DispatchDueMidi(now);
+            if (!nativeMidiActive || liveDispatchedMidiTracks.Count > 0)
+                DispatchDueMidi(now);
             if (Time.unscaledTime >= nextTimingReport)
             {
                 // An audible lost hit is always worth reporting, even in a
@@ -1351,6 +1391,7 @@ namespace ZPunk.DAW
             if (now >= endDsp)
             {
                 if (!nativeMidiActive) StopAllSynthNotes();
+                else StopLiveDispatchedNotes();
                 if (activeLoopEnabled)
                 {
                     anchorDsp = endDsp;
@@ -1362,7 +1403,8 @@ namespace ZPunk.DAW
                     midiCursor = 0;
                     prefetchedLoopSamples = 0;
                     SkipBefore(startTick);
-                    if (!nativeMidiActive) DispatchDueMidi(now);
+                    if (!nativeMidiActive || liveDispatchedMidiTracks.Count > 0)
+                        DispatchDueMidi(now);
                 }
                 else StopSong();
             }
@@ -1402,6 +1444,9 @@ namespace ZPunk.DAW
                 if (due > now && !earlyRelease) break;
                 midiCursor++;
                 if (due < now - 0.020) lateMidiEvents++;
+                // Never duplicate a note already owned by a native sequencer.
+                if (nativeMidiActive && !liveDispatchedMidiTracks.Contains(e.trackIndex))
+                    continue;
                 if (!trackControllers.TryGetValue(e.trackIndex, out HelmController controller) || controller == null)
                     continue;
                 if (e.type == SongEventPlanner.EventType.NoteOff)
@@ -1510,6 +1555,15 @@ namespace ZPunk.DAW
             if (!playing) { CurrentTick = Math.Max(0L, tick); return; }
             StopSong();
             PlaySong(tick);
+        }
+
+        private void StopLiveDispatchedNotes()
+        {
+            // A live-edited track's NOTE OFF must not leak past the loop seam.
+            // Native tracks remain fully untouched and keep their own gates.
+            foreach (int track in liveDispatchedMidiTracks)
+                if (trackControllers.TryGetValue(track, out HelmController controller) &&
+                    controller != null) controller.AllNotesOff();
         }
 
         private void StopAllSynthNotes()
