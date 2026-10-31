@@ -135,6 +135,34 @@ namespace ZPunk.DAW
         }
 
         /// <summary>
+        /// Non-destructively trim or restore the LEFT edge of a clip. Moving the
+        /// edge right skips the same duration of source content; moving it left
+        /// restores earlier source content (only as far as the original source).
+        /// The right edge stays fixed, and no authored events are removed.
+        /// </summary>
+        public static bool TrimStart(SongData song, ClipData clip, long newStart)
+        {
+            if (song == null || clip == null || clip.lengthTicks <= 0) return false;
+            long originalEnd = clip.startTick + clip.lengthTicks;
+            long sourceOffset = Math.Max(0L, clip.sourceOffsetTick);
+            long earliest = Math.Max(0L, clip.startTick - sourceOffset);
+            long latest = originalEnd - SongData.TicksPerSixteenth;
+            if (latest < earliest) return false;
+            newStart = Math.Max(earliest, Math.Min(latest, newStart));
+            long delta = newStart - clip.startTick;
+            if (delta == 0L) return false;
+
+            clip.startTick = newStart;
+            clip.lengthTicks = originalEnd - newStart;
+            clip.sourceOffsetTick = sourceOffset + delta;
+            TrackData owner;
+            FindClip(song, clip.id, out owner);
+            RenumberClips(owner);
+            // There is no song-length change: the clip's right edge is unchanged.
+            return true;
+        }
+
+        /// <summary>
         /// Extending an arrangement clip also materializes repeated steps in the
         /// editable content. The editor, MIDI export and playback then see the
         /// same full-length pattern rather than an invisible playback-only loop.
@@ -172,28 +200,32 @@ namespace ZPunk.DAW
                 // Content is typically one or more bars long. Repeat its actual
                 // stored pattern into the extra bars so every step is editable.
                 long period = Math.Max(SongData.TicksPerSixteenth, content.lengthTicks);
-                if (newLength > period)
+                // The visible clip can begin partway into its source after a
+                // left-edge trim, so grow the source through the visible END,
+                // not just through the visible duration.
+                long requiredSourceEnd = Math.Max(0L, clip.sourceOffsetTick) + newLength;
+                if (requiredSourceEnd > period)
                 {
                     if (content.notes != null)
                     {
                         var source = new List<NoteEvent>(content.notes);
-                        for (long offset = period; offset < newLength; offset += period)
+                        for (long offset = period; offset < requiredSourceEnd; offset += period)
                             foreach (var note in source)
                                 if (note != null && note.startTick >= 0 && note.startTick < period &&
-                                    offset + note.startTick < newLength)
+                                    offset + note.startTick < requiredSourceEnd)
                                     content.notes.Add(new NoteEvent {
                                         pitch = note.pitch, velocity = note.velocity,
                                         startTick = offset + note.startTick,
                                         durationTicks = Math.Max(1L, Math.Min(note.durationTicks,
-                                            newLength - offset - note.startTick)) });
+                                            requiredSourceEnd - offset - note.startTick)) });
                     }
                     if (content.drums != null)
                     {
                         var source = new List<DrumEvent>(content.drums);
-                        for (long offset = period; offset < newLength; offset += period)
+                        for (long offset = period; offset < requiredSourceEnd; offset += period)
                             foreach (var hit in source)
                                 if (hit != null && hit.startTick >= 0 && hit.startTick < period &&
-                                    offset + hit.startTick < newLength)
+                                    offset + hit.startTick < requiredSourceEnd)
                                     content.drums.Add(new DrumEvent {
                                         lane = hit.lane, velocity = hit.velocity,
                                         legacyVelocityTier = hit.legacyVelocityTier,
@@ -202,16 +234,16 @@ namespace ZPunk.DAW
                     if (content.chops != null)
                     {
                         var source = new List<ChopEvent>(content.chops);
-                        for (long offset = period; offset < newLength; offset += period)
+                        for (long offset = period; offset < requiredSourceEnd; offset += period)
                             foreach (var hit in source)
                                 if (hit != null && hit.startTick >= 0 && hit.startTick < period &&
-                                    offset + hit.startTick < newLength)
+                                    offset + hit.startTick < requiredSourceEnd)
                                     content.chops.Add(new ChopEvent {
                                         sliceId = hit.sliceId, velocity = hit.velocity,
                                         startTick = offset + hit.startTick });
                     }
                 }
-                content.lengthTicks = Math.Max(content.lengthTicks, newLength);
+                content.lengthTicks = Math.Max(content.lengthTicks, requiredSourceEnd);
                 // Repeated events are now explicit; avoid a second playback loop.
                 clip.loopEnabled = false;
             }

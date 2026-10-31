@@ -66,7 +66,8 @@ namespace ZPunk.DAW
 
                     // One segment per traversal of source content. Non-loop clips never wrap.
                     long cursor = clip.startTick;
-                    long sourceOffset = Mod(clip.sourceOffsetTick, contentLength);
+                    long sourceOffset = clip.loopEnabled ? Mod(clip.sourceOffsetTick, contentLength) :
+                        Math.Max(0L, Math.Min(clip.sourceOffsetTick, contentLength));
                     int segmentGuard = 0;
                     while (cursor < clipEnd && segmentGuard++ < 16384)
                     {
@@ -125,11 +126,17 @@ namespace ZPunk.DAW
             {
                 foreach (NoteEvent note in content.notes)
                 {
-                    if (note == null || note.pitch < 0 || note.pitch > 127 || note.durationTicks <= 0 ||
-                        note.startTick < sourceStart || note.startTick >= sourceEnd) continue;
-                    long tick = songStart + note.startTick - sourceStart;
-                    long end = tick + Math.Min(note.durationTicks, sourceEnd - note.startTick);
-                    if (end <= tick) continue;
+                    if (note == null || note.pitch < 0 || note.pitch > 127 || note.durationTicks <= 0)
+                        continue;
+                    // A note sustained across the clip's cropped LEFT boundary
+                    // is audible from the new clip start, without altering the
+                    // original note or generating additional sixteenth triggers.
+                    long noteEnd = SaturatingAdd(note.startTick, note.durationTicks);
+                    long visibleStart = Math.Max(note.startTick, sourceStart);
+                    long visibleEnd = Math.Min(noteEnd, sourceEnd);
+                    if (visibleEnd <= visibleStart) continue;
+                    long tick = songStart + visibleStart - sourceStart;
+                    long end = songStart + visibleEnd - sourceStart;
                     plan.midi.Add(New(tick, trackIndex, EventType.NoteOn, note.pitch, note.velocity));
                     plan.midi.Add(New(end, trackIndex, EventType.NoteOff, note.pitch, 0));
                 }

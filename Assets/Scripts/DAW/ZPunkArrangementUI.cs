@@ -72,7 +72,7 @@ namespace ZPunk.DAW
         private Label details;
         private Button loopSongButton;
         private Button snapButton;
-        private Label loopBarsLabel;
+        private Label loopBarsLabel, loopCaption;
         private VisualElement bpmRail, bpmFill, bpmThumb;
         private Label bpmValue;
         private float pixelsPerBar = 78f;
@@ -96,6 +96,8 @@ namespace ZPunk.DAW
             public long candidateLength;
             public Vector2 viewportOffset;
             public bool resize;
+            public bool trimStart;
+            public long originalSourceOffset;
             public bool moved;
             public int pointerId;
             public VisualElement rect;
@@ -412,7 +414,7 @@ namespace ZPunk.DAW
             loopRow.style.height = 39;
             loopRow.style.flexShrink = 0;
             loopRow.style.marginTop = 3;
-            var loopCaption = Label("LOOP BARS", 10, MutedText);
+            loopCaption = Label("LOOP BARS", 10, MutedText);
             loopCaption.style.flexGrow = 1;
             loopCaption.style.minWidth = 0;
             loopRow.Add(loopCaption);
@@ -423,7 +425,8 @@ namespace ZPunk.DAW
             decrease.style.paddingRight = 0;
             loopRow.Add(decrease);
             loopBarsLabel = Label("4", 12, Highlight);
-            loopBarsLabel.style.width = 46;
+            // Display active -> requested counts while a handoff is pending.
+            loopBarsLabel.style.width = 70;
             loopBarsLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
             loopRow.Add(loopBarsLabel);
             var increase = Button("+", () => AdjustLoopBars(1), 44);
@@ -486,7 +489,7 @@ namespace ZPunk.DAW
             details.style.marginBottom = 4 * uiScale;
             BuildArrangementFilters();
             arrangementPageScroll.Add(details);
-            hint = Label("Drag clips to arrange. Tap EDIT for drums and piano roll.", 10, MutedText);
+            hint = Label("Drag clip middle to move, left edge to crop, right edge to resize. Tap EDIT for notes.", 10, MutedText);
             hint.style.whiteSpace = WhiteSpace.Normal;
             hint.style.marginTop = 3 * uiScale;
             hint.style.marginBottom = 4 * uiScale;
@@ -920,13 +923,40 @@ namespace ZPunk.DAW
             if (song.arrangementLoopEnabled && !song.loopLengthCustom)
                 song.loopEndTick = AutomaticLoopEnd(song);
             if (loopSongButton != null) ZPunkUIIcons.SetCaption(loopSongButton, song.arrangementLoopEnabled ? "LOOP ON" : "LOOP OFF");
-            if (loopBarsLabel != null)
-            {
-                long loopTicks = song.loopLengthCustom ? song.loopEndTick : AutomaticLoopEnd(song);
-                loopBarsLabel.text = Math.Max(1L, (loopTicks + SongData.TicksPerBar4 - 1) / SongData.TicksPerBar4).ToString();
-            }
+            RefreshLoopBarsDisplay();
             RefreshTempoRail(song.bpm);
             RestoreTimelineOffset(previousOffset);
+        }
+
+        private void RefreshLoopBarsDisplay()
+        {
+            if (loopBarsLabel == null || song == null) return;
+            if (transport == null) transport = FindObjectOfType<ZPunkSongTransport>();
+            long ticks = song.loopLengthCustom ? song.loopEndTick : AutomaticLoopEnd(song);
+            long requestedBars = Math.Max(1L,
+                (Math.Max(1L, ticks) + SongData.TicksPerBar4 - 1) / SongData.TicksPerBar4);
+            if (transport != null && transport.IsPlaying && !transport.IsExportingOneShot)
+            {
+                if (transport.LoopChangePending)
+                {
+                    // The old playback sources are stopped; all tracks restart
+                    // from bar 1 on the next safe musical beat.
+                    loopBarsLabel.text = transport.ActiveLoopBars + "→" + transport.PendingLoopBars;
+                    if (loopCaption != null) loopCaption.text = "LOOP BARS (NEXT BEAT)";
+                    return;
+                }
+                if (transport.LoopChangeNeedsRestart)
+                {
+                    loopBarsLabel.text = transport.ActiveLoopBars.ToString();
+                    if (loopCaption != null) loopCaption.text = "LOOP BARS (RESTART)";
+                    return;
+                }
+                // The DSP transport, not the edited document, is authoritative.
+                loopBarsLabel.text = transport.ActiveLoopBars.ToString();
+            }
+            else
+                loopBarsLabel.text = requestedBars.ToString();
+            if (loopCaption != null) loopCaption.text = "LOOP BARS";
         }
 
         private void RestoreTimelineOffset(Vector2 offset)
@@ -971,6 +1001,17 @@ namespace ZPunk.DAW
             label.pickingMode = PickingMode.Ignore;
             rect.Add(label);
             AddClipMiniature(rect, clip, width);
+            // Match the right-edge trim grip with a left-edge crop grip.
+            // Neither grip captures input; the page-level gesture code owns it.
+            var cropGrip = new VisualElement();
+            cropGrip.style.position = Position.Absolute;
+            cropGrip.style.left = 0;
+            cropGrip.style.top = 2;
+            cropGrip.style.bottom = 2;
+            cropGrip.style.width = 9;
+            cropGrip.style.backgroundColor = new Color(.05f, .07f, .09f, .45f);
+            cropGrip.pickingMode = PickingMode.Ignore;
+            rect.Add(cropGrip);
             var resizeGrip = new VisualElement();
             resizeGrip.style.position = Position.Absolute;
             resizeGrip.style.right = 0;
@@ -1144,6 +1185,11 @@ namespace ZPunk.DAW
             selectedTrackIndex = FindTrackIndex(id);
             UpdateDetails();
             float x = rect.WorldToLocal(evt.position).x;
+            // For narrow clips, use proportional edge targets so the middle
+            // remains draggable instead of the two handles overlapping.
+            float edgeTarget = Mathf.Min(24f, Mathf.Max(5f, rect.layout.width * .32f));
+            bool cropLeft = x <= edgeTarget;
+            bool resizeRight = !cropLeft && x >= rect.layout.width - edgeTarget;
             gesture = new Gesture
             {
                 id = id,
@@ -1152,10 +1198,12 @@ namespace ZPunk.DAW
                 pointerId = evt.pointerId,
                 originalStart = clip.startTick,
                 originalLength = clip.lengthTicks,
+                originalSourceOffset = Math.Max(0L, clip.sourceOffsetTick),
                 candidateStart = clip.startTick,
                 candidateLength = clip.lengthTicks,
                 viewportOffset = timelineViewport != null ? timelineViewport.scrollOffset : Vector2.zero,
-                resize = x >= rect.layout.width - Mathf.Min(24f, rect.layout.width)
+                resize = resizeRight,
+                trimStart = cropLeft
             };
             // Capture on the page: unlike the clip itself, this target never
             // shrinks out from under the finger during a leftward resize.
@@ -1179,7 +1227,20 @@ namespace ZPunk.DAW
             if (Mathf.Abs(dx) > 3f) gesture.moved = true;
             if (!gesture.moved) return;
             long offset = ArrangementEditing.SnapDelta(PixelToTick(dx), snapQuantum);
-            if (gesture.resize)
+            if (gesture.trimStart)
+            {
+                // Right edge is anchored. Cropping right advances the source;
+                // dragging back left reveals earlier MIDI without creating notes.
+                long rightEdge = gesture.originalStart + gesture.originalLength;
+                long earliest = Math.Max(0L, gesture.originalStart - gesture.originalSourceOffset);
+                long latest = rightEdge - SongData.TicksPerSixteenth;
+                gesture.candidateStart = Math.Max(earliest,
+                    Math.Min(latest, gesture.originalStart + offset));
+                gesture.candidateLength = rightEdge - gesture.candidateStart;
+                gesture.rect.style.left = TickToPixel(gesture.candidateStart);
+                gesture.rect.style.width = Mathf.Max(8f, TickToPixel(gesture.candidateLength));
+            }
+            else if (gesture.resize)
             {
                 gesture.candidateLength = Math.Max(snapQuantum,
                     Math.Min(ArrangementEditing.MaxSongTicks - gesture.originalStart,
@@ -1216,7 +1277,8 @@ namespace ZPunk.DAW
                 var current = ArrangementEditing.FindClip(song, drag.id, out _);
                 if (current != null)
                 {
-                    if (drag.resize) ArrangementEditing.Resize(song, current, drag.candidateLength);
+                    if (drag.trimStart) ArrangementEditing.TrimStart(song, current, drag.candidateStart);
+                    else if (drag.resize) ArrangementEditing.Resize(song, current, drag.candidateLength);
                     else ArrangementEditing.Move(song, current, drag.candidateStart);
                 }
                 UpdateAfterChange();
@@ -1264,31 +1326,44 @@ namespace ZPunk.DAW
             var content = ArrangementEditing.FindContent(song, clip.contentId);
             if (content == null || content.lengthTicks <= 0) return;
             long contentLength = content.lengthTicks;
-            long maxTick = clip.lengthTicks;
+            long visibleLength = clip.lengthTicks;
+            if (visibleLength <= 0) return;
+            long sourceOffset = clip.loopEnabled
+                ? ((clip.sourceOffsetTick % contentLength) + contentLength) % contentLength
+                : Math.Max(0L, Math.Min(clip.sourceOffsetTick, contentLength));
+            long cursor = 0L;
             int budget = 96;
-            long repeats = clip.loopEnabled ? Math.Min(32L, (maxTick + contentLength - 1L) / contentLength) : 1L;
-            // Limit thumbnail visual children for extremely long clips.
-            for (long repeat = 0; repeat < repeats && budget > 0; repeat++)
+            int guard = 0;
+            // Mirror SongEventPlanner's source segments so the miniature always
+            // represents the audible section after a left-edge crop, including
+            // repeats and notes that cross the crop boundary.
+            while (cursor < visibleLength && budget > 0 && guard++ < 16384)
             {
-                long baseTick = repeat * contentLength;
+                long segmentEnd = sourceOffset + Math.Min(contentLength - sourceOffset, visibleLength - cursor);
+                if (segmentEnd <= sourceOffset) break;
                 if (content.drums != null)
                     foreach (var hit in content.drums)
                     {
                         if (hit == null || budget <= 0) break;
-                        long tick = baseTick + hit.startTick - clip.sourceOffsetTick;
-                        if (tick < 0 || tick >= maxTick) continue;
-                        float x = 3f + (float)tick / maxTick * (width - 6f);
+                        if (hit.startTick < sourceOffset || hit.startTick >= segmentEnd) continue;
+                        long tick = cursor + hit.startTick - sourceOffset;
+                        float x = 3f + (float)tick / visibleLength * (width - 6f);
                         AddMiniMark(rect, x, 18f + (hit.lane % 4) * 4f, 2.5f, 3f);
                         budget--;
                     }
                 if (content.notes != null)
                     foreach (var note in content.notes)
                     {
-                        if (note == null || budget <= 0) break;
-                        long tick = baseTick + note.startTick - clip.sourceOffsetTick;
-                        if (tick < 0 || tick >= maxTick) continue;
-                        float x = 3f + (float)tick / maxTick * (width - 6f);
-                        float length = Mathf.Max(3f, (float)Math.Min(note.durationTicks, maxTick - tick) / maxTick * (width - 6f));
+                        if (budget <= 0) break;
+                        if (note == null || note.durationTicks <= 0) continue;
+                        long noteEnd = note.durationTicks > long.MaxValue - note.startTick
+                            ? long.MaxValue : note.startTick + note.durationTicks;
+                        long overlapStart = Math.Max(note.startTick, sourceOffset);
+                        long overlapEnd = Math.Min(noteEnd, segmentEnd);
+                        if (overlapEnd <= overlapStart) continue;
+                        long tick = cursor + overlapStart - sourceOffset;
+                        float x = 3f + (float)tick / visibleLength * (width - 6f);
+                        float length = Mathf.Max(3f, (float)(overlapEnd - overlapStart) / visibleLength * (width - 6f));
                         AddMiniMark(rect, x, 18f + (note.pitch % 5) * 3f, length, 2.7f);
                         budget--;
                     }
@@ -1296,12 +1371,15 @@ namespace ZPunk.DAW
                     foreach (var chop in content.chops)
                     {
                         if (chop == null || budget <= 0) break;
-                        long tick = baseTick + chop.startTick - clip.sourceOffsetTick;
-                        if (tick < 0 || tick >= maxTick) continue;
-                        float x = 3f + (float)tick / maxTick * (width - 6f);
+                        if (chop.startTick < sourceOffset || chop.startTick >= segmentEnd) continue;
+                        long tick = cursor + chop.startTick - sourceOffset;
+                        float x = 3f + (float)tick / visibleLength * (width - 6f);
                         AddMiniMark(rect, x, 20f + (chop.sliceId % 3) * 4f, 3f, 5f);
                         budget--;
                     }
+                cursor += segmentEnd - sourceOffset;
+                if (!clip.loopEnabled) break;
+                sourceOffset = 0L;
             }
         }
 
@@ -1473,7 +1551,14 @@ namespace ZPunk.DAW
             // last portion contains deliberate silence rather than clips.
             song.lengthTicks = Math.Max(song.lengthTicks, song.loopEndTick);
             UpdateAfterChange();
-            SetHint("Loop length: " + bars + " bars  /  LIVE");
+            RefreshLoopBarsDisplay();
+            if (transport != null && transport.LoopChangePending)
+                SetHint("Loop " + transport.ActiveLoopBars + " → " +
+                    transport.PendingLoopBars + " bars / restarts from bar 1 on next beat");
+            else if (transport != null && transport.LoopChangeNeedsRestart)
+                SetHint("Loop " + bars + " saved / STOP then PLAY to apply");
+            else
+                SetHint("Loop length: " + bars + " bars  /  LIVE");
         }
 
         private void ToggleSongLoop()
@@ -1640,6 +1725,7 @@ namespace ZPunk.DAW
             if (projects != null && (projects.CurrentSlot != projectSlot ||
                 (ownsSong && !ReferenceEquals(projects.CurrentSong, song)))) { OnShown(); return; }
             RefreshPlayhead();
+            RefreshLoopBarsDisplay();
             AutoScrollPlayheadDrag();
             FollowArrangementPlayhead();
             // Defend against ScrollView touch inertia during a captured clip gesture.

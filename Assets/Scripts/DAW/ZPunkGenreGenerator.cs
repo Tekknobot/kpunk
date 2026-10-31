@@ -35,7 +35,7 @@ namespace ZPunk.DAW
             string[][] d = {
                 new[] { "Weighted backbeat, broken kick and laid-back hats", "Spacious drums with ghosts and understated swing", "Off-grid-feeling syncopation with answering hits" },
                 new[] { "Four-to-floor, offbeat hats and rolling bass", "Warm, open spaces and restrained chord movement", "Jackin accents, swung-feel hats and chord stabs", "90s Eurodance/rave hooks with call-and-response, offbeat pickups and bold chord answers" },
-                new[] { "Driving sequencer pulse and evolving punctuation", "Sparse hypnotic sixteenth-note cells", "Hard syncopated percussion and clipped motifs" },
+                new[] { "Relentless sixteenth-note sequencers, rolling hats and measured turnarounds", "Stripped four-to-floor groove, repeating offbeat cells and negative space", "Pounding kicks, metallic cross-rhythms and abrasive clipped percussion" },
                 new[] { "Break-style ghost snares and rolling kick variations", "Denser jungle accents with restless hat patterns", "Half-time backbeat with spacious, heavy hits" },
                 new[] { "Disco pulse, tight claps and bright offbeat percussion", "Dry kick/snare pocket, ghost hits and loose syncopation", "Electro-funk accents, crisp hats and syncopated kicks" },
                 new[] { "Four-on-the-floor with clipped filtered disco accents", "Tight disco drums with playful offbeat hats", "Bouncy French-touch percussion and small fills" }
@@ -47,7 +47,7 @@ namespace ZPunk.DAW
             string[][] d = {
                 new[] { "Lazy low-end pocket with octave replies", "Sparse soulful bass and muted pickups", "Broken sixteenth-note bass with syncopated fifths" },
                 new[] { "Disco-style offbeat bounce and octave movement", "Warm sustained roots with restrained funk accents", "Tight jackin sixteenths and chromatic turnarounds", "Classic 90s house bass bounce with octave accents" },
-                new[] { "Hypnotic sixteenth-note pulses with octave accents", "Sparse pitched cells on syncopated sixteenths", "Clipped industrial sixteenths and dark fifths" },
+                new[] { "Driving 16th-note low-end with octave accents and a repeating hook", "Lean, hypnotic low notes with deliberate offbeat silence", "Aggressive short-note ostinatos, root/fifth impacts and rolling pickups" },
                 new[] { "Broken low-end call and response", "Restless bass movement with octave accents", "Heavy spaced roots with sharp pickups" },
                 new[] { "Disco-funk octave bounce and short plucked notes", "Deep pocket with sparse fifths and rhythmic silence", "Electro-funk sixteenths, octave pops and passing tones" },
                 new[] { "Filtered repetitive octave bass and short pickups", "Disco-root bounce with fifths and sixteenth-note silence", "Rubbery syncopated French-touch bass with turnarounds" }
@@ -59,7 +59,7 @@ namespace ZPunk.DAW
             string[][] d = {
                 new[] { "Soulful seventh/ninth voicings and late chord replies", "Slow-moving warm jazz colors and open space", "Short, syncopated extended chord punches" },
                 new[] { "Seventh chord offbeats with smooth voice leading", "Long deep-house voicings with warm extensions", "Clipped piano-style sevenths and quick answers", "90s rave piano/organ stabs, syncopated eighth-note punches and anthemic chord changes" },
-                new[] { "Restrained dark triads with machine-like repeats", "Open fifths, suspended intervals and plenty of air", "Short, tense minor-flavored harmonic hits" },
+                new[] { "Short power-stabs beneath a fast sixteenth-note sequence", "Sparse two-note stabs and long, unobtrusive drones", "Clipped minor-power stabs and dark open-fifth textures" },
                 new[] { "Tight soulful stabs between snare accents", "Chopped voicings with quick delayed replies", "Sustained seventh colors over a half-time pulse" },
                 new[] { "Short disco sevenths and ninths with rhythmic replies", "Sparse, warm ninth voicings and tightly muted stabs", "Bright clipped sevenths with synth-funk syncopation" },
                 new[] { "Filtered disco sevenths and clipped offbeat stabs", "Classic French-touch piano chords with rhythmic responses", "Short, bright 90s-influenced house chord punches" }
@@ -424,17 +424,10 @@ namespace ZPunk.DAW
             }
             else if (g == 2)
             {
-                Hits(c, bar, 0, new[] { 0, 4, 8, 12 }, 121, r);
-                if (s != 1) Hits(c, bar, 1, new[] { 4, 12 }, 98, r, .9);
-                Hits(c, bar, 4, new[] { 2, 6, 10, 14 }, 92, r, s == 1 ? .55 : .95);
-                int[] hats = s == 1 ? new[] { 0, 4, 8, 12 } :
-                             s == 2 ? new[] { 0, 1, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15 } :
-                                      new[] { 0, 2, 4, 6, 8, 10, 12, 14 };
-                foreach (int p in hats) Drum(c, bar, p, 3, p % 4 == 0 ? 86 : 57, r, s == 1 ? .87 : .95);
-                if (s == 2) Hits(c, bar, 6, turn ? new[] { 3, 7, 11, 15 } : new[] { 3, 11 }, 64, r, .82);
-                if (family == 2 && s != 1) Drum(c, bar, 15, 7, 68, r, .6);
-                if (family == 1 && s == 2) Drum(c, bar, 7, 0, 80, r, .6);
-                if (family == 3) Drum(c, bar, 15, 6, 62, r, .65);
+                GenerateTechnoDrums(c, s, bar, bars, family, tempoBand, r);
+                // Techno has its own restrained, style-dependent phrase ending.
+                // The generic fill would erase MINIMAL's intentional space.
+                return;
             }
             else if (g == 3)
             {
@@ -540,6 +533,286 @@ namespace ZPunk.DAW
             }
         }
 
+        // TECHNO GROOVES: each style has its own rhythmic relationship between
+        // kick, bass and pitched motif. Drum lanes are the existing eight ZPUNK lanes.
+        // No new drum choke behaviour, transport changes or runtime dependencies.
+        private static void GenerateTechnoDrums(ClipContentData c, int style, int bar,
+                                               int bars, int family, int tempoBand, Random r)
+        {
+            bool turn = (bar & 1) != 0;
+            bool last = bars > 1 && bar == bars - 1;
+            Hits(c, bar, 0, new[] { 0, 4, 8, 12 }, style == 1 ? 113 : 120, r);
+            if (style == 1) // MINIMAL: repetition, gaps, micro-percussion and restraint.
+            {
+                // The shuffled little tick is not a second full snare layer.
+                Drum(c, bar, turn ? 12 : 4, 1, 74, r, .68);
+                Hits(c, bar, 4, new[] { 2, 6, 10, 14 }, 68, r, .72);
+                Hits(c, bar, 3, family % 2 == 0 ? new[] { 3, 11 } : new[] { 6, 14 }, 54, r, .75);
+                Drum(c, bar, turn ? 11 : 7, 6, 54, r, .78);
+                if (family == 2 && turn) Drum(c, bar, 15, 3, 46, r, .65);
+                if (last && family == 3) Drum(c, bar, 15, 6, 49, r, .8);
+            }
+            else if (style == 2) // INDUSTRIAL: weight + 3/3/2 metallic cross-rhythm.
+            {
+                Hits(c, bar, 1, new[] { 4, 12 }, 109, r);
+                Drum(c, bar, 12, 2, 78, r, .75);
+                Hits(c, bar, 4, new[] { 2, 6, 10, 14 }, 89, r, .88);
+                int[] metal = family % 2 == 0 ? new[] { 3, 6, 11, 14 } : new[] { 2, 5, 10, 13 };
+                Hits(c, bar, 6, metal, 67, r, .82);
+                Hits(c, bar, 3, new[] { 0, 2, 3, 6, 8, 10, 11, 14 }, 63, r, .86);
+                Drum(c, bar, turn ? 15 : 7, 0, 78, r, .75);
+                if (last) { Drum(c, bar, 15, 6, 83, r, .9); Drum(c, bar, 14, 3, 75, r, .78); }
+                if (family == 3 && turn) Drum(c, bar, 15, 7, 65, r, .5);
+            }
+            else // DRIVING: retain a constant rolling pulse and mostly 16th-note motion.
+            {
+                Hits(c, bar, 1, new[] { 4, 12 }, 101, r, .93);
+                Hits(c, bar, 4, new[] { 2, 6, 10, 14 }, 91, r, .96);
+                Hits(c, bar, 3, new[] { 0, 2, 4, 6, 8, 10, 12, 14 }, 70, r, .94);
+                Hits(c, bar, 3, turn ? new[] { 3, 7, 11, 15 } : new[] { 3, 11, 15 },
+                     52, r, tempoBand >= 1 ? .84 : .69);
+                Drum(c, bar, turn ? 11 : 7, 6, 55, r, .67);
+                if (last && family % 2 == 0) Drum(c, bar, 15, 6, 67, r, .84);
+            }
+        }
+
+        // Each candidate has an A / A' / B / A'' relationship, and one harmonic
+        // plan shared by BASS, SYNTH and PADS (including user-selected progressions).
+        // All times are integer sixteenth subdivisions, not half-note pulses.
+        private static void ComposeTechnoCandidate(ClipContentData c, TrackKind kind,
+                                                  int style, int bars, int key,
+                                                  ZPunkChordLibrary.Chord[] chords,
+                                                  bool synthChords, int tempoBand,
+                                                  int motif, int rhythm, int character,
+                                                  Random r)
+        {
+            for (int bar = 0; bar < bars; bar++)
+            {
+                var chord = chords[bar];
+                var next = chords[(bar + 1) % bars];
+                if (kind == TrackKind.Bass)
+                    ComposeTechnoBass(c, style, bar, bars, key, chord, next,
+                                     motif, rhythm, character, tempoBand, r);
+                else if (kind == TrackKind.Pads)
+                    ComposeTechnoTexture(c, style, bar, bars, key, chords,
+                                         character, r);
+                else if (synthChords)
+                    ComposeTechnoStabs(c, style, bar, bars, key, chord,
+                                      rhythm, character, r);
+                else
+                    ComposeTechnoLead(c, style, bar, bars, key, chord,
+                                      motif, rhythm, character, tempoBand, r);
+            }
+        }
+
+        // Four adjacent rhythmic cells with a stable 1st-bar identity. A variation
+        // changes articulation, an occasional pickup, or one answer -- not the
+        // whole phrase every bar. In MINIMAL this is deliberately *very* stable.
+        private static int[] TechnoSteps(int[][] patterns, int style, int bar,
+                                         int bars, int rhythm, int character,
+                                         int tempoBand, bool bass)
+        {
+            int choice = Mod(rhythm + (style == 1 ? 0 : (bar == 2 ? 1 : 0)), patterns.Length);
+            var steps = new List<int>(patterns[choice]);
+            if (style == 1)
+            {
+                // One deliberate edit in the final bar; preserve the hypnotic loop.
+                if (bars > 1 && bar == bars - 1 && character % 2 == 0)
+                    InsertStep(steps, bass ? 15 : 14, 1);
+            }
+            else if (style == 2)
+            {
+                if (bar % 2 == 1 && character % 2 == 0)
+                    InsertStep(steps, bass ? 14 : 15, 0);
+                if (bars > 1 && bar == bars - 1 && tempoBand > 0)
+                    InsertStep(steps, bass ? 15 : 13, 0);
+            }
+            else // Driving: maintain an active 16th-note sequencer at *all* tempos.
+            {
+                if (tempoBand >= 0) InsertStep(steps, (bar & 1) == 0 ? 11 : 13, 0);
+                if (bars > 1 && bar == bars - 1)
+                    InsertStep(steps, bass ? 15 : 14, 0);
+            }
+            steps.Sort();
+            return steps.ToArray();
+        }
+
+        private static readonly int[][] TechnoMinimalBass = {
+            new[] { 3, 7, 11, 15 }, new[] { 2, 6, 11, 14 },
+            new[] { 0, 7, 10, 14 }, new[] { 3, 6, 10, 15 }
+        };
+        private static readonly int[][] TechnoIndustrialBass = {
+            new[] { 0, 3, 6, 8, 11, 14 }, new[] { 0, 2, 5, 8, 11, 13, 15 },
+            new[] { 0, 3, 5, 8, 10, 13, 15 }, new[] { 0, 1, 4, 7, 8, 11, 14 }
+        };
+        private static readonly int[][] TechnoDrivingBass = {
+            new[] { 0, 2, 3, 5, 6, 8, 10, 11, 13, 15 },
+            new[] { 0, 1, 3, 4, 6, 7, 9, 11, 14, 15 },
+            new[] { 0, 2, 4, 5, 8, 9, 11, 12, 14, 15 },
+            new[] { 0, 2, 3, 5, 7, 8, 10, 11, 13, 15 }
+        };
+        private static readonly int[][] TechnoMinimalLead = {
+            new[] { 3, 11 }, new[] { 2, 7, 14 },
+            new[] { 5, 13 }, new[] { 3, 10, 14 }
+        };
+        private static readonly int[][] TechnoIndustrialLead = {
+            new[] { 0, 3, 6, 10, 13 }, new[] { 2, 5, 8, 11, 14 },
+            new[] { 0, 3, 7, 10, 15 }, new[] { 1, 4, 7, 11, 14 }
+        };
+        private static readonly int[][] TechnoDrivingLead = {
+            new[] { 0, 2, 3, 5, 7, 8, 10, 13, 15 },
+            new[] { 0, 1, 3, 4, 7, 9, 11, 14 },
+            new[] { 0, 3, 4, 6, 7, 10, 12, 14, 15 },
+            new[] { 0, 2, 4, 5, 8, 9, 11, 13, 15 }
+        };
+
+        private static void ComposeTechnoBass(ClipContentData c, int style, int bar,
+                                              int bars, int key,
+                                              ZPunkChordLibrary.Chord chord,
+                                              ZPunkChordLibrary.Chord next, int motif,
+                                              int rhythm, int character, int tempoBand,
+                                              Random r)
+        {
+            int[][] vocabulary = style == 1 ? TechnoMinimalBass :
+                                 style == 2 ? TechnoIndustrialBass : TechnoDrivingBass;
+            int[] steps = TechnoSteps(vocabulary, style, bar, bars, rhythm,
+                                      character, tempoBand, true);
+            int root = BassRootFromSemitone(key + chord.RootSemitones);
+            int nextRoot = BassRootFromSemitone(key + next.RootSemitones);
+            int fifth = chord.ToneNearest(7, 7);
+            int pitchChange = motif % 4;
+            for (int i = 0; i < steps.Length; i++)
+            {
+                int step = steps[i];
+                int pitch = root;
+                if (style == 1)
+                {
+                    // Minimal is a near single-pitch ostinato. One octave note
+                    // punctuates, rather than rewriting, the repeating cell.
+                    if (i == steps.Length - 1 && (bar == bars - 1 || pitchChange == 2))
+                        pitch = root + (pitchChange == 1 ? fifth : 12);
+                }
+                else if (style == 2)
+                {
+                    // Root/fifth weight, octave blows on the cross-beat; don't
+                    // scatter random off-key chromatic notes through the loop.
+                    if ((i + pitchChange) % 5 == 3) pitch = root + fifth;
+                    else if ((i + motif) % 4 == 1) pitch = root + 12;
+                }
+                else // DRIVING: short low 16ths with purposeful octave accents.
+                {
+                    if ((i + pitchChange) % 5 == 3) pitch = root + 12;
+                    else if ((i + motif) % 8 == 6) pitch = root + fifth;
+                }
+                if (i == steps.Length - 1 && step >= 13 && bar == bars - 1 &&
+                    next.RootSemitones != chord.RootSemitones && style != 1)
+                    pitch = BassApproach(root, nextRoot);
+                int length = style == 1 && (i + motif) % 3 == 0 ? 2 : 1;
+                int nextStep = i + 1 < steps.Length ? steps[i + 1] : 16;
+                length = Math.Min(length, Math.Max(1, nextStep - step));
+                int velocity = style == 1 ? (i == 0 ? 103 : step % 4 == 0 ? 95 : 84) :
+                               style == 2 ? (step % 4 == 0 ? 118 : step % 2 == 1 ? 103 : 91) :
+                                            (step % 4 == 0 ? 112 : step % 2 == 1 ? 91 : 99);
+                AddMidi(c, bar, step, length, Clamp(pitch, 35, 60), velocity, r);
+            }
+        }
+
+        private static void ComposeTechnoLead(ClipContentData c, int style, int bar,
+                                              int bars, int key,
+                                              ZPunkChordLibrary.Chord chord,
+                                              int motif, int rhythm, int character,
+                                              int tempoBand, Random r)
+        {
+            int[][] vocabulary = style == 1 ? TechnoMinimalLead :
+                                 style == 2 ? TechnoIndustrialLead : TechnoDrivingLead;
+            int[] steps = TechnoSteps(vocabulary, style, bar, bars, rhythm,
+                                      character, tempoBand, false);
+            int tonic = FoldPitch(60 + key + chord.RootSemitones, 66, 57, 75);
+            int fifth = chord.ToneNearest(7, 7);
+            int third = chord.ToneNearest(3, 4);
+            for (int i = 0; i < steps.Length; i++)
+            {
+                int step = steps[i];
+                int pitch = tonic;
+                if (style == 1)
+                {
+                    // Repeat a small one- or two-note cell; answer at phrase end.
+                    if (i == steps.Length - 1 && (character + rhythm) % 3 == 0)
+                        pitch += fifth;
+                }
+                else if (style == 2)
+                {
+                    if ((i + motif) % 5 == 2) pitch += fifth;
+                    else if ((i + motif) % 5 == 4) pitch += third;
+                }
+                else // DRIVING: keep the 16th grid and a recognisable octave cell.
+                {
+                    if ((i + motif) % 5 == 2) pitch += 12;
+                    else if ((i + motif) % 5 == 4) pitch += fifth;
+                }
+                pitch = FoldPitch(pitch, tonic + (style == 0 ? 3 : 0), 57, 82);
+                int length = style == 1 && i == 0 && character == 4 ? 2 : 1;
+                int nextStep = i + 1 < steps.Length ? steps[i + 1] : 16;
+                length = Math.Min(length, Math.Max(1, nextStep - step));
+                int velocity = style == 1 ? 85 :
+                               style == 2 ? (step % 4 == 0 ? 111 : 94) :
+                                            (step % 4 == 0 ? 106 : 88);
+                if (style == 1 && i == steps.Length - 1) velocity += 7;
+                AddMidi(c, bar, step, length, pitch, velocity, r);
+            }
+        }
+
+        private static void ComposeTechnoStabs(ClipContentData c, int style, int bar,
+                                               int bars, int key,
+                                               ZPunkChordLibrary.Chord chord,
+                                               int rhythm, int character, Random r)
+        {
+            int root = FoldPitch(60 + key + chord.RootSemitones, 64, 54, 72);
+            // Every note belongs to the selected chord even in INDUSTRIAL.
+            int color = style == 2 ? chord.ToneNearest(3, 4) : chord.ToneNearest(7, 7);
+            int[] steps = style == 1 ? (rhythm % 2 == 0 ? new[] { 3 } : new[] { 11 }) :
+                          style == 2 ? (rhythm % 2 == 0 ? new[] { 3, 10, 15 } : new[] { 2, 7, 13 }) :
+                                       (rhythm % 2 == 0 ? new[] { 2, 6, 14 } : new[] { 3, 10, 14 });
+            for (int i = 0; i < steps.Length; i++)
+            {
+                int step = steps[i];
+                int length = style == 1 ? 2 : 1;
+                int velocity = style == 1 ? 74 : style == 2 ? 106 : 91;
+                AddMidi(c, bar, step, length, root, velocity, r);
+                if (style != 1 || character % 2 == 0)
+                    AddMidi(c, bar, step, length,
+                            FoldPitch(root + color, root + 7, 55, 82), velocity - 7, r);
+            }
+        }
+
+        private static void ComposeTechnoTexture(ClipContentData c, int style, int bar,
+                                                 int bars, int key,
+                                                 ZPunkChordLibrary.Chord[] chords,
+                                                 int character, Random r)
+        {
+            var chord = chords[bar];
+            bool previousHeld = style == 1 && bar % 2 == 1 &&
+                                SameChord(chords[bar - 1], chord);
+            if (previousHeld) return;
+            bool hold = style == 1 && bar + 1 < bars && bar % 2 == 0 &&
+                        SameChord(chord, chords[bar + 1]);
+            int root = FoldPitch(48 + key + chord.RootSemitones, 55, 49, 65);
+            int fifth = chord.ToneNearest(7, 7);
+            int length = hold ? 32 : style == 2 ? 12 : 16;
+            int velocity = style == 1 ? 54 : style == 2 ? 65 : 61;
+            AddMidi(c, bar, 0, length, root, velocity, r);
+            // Open fifths and octaves support hard sequencers without competing
+            // with them; the PADS track must not turn into a bright chord solo.
+            AddMidi(c, bar, 0, length, FoldPitch(root + fifth, 64, 56, 78),
+                    velocity - 8, r);
+            if (style == 2 && character % 3 == 0)
+            {
+                int third = chord.ToneNearest(3, 4);
+                AddMidi(c, bar, 10, 5, FoldPitch(root + third + 12, 68, 60, 80),
+                        43, r);
+            }
+        }
+
         // 2.2.0: A single harmonic plan feeds three different MIDI composers. The plan is
         // independent of track kind and variation, so separately generated tracks agree.
         private static int[] MakeHarmonyPlan(int bars, int g, bool minor, int choice,
@@ -606,6 +879,15 @@ namespace ZPunk.DAW
             int character = r.Next(0, 5);
             int[] previousVoicing = null;
             int previousMelodyPitch = 68 + Mod(key, 5);
+            // Techno gets independent per-style composers. In particular, don't
+            // turn DRIVING into a sparse half-note pattern while adjusting MINIMAL.
+            if (g == 2)
+            {
+                ComposeTechnoCandidate(clip, kind, s, bars, key, chordPlan,
+                                      synthChords, tempoBand, motif, rhythm,
+                                      character, r);
+                return;
+            }
             for (int bar = 0; bar < bars; bar++)
             {
                 int degree = harmony[bar];
@@ -1139,7 +1421,7 @@ namespace ZPunk.DAW
             score -= Math.Abs(eventsPerBar - target) * (kind == TrackKind.Pads ? 1.5 : 3.5);
             if (!harmonic)
             {
-                double allowed = g == 2 ? .7 : .43;
+                double allowed = g == 2 ? (s == 1 ? .94 : s == 2 ? .80 : .76) : .43;
                 score -= Math.Max(0, repeatCount - sorted.Count * allowed) * 4;
                 score -= jumps * (g == 3 ? 1.5 : 3);
                 if (pitches.Count <= 2 && g != 2 && sorted.Count > 5) score -= 9;

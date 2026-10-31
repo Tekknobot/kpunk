@@ -72,6 +72,8 @@ namespace ZPunk.DAW
             public int track;
             public long rangeStart, rangeEnd;
             public double startBeat;
+            public bool looping;
+            public bool finished;
             public readonly List<NativeNoteEntry> notes = new List<NativeNoteEntry>();
         }
 
@@ -189,6 +191,20 @@ namespace ZPunk.DAW
         public bool IsExportingOneShot => exportingOneShot;
         public long CurrentTick { get; private set; }
         public double SongAnchorDsp => anchorDsp;
+        // LOOP +/- is implemented as one quantized restart, not an overlapping
+        // native sequencer handoff. Until the next beat the old length remains
+        // displayed; the newly scheduled run owns all five tracks exclusively.
+        private bool quantizedLoopRestartPending;
+        private double quantizedLoopRestartDsp;
+        private int previousLoopBarsDuringRestart;
+        public int ActiveLoopBars => quantizedLoopRestartPending ?
+            previousLoopBarsDuringRestart : (int)Math.Max(1L,
+            (Math.Max(1L, loopEnd - loopStart) + SongData.TicksPerBar4 - 1) / SongData.TicksPerBar4);
+        public bool LoopChangePending => playing && quantizedLoopRestartPending;
+        public int PendingLoopBars => (int)Math.Max(1L,
+            (Math.Max(1L, loopEnd - loopStart) + SongData.TicksPerBar4 - 1) / SongData.TicksPerBar4);
+        // Kept for UI compatibility. The new path always schedules a restart.
+        public bool LoopChangeNeedsRestart => false;
 
         private void Resolve()
         {
@@ -229,8 +245,34 @@ namespace ZPunk.DAW
                 int c = a.track.CompareTo(b.track);
                 if (c != 0) return c;
                 c = a.pitch.CompareTo(b.pitch);
-                return c != 0 ? c : a.start.CompareTo(b.start);
+                if (c != 0) return c;
+                c = a.start.CompareTo(b.start);
+                return c != 0 ? c : a.end.CompareTo(b.end);
             });
+            // Two overlapping arrangement clips may reference the SAME MIDI
+            // content at the SAME tick. Do not play two identical NoteOns into
+            // one monophonic Bass channel. This only deduplicates audio events;
+            // it never edits clips, generated MIDI or the saved song document.
+            int duplicateNotes = 0;
+            for (int i = 1; i < spans.Count; )
+            {
+                MidiSpan a = spans[i - 1], b = spans[i];
+                if (a.track == b.track && a.pitch == b.pitch &&
+                    a.start == b.start && a.end == b.end)
+                {
+                    if (b.velocity > a.velocity)
+                    {
+                        a.velocity = b.velocity;
+                        spans[i - 1] = a;
+                    }
+                    spans.RemoveAt(i);
+                    duplicateNotes++;
+                }
+                else i++;
+            }
+            if (duplicateNotes > 0)
+                Debug.LogWarning($"[ZPUNK MIDI] Suppressed {duplicateNotes} duplicate native " +
+                    "note triggers from overlapping clips (song data unchanged).");
             // Native Helm pitch gates cannot represent multiple independently held
             // voices of the exact same pitch/channel. End the preceding voice on
             // the next retrigger, without affecting other simultaneous pitches.
@@ -297,7 +339,8 @@ namespace ZPunk.DAW
                 nativeMidiTracks[seq] = track;
                 nativeMidiEnabled[seq] = false;
                 var state = new NativeMidiSegment { sequencer = seq, track = track,
-                    rangeStart = rangeStart, rangeEnd = rangeEnd, startBeat = startBeat };
+                    rangeStart = rangeStart, rangeEnd = rangeEnd,
+                    startBeat = startBeat, looping = looping };
                 nativeMidiSegments.Add(state);
                 AudioHelm.Native.EnableSequencer(seq, false);
                 AudioHelm.Native.ChangeSequencerChannel(seq, controllerEntry.Value.channel);
@@ -321,7 +364,7 @@ namespace ZPunk.DAW
         /// This fixes the full-instrument AllNotesOff/restart gap previously
         /// triggered by every piano-roll tap or drag.
         /// </summary>
-        private bool UpdateNativeMidiInPlace(long playheadTick)
+        private bool UpdateNativeMidiInPlace(long playheadTick, bool retainChangedNoteEnds = false)
         {
             if (!nativeMidiActive || nativeMidiSegments.Count == 0) return false;
             try
@@ -339,20 +382,56 @@ namespace ZPunk.DAW
                         queue.Enqueue(note);
                     }
                     var keep = new List<NativeNoteEntry>(desired.Count);
+                    var reused = new HashSet<NativeNoteEntry>();
                     foreach (var spec in desired)
                     {
-                        if (existing.TryGetValue(spec.key, out var matches) && matches.Count > 0)
+                        NativeNoteEntry old = null;
+                        if (existing.TryGetValue(spec.key, out var matches))
+                            while (matches.Count > 0 && old == null)
+                            {
+                                var candidate = matches.Dequeue();
+                                if (!reused.Contains(candidate)) old = candidate;
+                            }
+                        if (old == null && retainChangedNoteEnds)
                         {
-                            var old = matches.Dequeue();
+                            // LOOP +/- can change a note's truncated END without
+                            // changing the actual note-on. Edit that native note
+                            // rather than deleting it and killing a held voice.
+                            foreach (var candidate in segment.notes)
+                                if (!reused.Contains(candidate) &&
+                                    candidate.key.pitch == spec.key.pitch &&
+                                    candidate.key.start == spec.key.start)
+                                { old = candidate; break; }
+                        }
+                        if (old != null)
+                        {
+                            reused.Add(old);
+                            if (old.from != spec.from)
+                            {
+                                IntPtr changed = AudioHelm.Native.ChangeNoteStart(
+                                    segment.sequencer, old.handle, spec.from);
+                                if (changed == IntPtr.Zero)
+                                    throw new InvalidOperationException("Helm live note start update failed.");
+                                old.handle = changed;
+                            }
+                            if (old.to != spec.to)
+                            {
+                                IntPtr changed = AudioHelm.Native.ChangeNoteEnd(
+                                    segment.sequencer, old.handle, spec.to);
+                                if (changed == IntPtr.Zero)
+                                    throw new InvalidOperationException("Helm live note end update failed.");
+                                old.handle = changed;
+                            }
                             if (old.velocity != spec.velocity)
                             {
-                                // Only mutate the selected note's velocity;
-                                // the held note itself is not re-triggered.
                                 IntPtr changed = AudioHelm.Native.ChangeNoteVelocity(old.handle,
                                     Mathf.Clamp01(spec.velocity / 127f));
                                 if (changed != IntPtr.Zero) old.handle = changed;
-                                old.velocity = spec.velocity;
                             }
+                            old.key = spec.key;
+                            old.from = spec.from;
+                            old.to = spec.to;
+                            old.velocity = spec.velocity;
                             keep.Add(old);
                         }
                         else
@@ -364,21 +443,17 @@ namespace ZPunk.DAW
                             keep.Add(spec);
                         }
                     }
-                    foreach (var queue in existing.Values)
+                    foreach (var old in segment.notes)
                     {
-                        while (queue.Count > 0)
-                        {
-                            var old = queue.Dequeue();
-                            AudioHelm.Native.DeleteNote(segment.sequencer, old.handle);
-                            // Deleting a held note can remove its scheduled off.
-                            // Release that *pitch only*, never the whole synth.
-                            // A future loop segment has not started yet.
-                            bool segmentStarted = AudioHelmClock.GetGlobalBeatTime() >= segment.startBeat;
-                            if (segmentStarted && old.key.start <= playheadTick &&
-                                playheadTick < old.key.end && TrackAudible(segment.track) &&
-                                trackControllers.TryGetValue(segment.track, out HelmController ctl) && ctl != null)
-                                ctl.NoteOff(old.key.pitch);
-                        }
+                        if (reused.Contains(old)) continue;
+                        AudioHelm.Native.DeleteNote(segment.sequencer, old.handle);
+                        // A deleted MIDI note may still be held: release only
+                        // that pitch, not other notes or other instruments.
+                        bool segmentStarted = AudioHelmClock.GetGlobalBeatTime() >= segment.startBeat;
+                        if (segmentStarted && old.key.start <= playheadTick &&
+                            playheadTick < old.key.end && TrackAudible(segment.track) &&
+                            trackControllers.TryGetValue(segment.track, out HelmController ctl) && ctl != null)
+                            ctl.NoteOff(old.key.pitch);
                     }
                     segment.notes.Clear();
                     segment.notes.AddRange(keep);
@@ -422,6 +497,136 @@ namespace ZPunk.DAW
             }
         }
 
+        private float nextLegacySequencerAudit;
+        private void SuspendUnexpectedLegacySequencers()
+        {
+            if (!songMode) return;
+            // The DAW owns the BASS/SYNTH/PADS channels exclusively.
+            foreach (var legacy in FindObjectsOfType<HelmSequencer>())
+            {
+                if (legacy == null || !legacy.enabled) continue;
+                legacy.enabled = false;
+                if (!suspendedSequencers.Contains(legacy)) suspendedSequencers.Add(legacy);
+                Debug.LogWarning("[ZPUNK MIDI] Disabled legacy HelmSequencer on " +
+                    legacy.gameObject.name + " during DAW playback.");
+            }
+        }
+
+        /// <summary>
+        /// Apply LOOP +/- without an old/new Helm overlap. The outgoing native
+        /// patterns and already scheduled drum/chop voices are stopped once;
+        /// fresh patterns start from tick zero at the next safe beat on the same
+        /// DSP timeline. Subsequent +/- taps before that beat replace the
+        /// waiting arrangement, never creating simultaneous native patterns.
+        /// </summary>
+        private void QuantizedLoopRestart(SongData updated, SongEventPlanner.Plan next,
+            long newLoopStart, long newLoopEnd, double now)
+        {
+            double restartDsp;
+            int oldBars = ActiveLoopBars;
+            // A beat late in its audio lookahead is unsafe to schedule; use
+            // the following beat rather than playing notes late or twice.
+            double minLead = Math.Max(0.12, minSampleScheduleLead * 2.0 + 0.04);
+            if (quantizedLoopRestartPending && quantizedLoopRestartDsp >= now + minLead)
+            {
+                restartDsp = quantizedLoopRestartDsp;
+                oldBars = previousLoopBarsDuringRestart;
+            }
+            else
+            {
+                double tickAtNow = now < anchorDsp ? startTick :
+                    startTick + (now - anchorDsp) / secondsPerTick;
+                double beatTicks = SongData.TicksPerQuarter;
+                long nextBeatTick = ((long)Math.Floor(tickAtNow / beatTicks) + 1L) *
+                    SongData.TicksPerQuarter;
+                restartDsp = DspAt(nextBeatTick);
+                double beatSeconds = SongData.TicksPerQuarter * secondsPerTick;
+                // This can only defer by whole beats, so the restart is
+                // musical even if +/- was pressed directly at the boundary.
+                while (restartDsp < now + minLead) restartDsp += beatSeconds;
+            }
+
+            // Absolutely no old Helm sequencer remains enabled or queued once
+            // the new clock/start is scheduled. This deliberately makes a very
+            // short pause preferable to duplicate/16th-note retriggers.
+            DisposeNativeMidi();
+            StopAllSynthNotes();
+            if (drums != null) drums.StopDAWVoices();
+
+            song = updated;
+            plan = next;
+            bpm = Mathf.Clamp(updated.bpm, 1f, 400f);
+            secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
+            loopStart = newLoopStart;
+            loopEnd = newLoopEnd;
+            activeLoopEnabled = updated.arrangementLoopEnabled;
+            startTick = newLoopStart;
+            CurrentTick = newLoopStart;
+            anchorDsp = restartDsp;
+            cycle = 0;
+            sampleCursor = 0;
+            midiCursor = 0;
+            prefetchedLoopSamples = 0;
+            scheduledSamples.Clear();
+            lateMidiEvents = 0;
+            SkipBefore(startTick);
+
+            // All five tracks are explicitly anchored to this same DSP time.
+            ConfigureScheduleBuffer();
+            if (drums != null)
+            {
+                drums.PrepareDAWPlayback(
+                    plan.samples.Exists(e => e.type == SongEventPlanner.EventType.Chop),
+                    plan.samples, bpm, activeLoopEnabled ? loopStart : 0,
+                    activeLoopEnabled ? loopEnd : 0, audioLookahead);
+                drums.SetDAWPlayheadStep(-1);
+            }
+            ResolveControllers();
+            ApplyAllTrackGains();
+            bool nativeReady = PrepareNativeMidi();
+            if (clock != null)
+            {
+                clock.bpm = bpm;
+                clock.pause = false;
+                clock.StartScheduled(anchorDsp);
+            }
+            if (nativeReady) EnableNativeMidi();
+            quantizedLoopRestartPending = true;
+            quantizedLoopRestartDsp = restartDsp;
+            previousLoopBarsDuringRestart = oldBars;
+            liveRevision++;
+            Debug.Log($"[ZPUNK LOOP] Beat restart queued: {oldBars} -> {PendingLoopBars} " +
+                $"bars; old Helm sequences cleared; {nativeMidiSequencers.Count} replacement " +
+                $"native sequences (one per melodic track); all five tracks restart " +
+                $"at bar 1, DSP {restartDsp:F3}.");
+        }
+
+        // Seeking into an arrangement can create a one-shot opening segment.
+        // Once it finishes, keep it disabled so later mix refreshes do not
+        // accidentally reactivate the completed native sequence.
+        private void ExpireFinishedNativeSegments()
+        {
+            if (!nativeMidiActive) return;
+            double beatNow = AudioHelmClock.GetGlobalBeatTime();
+            foreach (var segment in nativeMidiSegments)
+            {
+                if (segment.looping || segment.finished ||
+                    segment.sequencer == IntPtr.Zero) continue;
+                double endBeat = segment.startBeat +
+                    (double)(segment.rangeEnd - segment.rangeStart) /
+                    SongData.TicksPerQuarter;
+                // Let the last native note-off cross the audio callback before
+                // retiring this ONE-SHOT (not the repeating successor).
+                if (beatNow < endBeat + 0.10) continue;
+                AudioHelm.Native.EnableSequencer(segment.sequencer, false);
+                nativeMidiEnabled[segment.sequencer] = false;
+                segment.finished = true;
+                if (verbose)
+                    Debug.Log($"[ZPUNK LOOP] Finished non-looping {segment.track} " +
+                        $"segment at native beat {endBeat:F2}.");
+            }
+        }
+
         private void SyncNativeMidiAudibility()
         {
             if (!nativeMidiActive) return;
@@ -429,7 +634,9 @@ namespace ZPunk.DAW
             foreach (IntPtr seq in nativeMidiSequencers)
             {
                 if (!nativeMidiTracks.TryGetValue(seq, out int track)) continue;
-                bool shouldEnable = TrackAudible(track);
+                NativeMidiSegment matchingSegment = nativeMidiSegments.Find(s => s.sequencer == seq);
+                bool shouldEnable = TrackAudible(track) &&
+                    (matchingSegment == null || !matchingSegment.finished);
                 bool wasEnabled = nativeMidiEnabled.TryGetValue(seq, out bool previous) && previous;
                 if (shouldEnable == wasEnabled) continue;
                 AudioHelm.Native.EnableSequencer(seq, shouldEnable);
@@ -489,8 +696,8 @@ namespace ZPunk.DAW
                 ? startTick : startTick + (now - anchorDsp) / secondsPerTick));
         }
 
-        // Returns the Helm beat that coincides with our current DSP anchor;
-        // unlike restarting the native clock, this preserves all other tracks.
+        // Returns the Helm beat that coincides with the transport DSP anchor.
+        // Used by in-place MIDI editing; LOOP +/- uses a fresh clock instead.
         private double NativeBeatAtAnchor()
         {
             return AudioHelmClock.GetGlobalBeatTime() +
@@ -504,7 +711,7 @@ namespace ZPunk.DAW
             scheduledSamples.Clear();
             sampleCursor = 0;
             prefetchedLoopSamples = 0;
-            cycle = 0;
+            // Preserve the running transport cycle on ordinary live edits.
             while (sampleCursor < plan.samples.Count && plan.samples[sampleCursor].tick < atTick)
                 sampleCursor++;
         }
@@ -534,12 +741,12 @@ namespace ZPunk.DAW
         }
 
         private void ReconcileFallbackHeldMidi(SongEventPlanner.Plan previous,
-            SongEventPlanner.Plan replacement, long atTick)
+            SongEventPlanner.Plan replacement, long atTick, long updatedTick = -1)
         {
             // Helm native sequencing is normally active. If the plugin rejects
             // native sequencers, preserve unchanged Update-dispatched notes as well.
             var oldHeld = HeldMidiNotes(previous, atTick);
-            var newHeld = HeldMidiNotes(replacement, atTick);
+            var newHeld = HeldMidiNotes(replacement, updatedTick >= 0 ? updatedTick : atTick);
             foreach (var entry in oldHeld)
             {
                 if (!newHeld.ContainsKey(entry.Key) &&
@@ -601,6 +808,7 @@ namespace ZPunk.DAW
             // Unlike StopSong/PlaySong, this preserves the edited in-memory
             // arrangement and never reloads an older project snapshot.
             newTick = Math.Max(0L, Math.Min(loopEnd - 1, newTick));
+            quantizedLoopRestartPending = false;
             DisposeNativeMidi();
             StopAllSynthNotes();
             if (drums != null) drums.StopDAWVoices();
@@ -760,6 +968,7 @@ namespace ZPunk.DAW
             }
             exportingOneShot = oneShotExport;
             ResolveControllers();
+            SuspendUnexpectedLegacySequencers();
             ApplyAllTrackGains();
             bpm = Mathf.Clamp(song.bpm, 1f, 400f);
             secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
@@ -767,6 +976,7 @@ namespace ZPunk.DAW
             loopStart = song.arrangementLoopEnabled ? Math.Max(0L, Math.Min(length - 1, song.loopStartTick)) : 0;
             loopEnd = song.arrangementLoopEnabled ? Math.Max(loopStart + 1, Math.Min(length, song.loopEndTick)) : length;
             activeLoopEnabled = song.arrangementLoopEnabled;
+            quantizedLoopRestartPending = false;
             startTick = Math.Max(0L, Math.Min(length - 1, fromTick));
             if (song.arrangementLoopEnabled && startTick >= loopEnd) startTick = loopStart;
             // Initialize pools and load the applied chop before starting the clock;
@@ -860,8 +1070,28 @@ namespace ZPunk.DAW
             SongEventPlanner.Plan previousPlan = plan;
             bool midiChanged = !MidiPlanEquals(plan, next);
             bool tempoChanged = Math.Abs(updated.bpm - bpm) > .01f;
-            long oldLoopStart = loopStart, oldLoopEnd = loopEnd;
-            bool oldLoopEnabled = activeLoopEnabled;
+            long length = Math.Max(1L, next.lengthTicks);
+            long requestedLoopStart = updated.arrangementLoopEnabled ?
+                Math.Max(0L, Math.Min(length - 1, updated.loopStartTick)) : 0L;
+            long requestedLoopEnd = updated.arrangementLoopEnabled ?
+                Math.Max(requestedLoopStart + 1, Math.Min(length, updated.loopEndTick)) : length;
+            bool loopChanged = requestedLoopStart != loopStart ||
+                requestedLoopEnd != loopEnd || activeLoopEnabled != updated.arrangementLoopEnabled;
+
+            // LOOP +/- always restarts at bar one on a beat. Do not run two
+            // native patterns across the old loop boundary in either direction.
+            // Edits made before the scheduled downbeat replace the pending plan
+            // at the SAME beat, rather than starting competing sequencers.
+            if (!exportingOneShot && updated.arrangementLoopEnabled &&
+                requestedLoopStart == 0 && loopStart == 0 &&
+                (loopChanged || quantizedLoopRestartPending))
+            {
+                SuspendUnexpectedLegacySequencers();
+                QuantizedLoopRestart(updated, next, requestedLoopStart,
+                    requestedLoopEnd, now);
+                return;
+            }
+
             song = updated;
             plan = next;
             bpm = Mathf.Clamp(song.bpm, 1f, 400f);
@@ -872,14 +1102,21 @@ namespace ZPunk.DAW
                     anchorDsp = now - (exactTick - startTick) * secondsPerTick;
                 if (clock != null) clock.bpm = bpm;
             }
-            long length = Math.Max(1L, plan.lengthTicks);
-            loopStart = song.arrangementLoopEnabled ? Math.Max(0L, Math.Min(length - 1, song.loopStartTick)) : 0;
-            loopEnd = song.arrangementLoopEnabled ? Math.Max(loopStart + 1, Math.Min(length, song.loopEndTick)) : length;
-            bool loopChanged = oldLoopStart != loopStart || oldLoopEnd != loopEnd ||
-                oldLoopEnabled != song.arrangementLoopEnabled;
-            activeLoopEnabled = song.arrangementLoopEnabled;
-            // A live edit can add many hats or extend a clip. Size pools before
-            // the updated pattern enters the DSP scheduling window.
+            if (loopChanged)
+            {
+                quantizedLoopRestartPending = false;
+                loopStart = requestedLoopStart;
+                loopEnd = requestedLoopEnd;
+                activeLoopEnabled = updated.arrangementLoopEnabled;
+                if (position >= loopEnd)
+                {
+                    SeekLive(loopStart);
+                    return;
+                }
+                // Nonstandard range changes retain the existing seek path.
+                if (nativeMidiActive)
+                    RefreshNativeMidiWithoutStoppingSamples(position);
+            }
             if (drums != null)
                 drums.PrepareDAWPlayback(false, plan.samples, bpm,
                     activeLoopEnabled ? loopStart : 0,
@@ -887,22 +1124,10 @@ namespace ZPunk.DAW
             ResolveControllers();
             ApplyAllTrackGains();
             if (nativeMidiActive) SyncNativeMidiAudibility();
-            if (position >= loopEnd)
-            {
-                SeekLive(loopStart);
-                return;
-            }
-            ResetFutureSamples(position);
-            // A piano-roll edit modifies only the changed Helm notes in place.
-            // Loop geometry changes still require rebuilding native patterns.
-            if (loopChanged)
-                RefreshNativeMidiWithoutStoppingSamples(position);
-            else if (midiChanged && !UpdateNativeMidiInPlace(position))
-            {
-                // Frame-timed fallback: only release or start notes whose
-                // held state actually changed, never reset the whole channel.
+            // Ordinary piano-roll edits keep their existing in-place Helm path.
+            if (midiChanged && !loopChanged && !UpdateNativeMidiInPlace(position))
                 ReconcileFallbackHeldMidi(previousPlan, next, position);
-            }
+            ResetFutureSamples(position);
             midiCursor = 0;
             while (midiCursor < plan.midi.Count && plan.midi[midiCursor].tick < position)
                 midiCursor++;
@@ -1052,8 +1277,20 @@ namespace ZPunk.DAW
         private void Update()
         {
             if (!playing || plan == null) return;
+            if (Time.unscaledTime >= nextLegacySequencerAudit)
+            {
+                // A late prefab or UI callback can re-enable a legacy pattern.
+                SuspendUnexpectedLegacySequencers();
+                nextLegacySequencerAudit = Time.unscaledTime + 0.5f;
+            }
+            ExpireFinishedNativeSegments();
             double now = AudioSettings.dspTime;
             if (now < anchorDsp - audioLookahead) return;
+            if (quantizedLoopRestartPending && now >= quantizedLoopRestartDsp)
+            {
+                quantizedLoopRestartPending = false;
+                Debug.Log("[ZPUNK LOOP] Quantized beat restart active at bar 1.");
+            }
             double position = (now - anchorDsp) / secondsPerTick + startTick;
             CurrentTick = (long)Math.Max(0.0, Math.Floor(position));
             // The existing 16-step grids still need a moving playhead in DAW mode.
@@ -1077,9 +1314,8 @@ namespace ZPunk.DAW
                 DispatchSample(e, target, now, cycle);
             }
 
-            // Pre-schedule the start of the next loop while we still have DSP lead time.
-            // This prevents late kick/chop events on a loop boundary.
-            if (song.arrangementLoopEnabled && now + audioLookahead >= endDsp)
+            // One authoritative plan supplies the next-loop sample prefetch.
+            if (activeLoopEnabled && now + audioLookahead >= endDsp)
             {
                 while (prefetchedLoopSamples < plan.samples.Count)
                 {
@@ -1114,25 +1350,18 @@ namespace ZPunk.DAW
 
             if (now >= endDsp)
             {
-                // Native loop voices are already scheduled through this boundary.
-                // Do not issue AllNotesOff at the frame boundary (causes a gap).
                 if (!nativeMidiActive) StopAllSynthNotes();
-                if (song.arrangementLoopEnabled)
+                if (activeLoopEnabled)
                 {
-                    // Preserve the original DSP phase rather than starting a new loop at Update time.
-                    double nextAnchor = endDsp - (loopStart - 0) * secondsPerTick;
-                    anchorDsp = nextAnchor;
-                    startTick = 0;
+                    anchorDsp = endDsp;
+                    startTick = loopStart;
+                    CurrentTick = loopStart;
                     cycle++;
-                    // Keep the just-prefetched cycle, discard identities from prior
-                    // traversals so long-running arrangements do not accumulate them.
                     scheduledSamples.RemoveWhere(e => e.cycleId < cycle);
                     sampleCursor = prefetchedLoopSamples;
                     midiCursor = 0;
                     prefetchedLoopSamples = 0;
-                    SkipBefore(loopStart);
-                    CurrentTick = loopStart;
-                    // Legacy fallback only; native MIDI already crossed the boundary.
+                    SkipBefore(startTick);
                     if (!nativeMidiActive) DispatchDueMidi(now);
                 }
                 else StopSong();
@@ -1251,6 +1480,7 @@ namespace ZPunk.DAW
             playing = false;
             scheduledSamples.Clear();
             activeLoopEnabled = false;
+            quantizedLoopRestartPending = false;
             meterNoteVelocities.Clear();
             meterEnvelope.Clear();
             meterLastTime.Clear();

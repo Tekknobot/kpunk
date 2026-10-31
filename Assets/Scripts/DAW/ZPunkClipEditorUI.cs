@@ -1836,7 +1836,9 @@ namespace ZPunk.DAW
             selectedEventTick = -1;
             CloseGenerator();
             Changed(true, false);
-            if (content.kind == ClipKind.Midi) FocusPatternNotes();
+            // GEN and history restoration must reveal the actual generated octave,
+            // even when UI Toolkit finishes scroll geometry a frame after redraw.
+            if (content.kind == ClipKind.Midi) FocusPatternNotes(true);
         }
         // Prefer existing PAD or chord-mode SYNTH harmony at the selected clip location.
         // Never read notes from the clip currently being regenerated.
@@ -2637,7 +2639,7 @@ namespace ZPunk.DAW
         // Auto-frame the populated pitch area on pattern load or generation.
         // Never invoke this from an ordinary paint/drag redraw: doing so would
         // fight the user's manual scrolling and touch gestures.
-        private void FocusPatternNotes()
+        private void FocusPatternNotes(bool afterGeneration = false)
         {
             if (scroller == null || !IsMidi) return;
             if (content.notes == null || content.notes.Count == 0)
@@ -2653,8 +2655,13 @@ namespace ZPunk.DAW
             noteRows.Sort();
             int revision = ++noteFocusRevision;
             var intendedScroller = scroller;
-            intendedScroller.schedule.Execute(() =>
+            string focusedClip = clipId;
+            // A freshly generated clip changes the scroll content's geometry.
+            // One first-frame scroll can be clamped by UI Toolkit before it
+            // computes the new content height; repeat after layout settles.
+            Action applyFocus = () =>
             {
+                if (clipId != focusedClip) return;
                 if (revision != noteFocusRevision || scroller != intendedScroller || !IsMidi) return;
                 float height = intendedScroller.contentViewport.resolvedStyle.height;
                 if (height < RowH * 2f) height = intendedScroller.resolvedStyle.height;
@@ -2701,7 +2708,11 @@ namespace ZPunk.DAW
                 SyncFixedRuler();
                 int pitch = Mathf.Clamp(127 - Mathf.RoundToInt(middle), 0, 127);
                 octave = Mathf.Clamp(pitch / 12 - 1, -1, 9);
-            }).ExecuteLater(20);
+                SyncMidiNoteTouchTargets();
+            };
+            intendedScroller.schedule.Execute(applyFocus).ExecuteLater(30);
+            if (afterGeneration)
+                intendedScroller.schedule.Execute(applyFocus).ExecuteLater(160);
         }
 
         // Full 128-note keyboard: OCT buttons scroll vertically, not horizontally.
