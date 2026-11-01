@@ -29,7 +29,9 @@ namespace ZPunk.DAW
         private VisualElement rulerGutter, rulerContent, rulerPlayhead;
         private readonly List<VisualElement> pitchRowBackgrounds = new List<VisualElement>();
         private readonly List<Label> pitchRowLabels = new List<Label>();
+        // The guide may follow either a detected sample or the selected generator key.
         private bool sampleKeyGuideEnabled;
+        private bool sampleKeyGuideFromSample;
         private int sampleKeyGuideTonic;
         private bool sampleKeyGuideMinor;
         private string sampleKeyGuideSampleId;
@@ -1342,17 +1344,7 @@ namespace ZPunk.DAW
                 RefreshClipSampleKeyReference();
                 if (generatorPanel != null && generatorPanel.style.display.value == DisplayStyle.Flex && generatorSampleKeyHint != null)
                 {
-                    FindSampler();
-                    bool available = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
-                    if (generatorSampleKeyButton != null)
-                    {
-                        generatorSampleKeyButton.SetEnabled(available || sampleKeyGuideEnabled);
-                        generatorSampleKeyButton.text = sampleKeyGuideEnabled ? "RESET KEY ROWS" : "USE SAMPLE KEY";
-                    }
-                    generatorSampleKeyHint.text = samplePlayer == null ? "NO SAMPLE" :
-                        samplePlayer.DawSampleKeyAnalyzing ? "ANALYZING SAMPLE" :
-                        available ? samplePlayer.DawPitchedKeyText + " / " + samplePlayer.DawSampleKeyConfidence + " EST." :
-                        "KEY NOT DETECTED";
+                    RefreshGeneratorKeyGuideControls();
                 }
             }).Every(500);
             root.Add(samplerPage);
@@ -1481,8 +1473,9 @@ namespace ZPunk.DAW
             generatorProgressionSection.Add(progressionHelp);
             body.Add(generatorProgressionSection);
 
-            // Explicit opt-in: importing a sample never silently changes the key
-            // of other tracks or previously saved generations.
+            // Explicit opt-in: guide the piano roll using the current key, or
+            // adopt a detected sample key when one is available. Neither option
+            // changes existing MIDI notes.
             var sampleKeyRow = new VisualElement();
             sampleKeyRow.style.flexDirection = FlexDirection.Row;
             sampleKeyRow.style.alignItems = Align.Center;
@@ -1496,23 +1489,31 @@ namespace ZPunk.DAW
                     // Reset every MIDI row to the original alternating keyboard
                     // colors. Do not alter the generator's selected key or notes.
                     sampleKeyGuideEnabled = false;
+                    sampleKeyGuideFromSample = false;
                     sampleKeyGuideSampleId = null;
                     ApplySampleKeyGuide();
                     RefreshClipSampleKeyReference();
                     RefreshGeneratorPanel();
                     return;
                 }
-                if (samplePlayer == null || !samplePlayer.DawSampleKeyAvailable) return;
-                generatorKey = samplePlayer.DawPitchedKeyTonic;
-                generatorMinor = samplePlayer.DawSampleKeyMinor;
-                SaveSharedHarmonicSelection();
-                // Opt-in harmonic guide. Do not highlight unrelated piano rolls merely
-                // because a sample was loaded or its key was detected.
+                bool hasSampleKey = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
+                if (hasSampleKey)
+                {
+                    // Keep the original opt-in behavior: sample pitch and mode
+                    // become the shared harmonic selection for future generations.
+                    generatorKey = samplePlayer.DawPitchedKeyTonic;
+                    generatorMinor = samplePlayer.DawSampleKeyMinor;
+                    SaveSharedHarmonicSelection();
+                }
+                // Without a detected sample, highlight the manually selected key.
+                // The guide never inserts, deletes or transposes any MIDI notes.
                 sampleKeyGuideEnabled = true;
+                sampleKeyGuideFromSample = hasSampleKey;
                 sampleKeyGuideTonic = generatorKey;
                 sampleKeyGuideMinor = generatorMinor;
                 sampleKeyGuideProjectSlot = projects != null ? projects.CurrentSlot : -1;
-                sampleKeyGuideSampleId = samplePlayer.DawSampleFolder + "/" + samplePlayer.DawSampleName;
+                sampleKeyGuideSampleId = hasSampleKey
+                    ? samplePlayer.DawSampleFolder + "/" + samplePlayer.DawSampleName : null;
                 ApplySampleKeyGuide();
                 RefreshClipSampleKeyReference();
                 RefreshGeneratorPanel();
@@ -1592,6 +1593,15 @@ namespace ZPunk.DAW
                     ZPunkGenreGenerator.ProgressionChoiceCount - 1);
             edited.sharedProgressionKey = generatorKey;
             edited.sharedProgressionMinor = generatorMinor;
+            // Manual guidance follows the selected key as it is changed, rather
+            // than becoming stuck on the key active when HIGHLIGHT KEY was tapped.
+            if (sampleKeyGuideEnabled && !sampleKeyGuideFromSample)
+            {
+                sampleKeyGuideTonic = generatorKey;
+                sampleKeyGuideMinor = generatorMinor;
+                ApplySampleKeyGuide();
+                RefreshClipSampleKeyReference();
+            }
             projects.AcceptArrangementEdit(edited);
             song = edited;
             clip = ArrangementEditing.FindClip(song, clipId, out _);
@@ -1698,18 +1708,7 @@ namespace ZPunk.DAW
                 generatorProgressionChords.text = ZPunkGenreGenerator.ProgressionChordNames(
                     generatorGenre, generatorKey, generatorMinor, progressionChoice) +
                     (progressionChoice > 0 ? " / all parts follow these chords" : " / original genre harmony");
-            FindSampler();
-            bool hasSampleKey = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
-            if (generatorSampleKeyButton != null)
-            {
-                generatorSampleKeyButton.SetEnabled(hasSampleKey || sampleKeyGuideEnabled);
-                generatorSampleKeyButton.text = sampleKeyGuideEnabled ? "RESET KEY ROWS" : "USE SAMPLE KEY";
-            }
-            if (generatorSampleKeyHint != null)
-                generatorSampleKeyHint.text = samplePlayer == null ? "NO SAMPLE" :
-                    samplePlayer.DawSampleKeyAnalyzing ? "ANALYZING SAMPLE" :
-                    hasSampleKey ? samplePlayer.DawPitchedKeyText + " / " + samplePlayer.DawSampleKeyConfidence + " EST." :
-                    "KEY NOT DETECTED";
+            RefreshGeneratorKeyGuideControls();
             generatorBarsRow.Clear();
             foreach (int count in new[]{1,2,4})
             {
@@ -1721,6 +1720,34 @@ namespace ZPunk.DAW
             }
             generatorVariationLabel.text = "VARIATION " + generatorVariation.ToString();
             RefreshGenerationHistory();
+        }
+
+        // Update both on generator edits and while sample-key analysis finishes.
+        private void RefreshGeneratorKeyGuideControls()
+        {
+            FindSampler();
+            bool hasSampleKey = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
+            if (generatorSampleKeyButton != null)
+            {
+                generatorSampleKeyButton.SetEnabled(true);
+                generatorSampleKeyButton.text = sampleKeyGuideEnabled ? "RESET KEY ROWS" :
+                    hasSampleKey ? "USE SAMPLE KEY" : "HIGHLIGHT KEY";
+            }
+            if (generatorSampleKeyHint == null) return;
+            if (sampleKeyGuideEnabled && !sampleKeyGuideFromSample)
+            {
+                generatorSampleKeyHint.text = "SELECTED KEY / " +
+                    ZPunkGenreGenerator.Keys[generatorKey] + (generatorMinor ? " MIN" : " MAJ");
+            }
+            else
+            {
+                generatorSampleKeyHint.text = samplePlayer != null && samplePlayer.DawSampleKeyAnalyzing
+                    ? "ANALYZING SAMPLE"
+                    : hasSampleKey ? samplePlayer.DawPitchedKeyText + " / " +
+                        samplePlayer.DawSampleKeyConfidence + " EST."
+                    : "SELECTED KEY / " + ZPunkGenreGenerator.Keys[generatorKey] +
+                        (generatorMinor ? " MIN" : " MAJ");
+            }
         }
 
         private void RefreshGenerationHistory()
@@ -2113,11 +2140,19 @@ namespace ZPunk.DAW
                 (song.tracks[trackIndex].kind == TrackKind.Bass ||
                  song.tracks[trackIndex].kind == TrackKind.Synth ||
                  song.tracks[trackIndex].kind == TrackKind.Pads);
-            bool show = midiTrack && samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
+            bool hasSampleKey = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
+            bool show = midiTrack && (sampleKeyGuideEnabled || hasSampleKey);
             clipSampleKeyReference.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
-            if (show)
-                clipSampleKeyReference.text = (sampleKeyGuideEnabled ? "KEY GUIDE  /  " : "SAMPLE KEY  /  ") +
-                    samplePlayer.DawPitchedKeyText +
+            if (!show) return;
+            if (sampleKeyGuideEnabled)
+            {
+                clipSampleKeyReference.text = (sampleKeyGuideFromSample ? "SAMPLE KEY GUIDE  /  " : "KEY GUIDE  /  ") +
+                    ZPunkGenreGenerator.Keys[sampleKeyGuideTonic] + (sampleKeyGuideMinor ? " MIN" : " MAJ") +
+                    (sampleKeyGuideFromSample && hasSampleKey ?
+                        "  (" + samplePlayer.DawSampleKeyConfidence + " EST.)" : "");
+            }
+            else
+                clipSampleKeyReference.text = "SAMPLE KEY  /  " + samplePlayer.DawPitchedKeyText +
                     "  (" + samplePlayer.DawSampleKeyConfidence + " EST.)";
         }
 
@@ -2315,7 +2350,11 @@ namespace ZPunk.DAW
             if (projects == null) return;
             song = projects.GetSongForArrangementEditor();
             if (sampleKeyGuideEnabled && sampleKeyGuideProjectSlot != projects.CurrentSlot)
+            {
                 sampleKeyGuideEnabled = false;
+                sampleKeyGuideFromSample = false;
+                sampleKeyGuideSampleId = null;
+            }
             if (song == null || song.tracks == null || song.tracks.Count == 0) return;
             if (requestedTrack >= 0 && requestedTrack < song.tracks.Count) trackIndex = requestedTrack;
             trackIndex = Mathf.Clamp(trackIndex,0,song.tracks.Count-1);
@@ -2594,16 +2633,18 @@ namespace ZPunk.DAW
             }
         }
 
-        // Follow live semitone changes only after the user chose USE SAMPLE KEY.
-        // This is deliberately independent of generatorKey's manual selector.
+        // Only sample-derived guides follow live semitone changes; manually
+        // selected keys remain independent of the sample player's state.
         private void FollowPitchedSampleKey()
         {
-            if (!sampleKeyGuideEnabled || samplePlayer == null) return;
+            if (!sampleKeyGuideEnabled || !sampleKeyGuideFromSample || samplePlayer == null) return;
             // Selecting a different sample must not silently transfer the old guide.
             string sampleId = samplePlayer.DawSampleFolder + "/" + samplePlayer.DawSampleName;
             if (sampleId != sampleKeyGuideSampleId)
             {
                 sampleKeyGuideEnabled = false;
+                sampleKeyGuideFromSample = false;
+                sampleKeyGuideSampleId = null;
                 ApplySampleKeyGuide();
                 RefreshClipSampleKeyReference();
                 return;
