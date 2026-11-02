@@ -49,6 +49,16 @@ namespace ZPunk.DAW
         // 2.3.5: Optional club dynamics. Zero is a strict bypass for older projects.
         public float kickRumble = 0f;   // 0..1, kick-only low passed tail
         public float bassDuck = 0f;     // 0..1, gentle kick-triggered bass attenuation
+        // Optional arrangement PERFORMANCE FX, master stereo bus. Zero = strict bypass
+        // for projects created before these controls existed. GATE rate codes remain
+        // 0=1/4, 1=1/8, 2=1/16, 3=1/32, 4=half bar, 5=full bar
+        // for both GATE and REPEAT. Saved 0..3 rates are unchanged.
+        public float performanceDrive = 0f;
+        public float performanceGate = 0f;
+        public float performanceCrush = 0f;
+        public float performanceRepeat = 0f;
+        public int performanceGateRate = 2;
+        public int performanceRepeatRate = 2;
         public List<TrackData> tracks = new List<TrackData>();
         public List<ClipContentData> contents = new List<ClipContentData>();
 

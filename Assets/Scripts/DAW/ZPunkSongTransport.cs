@@ -598,6 +598,7 @@ namespace ZPunk.DAW
             startTick = newLoopStart;
             CurrentTick = newLoopStart;
             anchorDsp = restartDsp;
+            PublishPerformanceFxClock();
             cycle = 0;
             sampleCursor = 0;
             midiCursor = 0;
@@ -865,6 +866,7 @@ namespace ZPunk.DAW
                     song.arrangementLoopEnabled ? loopEnd : 0, audioLookahead);
             bool nativeReady = PrepareNativeMidi();
             anchorDsp = AudioSettings.dspTime + Math.Max(startDelay, audioLookahead + 0.04f);
+            PublishPerformanceFxClock();
             if (clock != null)
             {
                 clock.bpm = bpm;
@@ -1047,6 +1049,7 @@ namespace ZPunk.DAW
             }
             if (nativeReady) EnableNativeMidi();
             playing = true;
+            PublishPerformanceFxClock();
             if (verbose)
                 Debug.Log($"[ZPunk DAW] PLAY events: {plan.samples.Count} samples, {plan.midi.Count} MIDI, from tick {startTick}");
             return true;
@@ -1067,6 +1070,7 @@ namespace ZPunk.DAW
             secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
             if (!beforeStart)
                 anchorDsp = now - (exactTick - startTick) * secondsPerTick;
+            PublishPerformanceFxClock();
             if (clock != null) clock.bpm = bpm;
             ResetFutureSamples((long)Math.Max(0.0, Math.Floor(exactTick)));
             liveRevision++;
@@ -1181,6 +1185,7 @@ namespace ZPunk.DAW
                    (plan.midi[midiCursor].tick < position ||
                    (!beforeStart && plan.midi[midiCursor].tick == position)))
                 midiCursor++;
+            PublishPerformanceFxClock();
             liveRevision++;
         }
 
@@ -1422,8 +1427,31 @@ namespace ZPunk.DAW
         // Timeline positions are kept in integer ticks, even after a tempo change.
         private double DspAt(long tick) { return anchorDsp + (tick - startTick) * secondsPerTick; }
 
+        // Keep the performance master FX phase locked to this same DSP anchor
+        // without changing Helm MIDI scheduling or sample lookahead.
+        private double publishedFxAnchor = double.NaN;
+        private double publishedFxSecondsPerTick = double.NaN;
+        private long publishedFxStartTick;
+        private bool publishedFxPlaying;
+
+        private void PublishPerformanceFxClock()
+        {
+            bool active = playing && songMode && secondsPerTick > 0.0;
+            if (active == publishedFxPlaying &&
+                (!active || (publishedFxAnchor == anchorDsp &&
+                 publishedFxStartTick == startTick &&
+                 publishedFxSecondsPerTick == secondsPerTick))) return;
+            publishedFxPlaying = active;
+            publishedFxAnchor = anchorDsp;
+            publishedFxStartTick = startTick;
+            publishedFxSecondsPerTick = secondsPerTick;
+            ZPunkMasterAudioTap.PublishArrangementClock(active, anchorDsp,
+                startTick, secondsPerTick > 0.0 ? secondsPerTick : 1.0);
+        }
+
         private void Update()
         {
+            PublishPerformanceFxClock();
             if (!playing || plan == null) return;
             if (Time.unscaledTime >= nextLegacySequencerAudit)
             {
@@ -1508,6 +1536,7 @@ namespace ZPunk.DAW
                     anchorDsp = endDsp;
                     startTick = loopStart;
                     CurrentTick = loopStart;
+                    PublishPerformanceFxClock();
                     cycle++;
                     scheduledSamples.RemoveWhere(e => e.cycleId < cycle);
                     sampleCursor = prefetchedLoopSamples;
@@ -1637,6 +1666,7 @@ namespace ZPunk.DAW
             Resolve();
             bool wasExporting = exportingOneShot;
             playing = false;
+            PublishPerformanceFxClock();
             scheduledSamples.Clear();
             kickDuckingStarts.Clear();
             lastKickDuckingAt = -100.0;

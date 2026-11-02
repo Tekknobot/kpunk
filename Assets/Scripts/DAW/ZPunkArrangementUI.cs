@@ -59,12 +59,14 @@ namespace ZPunk.DAW
         {
             public bool drums;
             public bool lowPass;
+            public int fxIndex = -1; // 0..3: master DRIVE / GATE / CRUSH / REPEAT
             public VisualElement face;
             public VisualElement dot;
             public Label value;
         }
         private readonly Dictionary<VisualElement, FilterKnob> filterKnobs =
             new Dictionary<VisualElement, FilterKnob>();
+        private readonly Button[] performanceRateButtons = new Button[4];
         private FilterKnob activeFilter;
         private int filterPointer = -1;
         private float filterStartY, filterStartAmount;
@@ -128,6 +130,7 @@ namespace ZPunk.DAW
             activeFilter = null;
             filterPointer = -1;
             filterKnobs.Clear();
+            for (int i = 0; i < performanceRateButtons.Length; i++) performanceRateButtons[i] = null;
             gesture = null;
             playheadPointerId = -1;
             page = target;
@@ -174,6 +177,7 @@ namespace ZPunk.DAW
             }
             Refresh();
             ZPunkArrangementFilters.RefreshHelmMixers();
+            ZPunkMasterAudioTap.ApplySongSettings(song);
             RefreshFilterKnobs();
         }
 
@@ -508,6 +512,188 @@ namespace ZPunk.DAW
             AddFilterBank(banks, "BASS  SYNTH  PADS  CHOPS", false, new Color(.29f, .84f, .72f));
             AddFilterBank(banks, "DRUMS", true, new Color(.94f, .62f, .31f));
             arrangementPageScroll.Add(banks);
+            BuildArrangementPerformanceFx();
+        }
+
+        // Four optional master-bus performance effects, always placed directly
+        // beneath MUSIC and DRUMS LP/HP. One row, no sideways scroll or modal.
+        private void BuildArrangementPerformanceFx()
+        {
+            var section = new VisualElement { name = "ZPunkArrangementPerformanceFx" };
+            section.style.width = new Length(100, LengthUnit.Percent);
+            section.style.flexShrink = 0;
+            section.style.backgroundColor = new Color(.092f, .125f, .17f);
+            section.style.paddingLeft = 5 * uiScale;
+            section.style.paddingRight = 5 * uiScale;
+            section.style.paddingTop = 9 * uiScale;
+            section.style.paddingBottom = 9 * uiScale;
+            section.style.marginBottom = 9 * uiScale;
+            section.style.borderTopLeftRadius = 9;
+            section.style.borderTopRightRadius = 9;
+            section.style.borderBottomLeftRadius = 9;
+            section.style.borderBottomRightRadius = 9;
+            var title = Label("PERFORMANCE FX  /  MASTER", 11, Highlight);
+            title.style.unityFontStyleAndWeight = FontStyle.Bold;
+            title.style.marginBottom = 3 * uiScale;
+            section.Add(title);
+            var subtitle = Label("ALL TRACKS  •  DRAG UP TO APPLY  •  0% = OFF", 9, MutedText);
+            subtitle.style.whiteSpace = WhiteSpace.Normal;
+            subtitle.style.marginBottom = 8 * uiScale;
+            section.Add(subtitle);
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.width = new Length(100, LengthUnit.Percent);
+            row.style.justifyContent = Justify.SpaceAround;
+            string[] titles = { "DRIVE", "GATE", "CRUSH", "REPEAT" };
+            for (int i = 0; i < titles.Length; i++)
+            {
+                int index = i;
+                var knob = new FilterKnob { fxIndex = i };
+                var cell = new VisualElement();
+                cell.style.flexGrow = 1;
+                cell.style.flexShrink = 1;
+                cell.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                cell.style.minWidth = 0;
+                cell.style.alignItems = Align.Center;
+                var face = new VisualElement { name = "ZPunkPerformance" + titles[i] + "Knob" };
+                face.style.position = Position.Relative;
+                face.style.width = 57 * uiScale;
+                face.style.height = 57 * uiScale;
+                face.style.alignItems = Align.Center;
+                face.style.justifyContent = Justify.Center;
+                face.style.backgroundColor = new Color(.17f, .22f, .29f);
+                face.style.borderTopLeftRadius = 29;
+                face.style.borderTopRightRadius = 29;
+                face.style.borderBottomLeftRadius = 29;
+                face.style.borderBottomRightRadius = 29;
+                face.style.borderTopWidth = 2;
+                face.style.borderBottomWidth = 2;
+                face.style.borderLeftWidth = 2;
+                face.style.borderRightWidth = 2;
+                var rim = new Color(.29f, .36f, .43f);
+                face.style.borderTopColor = rim;
+                face.style.borderBottomColor = rim;
+                face.style.borderLeftColor = rim;
+                face.style.borderRightColor = rim;
+                face.pickingMode = PickingMode.Position;
+                knob.face = face;
+                var value = Label("OFF", 10, Text);
+                value.style.unityTextAlign = TextAnchor.MiddleCenter;
+                value.style.unityFontStyleAndWeight = FontStyle.Bold;
+                value.pickingMode = PickingMode.Ignore;
+                knob.value = value;
+                face.Add(value);
+                var dot = new VisualElement();
+                dot.style.position = Position.Absolute;
+                dot.style.width = 6 * uiScale;
+                dot.style.height = 6 * uiScale;
+                dot.style.backgroundColor = Highlight;
+                dot.style.borderTopLeftRadius = 3;
+                dot.style.borderTopRightRadius = 3;
+                dot.style.borderBottomLeftRadius = 3;
+                dot.style.borderBottomRightRadius = 3;
+                dot.pickingMode = PickingMode.Ignore;
+                knob.dot = dot;
+                face.Add(dot);
+                cell.Add(face);
+                var label = Label(titles[i], 9, MutedText);
+                label.style.unityTextAlign = TextAnchor.MiddleCenter;
+                label.style.whiteSpace = WhiteSpace.NoWrap;
+                label.style.marginTop = 4 * uiScale;
+                cell.Add(label);
+                // Both GATE and REPEAT support note rates plus half/full bars,
+                // without adding controls or a horizontal scrollbar.
+                if (i == 1 || i == 3)
+                {
+                    var button = new Button(() => CyclePerformanceRate(index));
+                    button.style.minWidth = 0;
+                    button.style.width = 58 * uiScale;
+                    button.style.height = 27 * uiScale;
+                    button.style.marginTop = 3 * uiScale;
+                    button.style.paddingLeft = 1;
+                    button.style.paddingRight = 1;
+                    button.style.fontSize = 11 * uiScale;
+                    button.style.unityFontStyleAndWeight = FontStyle.Bold;
+                    button.style.color = Text;
+                    button.style.backgroundColor = new Color(.18f, .25f, .31f);
+                    button.style.borderTopLeftRadius = 4;
+                    button.style.borderTopRightRadius = 4;
+                    button.style.borderBottomLeftRadius = 4;
+                    button.style.borderBottomRightRadius = 4;
+                    performanceRateButtons[i] = button;
+                    cell.Add(button);
+                }
+                else
+                {
+                    var spacer = new VisualElement();
+                    spacer.style.height = 30 * uiScale;
+                    cell.Add(spacer);
+                }
+                row.Add(cell);
+                filterKnobs[face] = knob;
+                UpdateFilterKnob(knob);
+            }
+            section.Add(row);
+            arrangementPageScroll.Add(section);
+            RefreshPerformanceRateButtons();
+        }
+
+        private float ReadPerformanceAmount(int index)
+        {
+            if (song == null) return 0f;
+            switch (index)
+            {
+                case 0: return Mathf.Clamp01(song.performanceDrive);
+                case 1: return Mathf.Clamp01(song.performanceGate);
+                case 2: return Mathf.Clamp01(song.performanceCrush);
+                case 3: return Mathf.Clamp01(song.performanceRepeat);
+                default: return 0f;
+            }
+        }
+
+        private void WritePerformanceSettings(Action<SongData> edit)
+        {
+            if (!MakeEditable()) return;
+            edit(song);
+            // Changes in ARRANGEMENT do not rebuild MIDI notes or sample queues.
+            projects.AcceptArrangementEdit(song);
+            ZPunkMasterAudioTap.ApplySongSettings(song);
+            if (transport != null) transport.ApplyLiveMix(song);
+        }
+
+        private void SetPerformanceAmount(int index, float value)
+        {
+            value = Mathf.Clamp01(value);
+            WritePerformanceSettings(s =>
+            {
+                switch (index)
+                {
+                    case 0: s.performanceDrive = value; break;
+                    case 1: s.performanceGate = value; break;
+                    case 2: s.performanceCrush = value; break;
+                    case 3: s.performanceRepeat = value; break;
+                }
+            });
+        }
+
+        private void CyclePerformanceRate(int index)
+        {
+            if (index != 1 && index != 3) return;
+            WritePerformanceSettings(s =>
+            {
+                if (index == 1) s.performanceGateRate = (Mathf.Clamp(s.performanceGateRate, 0, 5) + 1) % 6;
+                else s.performanceRepeatRate = (Mathf.Clamp(s.performanceRepeatRate, 0, 5) + 1) % 6;
+            });
+            RefreshPerformanceRateButtons();
+        }
+
+        private void RefreshPerformanceRateButtons()
+        {
+            string[] divisions = { "1/4", "1/8", "1/16", "1/32", "1/2", "1/1" };
+            if (performanceRateButtons[1] != null)
+                performanceRateButtons[1].text = divisions[Mathf.Clamp(song != null ? song.performanceGateRate : 2, 0, 5)];
+            if (performanceRateButtons[3] != null)
+                performanceRateButtons[3].text = divisions[Mathf.Clamp(song != null ? song.performanceRepeatRate : 2, 0, 5)];
         }
 
         private void AddFilterBank(VisualElement banks, string heading, bool drums, Color accent)
@@ -595,9 +781,12 @@ namespace ZPunk.DAW
         private void UpdateFilterKnob(FilterKnob knob)
         {
             if (knob == null || knob.face == null) return;
-            float amount = ZPunkArrangementFilters.Get(knob.drums, knob.lowPass);
+            float amount = knob.fxIndex >= 0 ? ReadPerformanceAmount(knob.fxIndex) :
+                ZPunkArrangementFilters.Get(knob.drums, knob.lowPass);
             if (knob.value != null)
-                knob.value.text = ZPunkArrangementFilters.Readout(knob.lowPass, amount);
+                knob.value.text = knob.fxIndex >= 0
+                    ? (amount < .005f ? "OFF" : Mathf.RoundToInt(amount * 100f) + "%")
+                    : ZPunkArrangementFilters.Readout(knob.lowPass, amount);
             // Visible marker follows the conventional 270-degree knob sweep.
             float theta = (-225f + 270f * amount) * Mathf.Deg2Rad;
             float center = 57f * uiScale / 2f;
@@ -610,6 +799,7 @@ namespace ZPunk.DAW
         private void RefreshFilterKnobs()
         {
             foreach (var pair in filterKnobs) UpdateFilterKnob(pair.Value);
+            RefreshPerformanceRateButtons();
         }
 
         private FilterKnob FindFilterKnob(VisualElement target)
@@ -630,7 +820,8 @@ namespace ZPunk.DAW
             activeFilter = knob;
             filterPointer = evt.pointerId;
             filterStartY = evt.position.y;
-            filterStartAmount = ZPunkArrangementFilters.Get(knob.drums, knob.lowPass);
+            filterStartAmount = knob.fxIndex >= 0 ? ReadPerformanceAmount(knob.fxIndex) :
+                ZPunkArrangementFilters.Get(knob.drums, knob.lowPass);
             lockedFilterScroll = arrangementPageScroll != null ? arrangementPageScroll.scrollOffset : Vector2.zero;
             page.CapturePointer(evt.pointerId);
             evt.StopPropagation();
@@ -640,8 +831,9 @@ namespace ZPunk.DAW
         {
             if (activeFilter == null || filterPointer != evt.pointerId) return;
             float sensitivity = evt.shiftKey ? .0015f : .006f;
-            ZPunkArrangementFilters.Set(activeFilter.drums, activeFilter.lowPass,
-                filterStartAmount + (filterStartY - evt.position.y) * sensitivity);
+            float value = filterStartAmount + (filterStartY - evt.position.y) * sensitivity;
+            if (activeFilter.fxIndex >= 0) SetPerformanceAmount(activeFilter.fxIndex, value);
+            else ZPunkArrangementFilters.Set(activeFilter.drums, activeFilter.lowPass, value);
             UpdateFilterKnob(activeFilter);
             if (arrangementPageScroll != null) arrangementPageScroll.scrollOffset = lockedFilterScroll;
             evt.StopPropagation();
@@ -1521,6 +1713,7 @@ namespace ZPunk.DAW
             song.bpm=value;
             projects.AcceptArrangementEdit(song);
             if (transport != null) transport.SetLiveTempo(value, song);
+            ZPunkMasterAudioTap.ApplySongSettings(song);
             SetHint("Tempo " + value.ToString("0") + " BPM  /  LIVE");
         }
 
