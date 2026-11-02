@@ -116,6 +116,14 @@ namespace ZPunk.DAW
         private readonly Dictionary<int, float> meterEnvelope = new Dictionary<int, float>();
         private readonly Dictionary<int, float> meterLastTime = new Dictionary<int, float>();
         private readonly Dictionary<int, AudioMixer> outputMixers = new Dictionary<int, AudioMixer>();
+        // DSP-time kick schedule drives a lightweight BASS-only gain envelope.
+        // Native Helm MIDI timing and the sample start queue are unchanged.
+        private readonly Queue<double> kickDuckingStarts = new Queue<double>();
+        private double lastKickDuckingAt = -100.0;
+        private float currentBassDuckGain = 1f;
+        private readonly Dictionary<int, float> motionCutoff = new Dictionary<int, float>();
+        private readonly Dictionary<int, HelmController> motionControllers =
+            new Dictionary<int, HelmController>();
         private readonly Dictionary<int, ZPunkHelmPcmMeter> pcmMeters = new Dictionary<int, ZPunkHelmPcmMeter>();
         private static readonly string[] HelmTrackGainParameters = { "", "ZPunkBassTrackGain", "ZPunkSynthTrackGain", "ZPunkPadsTrackGain", "" };
         private SongData song;
@@ -735,6 +743,7 @@ namespace ZPunk.DAW
 
         private void ResetFutureSamples(long atTick)
         {
+            kickDuckingStarts.Clear();
             if (drums != null) drums.CancelFutureDAWVoices();
             scheduledSamples.Clear();
             sampleCursor = 0;
@@ -1071,6 +1080,7 @@ namespace ZPunk.DAW
             // Do not kill sustained notes just to update the fader.
             if (trackControllers.Count == 0) ResolveControllers();
             ApplyAllTrackGains();
+            if (playing) UpdateFilterMotion();
             if (nativeMidiActive) SyncNativeMidiAudibility();
         }
 
@@ -1161,6 +1171,7 @@ namespace ZPunk.DAW
             }
             ResolveControllers();
             ApplyAllTrackGains();
+            if (playing) UpdateFilterMotion();
             if (nativeMidiActive) SyncNativeMidiAudibility();
             if (midiChanged && !loopChanged &&
                 !RefreshEditedNativeMidiTracks(previousPlan, next, position))
@@ -1249,6 +1260,11 @@ namespace ZPunk.DAW
             if (drums != null && song.tracks.Count > 0 && song.tracks[0] != null && song.tracks[0].instrument != null)
                 drums.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
             ZPunkMasterAudioTap.ApplySongSettings(song);
+            if (drums != null)
+            {
+                drums.DawKickRumble = Mathf.Clamp01(song.kickRumble);
+                drums.PrepareRumbleIfEnabled();
+            }
             if (drums != null && song.tracks.Count > 4)
                 drums.ApplyDAWTrackMix(TrackAudible(0) ? Mathf.Clamp(song.tracks[0].volume, 0f, 2f) : 0f,
                                        TrackAudible(4) ? Mathf.Clamp(song.tracks[4].volume, 0f, 2f) : 0f);
@@ -1261,11 +1277,104 @@ namespace ZPunk.DAW
                 if (string.IsNullOrEmpty(exposed)) continue;
                 var track = song.tracks[index];
                 float gain = track != null && TrackAudible(index) ? Mathf.Clamp(track.volume, 0f, 2f) : 0f;
+                if (index == 1 && playing) gain *= currentBassDuckGain;
                 // 100%=0dB, 50%=-6dB, 0%=-80dB. Changes affect held voices.
                 float decibels = gain <= 0.0001f ? -80f : Mathf.Clamp(20f * Mathf.Log10(gain), -80f, 6f);
                 if (!entry.Value.SetFloat(exposed, decibels) && verbose)
                     Debug.LogWarning("[ZPunk MIX] Missing AudioMixer exposed parameter: " + exposed);
             }
+        }
+
+        // One trigger per *audible, successfully queued* kick. The bass channel
+        // gains a short envelope rather than a compressor on the whole mix.
+        private void UpdateBassDucking(double now)
+        {
+            while (kickDuckingStarts.Count > 0 && kickDuckingStarts.Peek() <= now)
+                lastKickDuckingAt = kickDuckingStarts.Dequeue();
+            float depth = song != null ? Mathf.Clamp01(song.bassDuck) : 0f;
+            double elapsed = now - lastKickDuckingAt;
+            float next = depth > .001f && elapsed >= 0.0 && elapsed < 1.0
+                ? 1f - depth * .78f * Mathf.Exp(-(float)elapsed / .145f) : 1f;
+            if (Mathf.Abs(next - currentBassDuckGain) < .004f) return;
+            currentBassDuckGain = next;
+            if (outputMixers.TryGetValue(1, out AudioMixer mixer) && mixer != null &&
+                song != null && song.tracks != null && song.tracks.Count > 1 && song.tracks[1] != null)
+            {
+                float gain = TrackAudible(1) ? Mathf.Clamp(song.tracks[1].volume, 0f, 2f) * next : 0f;
+                float db = gain <= .0001f ? -80f : Mathf.Clamp(20f * Mathf.Log10(gain), -80f, 6f);
+                mixer.SetFloat(HelmTrackGainParameters[1], db);
+            }
+        }
+
+        // Opt-in tempo-synchronized sine motion around the user's existing
+        // FILTER CUTOFF. It edits *only* Helm's cutoff parameter, on Unity's
+        // main thread; no changes to AudioHelm's native MIDI dispatcher.
+        private void UpdateFilterMotion()
+        {
+            if (!playing || song == null || song.tracks == null) return;
+            for (int index = 1; index <= 3 && index < song.tracks.Count; index++)
+            {
+                var track = song.tracks[index];
+                InstrumentState instrument = track != null ? track.instrument : null;
+                if (!trackControllers.TryGetValue(index, out HelmController helm) || helm == null)
+                    continue;
+                bool enabled = instrument != null && instrument.filterMotionEnabled &&
+                    instrument.filterMotionDepth > .0005f;
+                if (!enabled)
+                {
+                    RestoreMotionTrack(index);
+                    continue;
+                }
+                if (motionControllers.TryGetValue(index, out HelmController owner) && owner != helm)
+                    RestoreMotionTrack(index);
+                float center = Mathf.Clamp01(instrument.filterMotionCenter);
+                if (instrument.filterMotionCenter < 0f)
+                {
+                    try { center = Mathf.Clamp01(helm.GetParameterPercent(Param.kFilterCutoff)); }
+                    catch (Exception) { continue; }
+                }
+                // Cycle counts in bars. 1/2, 1, 2, 4 bars at the song BPM.
+                int rate = Mathf.Clamp(instrument.filterMotionRate, 0, 3);
+                double bars = rate == 0 ? .5 : rate == 1 ? 1.0 : rate == 2 ? 2.0 : 4.0;
+                double phase = (CurrentTick / (SongData.TicksPerBar4 * bars)) * (Math.PI * 2.0);
+                float target = Mathf.Clamp01(center + Mathf.Sin((float)phase) *
+                    Mathf.Clamp01(instrument.filterMotionDepth) * .22f);
+                float old = motionCutoff.TryGetValue(index, out float previous) ? previous : center;
+                // Soft 35 ms parameter slew to avoid zipper artifacts at 30fps.
+                float alpha = 1f - Mathf.Exp(-Time.unscaledDeltaTime / .035f);
+                float amount = Mathf.Lerp(old, target, alpha);
+                try
+                {
+                    helm.SetParameterPercent(Param.kFilterCutoff, amount);
+                    // Project patch snapshots should retain the *center*, never
+                    // the moving cutoff at an arbitrary playback instant.
+                    ZPunkSoundUI.RecordLiveEdit(helm, Param.kFilterCutoff, center);
+                    motionCutoff[index] = amount;
+                    motionControllers[index] = helm;
+                }
+                catch (Exception) { RestoreMotionTrack(index); }
+            }
+        }
+
+        private void RestoreMotionTrack(int index)
+        {
+            if (!motionControllers.TryGetValue(index, out HelmController owner)) return;
+            if (owner != null && song != null && song.tracks != null && index < song.tracks.Count)
+            {
+                var state = song.tracks[index] != null ? song.tracks[index].instrument : null;
+                if (state != null && state.filterMotionCenter >= 0f)
+                {
+                    try { owner.SetParameterPercent(Param.kFilterCutoff, Mathf.Clamp01(state.filterMotionCenter)); }
+                    catch (Exception) { }
+                }
+            }
+            motionControllers.Remove(index);
+            motionCutoff.Remove(index);
+        }
+
+        private void RestoreAllMotion()
+        {
+            foreach (int index in new List<int>(motionControllers.Keys)) RestoreMotionTrack(index);
         }
 
         private void MeterNoteOn(int index, int note, float velocity)
@@ -1332,6 +1441,8 @@ namespace ZPunk.DAW
             }
             double position = (now - anchorDsp) / secondsPerTick + startTick;
             CurrentTick = (long)Math.Max(0.0, Math.Floor(position));
+            UpdateFilterMotion();
+            UpdateBassDucking(now);
             // The existing 16-step grids still need a moving playhead in DAW mode.
             // For a song arrangement this displays the current bar-relative step.
             if (now >= anchorDsp)
@@ -1489,6 +1600,9 @@ namespace ZPunk.DAW
                     if (verbose) Debug.LogWarning($"[ZPUNK TIMING] Drum lane {e.value + 1} " +
                         "could not schedule: missing kit sample or all sample voices busy.");
                 }
+                else if (e.value == 0 && velocity > 0f && drums != null &&
+                    !drums.IsDAWDrumMuted(0) && song != null && song.bassDuck > .001f)
+                    kickDuckingStarts.Enqueue(scheduledAt);
             }
             else if (e.type == SongEventPlanner.EventType.Chop && drums != null)
                 drums.ScheduleDAWChop(e.value, scheduledAt, velocity);
@@ -1524,6 +1638,10 @@ namespace ZPunk.DAW
             bool wasExporting = exportingOneShot;
             playing = false;
             scheduledSamples.Clear();
+            kickDuckingStarts.Clear();
+            lastKickDuckingAt = -100.0;
+            currentBassDuckGain = 1f;
+            RestoreAllMotion();
             activeLoopEnabled = false;
             quantizedLoopRestartPending = false;
             meterNoteVelocities.Clear();
@@ -1542,6 +1660,7 @@ namespace ZPunk.DAW
             }
             if (clock != null) clock.pause = true;
             CurrentTick = 0;
+            ApplyAllTrackGains(); // Restore the un-ducked bass after STOP.
             // Undo isolated mixer attenuation at the end of a bounce.
             if (wasExporting && projects != null)
             {

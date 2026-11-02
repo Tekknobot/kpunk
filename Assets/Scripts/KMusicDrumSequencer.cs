@@ -53,6 +53,12 @@ public class KMusicDrumSequencer : MonoBehaviour
     // When routeDrumsToMixer is true, we use per-drum AudioSource voice pools (for mixer routing + meters).
     private readonly Dictionary<int, List<AudioSource>> _drumVoicePools = new();
     private readonly DrumShapeData[] _dawDrumShapes = new DrumShapeData[8];
+    // Club low-end: isolated rumble voices cannot steal or delay the dry kick.
+    // Defaults off for every older project. Rumble follows the kick bus fader/mute.
+    public float DawKickRumble { get; set; }
+    private readonly List<AudioSource> _rumbleVoices = new List<AudioSource>();
+    private AudioClip _rumbleSourceKick, _rumbleClip;
+    private const int MaxRumbleVoices = 20;
 
     // Invoked on song load, editor shape changes and playback/export preparation.
     public void ApplyDAWDrumDesign(List<DrumShapeData> lanes)
@@ -183,6 +189,14 @@ public class KMusicDrumSequencer : MonoBehaviour
                 }
                 else GetOrCreateDrumVoice(lane, clip, -1.0, warm);
             }
+        }
+        // Audio clips and pooled voices are generated before the lookahead loop,
+        // so enabling the rumble never postpones a scheduled dry kick.
+        if (routeDrumsToMixer && DawKickRumble > .001f &&
+            _clipByDrumId.TryGetValue(1, out AudioClip kickForRumble) && kickForRumble != null)
+        {
+            EnsureRumbleClip(kickForRumble);
+            for (int i = _rumbleVoices.Count; i < 12; i++) CreateRumbleVoice();
         }
         if (needsChops)
         {
@@ -466,8 +480,119 @@ public class KMusicDrumSequencer : MonoBehaviour
         src.PlayScheduled(dspTime);
         _dawDrumVoiceStartsAt[src] = dspTime;
         _dawDrumVoiceBusyUntil[src] = dspTime + Math.Max(0.01, clip.length / Mathf.Max(.1f, src.pitch));
+        if (drumId == 1 && DawKickRumble > .001f)
+            ScheduleRumble(clip, dspTime, velocityScale);
         return true;
     }
+
+    // One filtered, delayed kick tail. Build only on the main thread when the
+    // kit changes; OnAudioFilterRead and PlayScheduled never allocate PCM here.
+    public void PrepareRumbleIfEnabled()
+    {
+        if (!routeDrumsToMixer || DawKickRumble <= .001f ||
+            !_clipByDrumId.TryGetValue(1, out AudioClip kick) || kick == null) return;
+        EnsureRumbleClip(kick);
+        for (int i = _rumbleVoices.Count; i < 12; i++) CreateRumbleVoice();
+    }
+
+    private void EnsureRumbleClip(AudioClip kick)
+    {
+        if (kick == null || (_rumbleSourceKick == kick && _rumbleClip != null)) return;
+        foreach (var v in _rumbleVoices)
+        {
+            if (v == null) continue;
+            v.Stop();
+            _dawDrumVoiceStartsAt.Remove(v);
+            _dawDrumVoiceBusyUntil.Remove(v);
+        }
+        if (_rumbleClip != null) Destroy(_rumbleClip);
+        _rumbleSourceKick = kick;
+        int rate = Mathf.Max(8000, kick.frequency);
+        int frames = Mathf.CeilToInt(rate * .82f);
+        float[] output = new float[frames];
+        float[] input = null;
+        bool readable = false;
+        try
+        {
+            int samples = Mathf.Min(kick.samples, Mathf.CeilToInt(rate * .42f));
+            input = new float[samples * Mathf.Max(1, kick.channels)];
+            readable = kick.GetData(input, 0);
+        }
+        catch (Exception) { readable = false; }
+        float low = 0f, dc = 0f;
+        float keep = Mathf.Exp(-2f * Mathf.PI * 125f / rate);
+        float dcKeep = Mathf.Exp(-2f * Mathf.PI * 24f / rate);
+        int delayA = Mathf.Max(1, Mathf.RoundToInt(rate * .105f));
+        int delayB = Mathf.Max(1, Mathf.RoundToInt(rate * .213f));
+        int kickChannels = Mathf.Max(1, kick.channels);
+        for (int i = 0; i < frames; i++)
+        {
+            float raw = 0f;
+            int sourceFrame = i - Mathf.RoundToInt(rate * .045f);
+            if (readable && sourceFrame >= 0 && sourceFrame * kickChannels < input.Length)
+                for (int ch = 0; ch < kickChannels; ch++) raw += input[sourceFrame * kickChannels + ch] / kickChannels;
+            else if (!readable)
+            {
+                // Compressed/non-readable clips: a quiet, falling sine tail.
+                float t = i / (float)rate;
+                raw = Mathf.Sin(2f * Mathf.PI * (60f * t - 11f * t * t)) * Mathf.Exp(-t * 12f) * .5f;
+            }
+            low = keep * low + (1f - keep) * raw;
+            float smear = i >= delayA ? output[i - delayA] * .52f : 0f;
+            if (i >= delayB) smear += output[i - delayB] * .23f;
+            float faded = (low * .25f + smear) * Mathf.Exp(-i / (rate * .58f));
+            dc = dcKeep * dc + (1f - dcKeep) * faded;
+            output[i] = Mathf.Clamp(faded - dc, -.7f, .7f);
+        }
+        _rumbleClip = AudioClip.Create("ZPUNK Kick Rumble", frames, 1, rate, false);
+        _rumbleClip.SetData(output, 0);
+    }
+
+    private AudioSource CreateRumbleVoice()
+    {
+        var obj = new GameObject("KickRumble_" + _rumbleVoices.Count);
+        obj.transform.SetParent(transform, false);
+        var src = obj.AddComponent<AudioSource>();
+        src.playOnAwake = false;
+        src.spatialBlend = 0f;
+        src.loop = false;
+        src.panStereo = 0f; // low end remains mono
+        src.outputAudioMixerGroup = GetMixerGroupForDrum(1);
+        var tap = obj.AddComponent<ZPunkSampleChannelMeter>();
+        tap.Gain = GetDrumChannelGain(1);
+        ZPunkArrangementFilters.RegisterVoice(src, true);
+        _rumbleVoices.Add(src);
+        return src;
+    }
+
+    private void ScheduleRumble(AudioClip kick, double dspTime, float velocity)
+    {
+        if (!routeDrumsToMixer || DawKickRumble <= .001f || IsDrumMuted(1)) return;
+        EnsureRumbleClip(kick);
+        if (_rumbleClip == null) return;
+        AudioSource voice = null;
+        double now = AudioSettings.dspTime;
+        foreach (var candidate in _rumbleVoices)
+        {
+            if (candidate == null) continue;
+            if (!_dawDrumVoiceBusyUntil.TryGetValue(candidate, out double until) || until <= now)
+            { voice = candidate; break; }
+        }
+        if (voice == null && _rumbleVoices.Count < MaxRumbleVoices) voice = CreateRumbleVoice();
+        if (voice == null) return; // Never sacrifice the dry kick.
+        voice.Stop();
+        voice.clip = _rumbleClip;
+        var meter = voice.GetComponent<ZPunkSampleChannelMeter>();
+        if (meter != null) meter.PrepareHit(_rumbleClip.length);
+        // Conservative tail level: the existing limiter still protects the mix.
+        voice.volume = Mathf.Clamp01(velocity) * Mathf.Clamp01(DawKickRumble) * .40f;
+        voice.PlayScheduled(dspTime);
+        _dawDrumVoiceStartsAt[voice] = dspTime;
+        _dawDrumVoiceBusyUntil[voice] = dspTime + _rumbleClip.length;
+    }
+
+    /// <summary>Return the live mute state for a DAW lane, 0..7.</summary>
+    public bool IsDAWDrumMuted(int lane) => lane < 0 || lane >= 8 || IsDrumMuted(lane + 1);
 
     /// <summary>DAW DSP event. Drum lane is 0..7, matching SongData.</summary>
     public bool ScheduleDAWDrum(int lane, double dspTime, float velocity)
@@ -589,6 +714,8 @@ public class KMusicDrumSequencer : MonoBehaviour
         foreach (var pool in _drumVoicePools.Values)
             foreach (AudioSource source in pool)
                 if (source != null) source.Stop();
+        foreach (var source in _rumbleVoices)
+            if (source != null) source.Stop();
         foreach (AudioSource source in _sampleVoicePool)
             if (source != null) source.Stop();
         _dawChopVoiceCursor = 0;
@@ -3619,6 +3746,13 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
                 var meter = source.GetComponent<ZPunkSampleChannelMeter>();
                 if (meter != null) meter.Gain = gain;
             }
+        }
+        float kickGain = GetDrumChannelGain(1);
+        foreach (var source in _rumbleVoices)
+        {
+            if (source == null) continue;
+            var meter = source.GetComponent<ZPunkSampleChannelMeter>();
+            if (meter != null) meter.Gain = kickGain;
         }
     }
 

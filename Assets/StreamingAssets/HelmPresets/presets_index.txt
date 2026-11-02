@@ -78,6 +78,7 @@ Bass/ZOR French House Analog Funk.helm
 Bass/ZOR French House Chic Pulse.helm
 Bass/ZOR French House Disco Filter.helm
 Bass/ZOR French House Funk Octave.helm
+Bass/ZOR French House Motion Pump Bass.helm
 Bass/ZOR French House Rubber Disco.helm
 Bass/ZOR French House Saturated Pick.helm
 Bass/ZOR HipHop 90s Round.helm
@@ -86,6 +87,7 @@ Bass/ZOR HipHop Dusty Moog.helm
 Bass/ZOR HipHop East Coast Pluck.helm
 Bass/ZOR HipHop Soft 808 Tail.helm
 Bass/ZOR HipHop West Coast Glide.helm
+Bass/ZOR House Motion Jack Bass.helm
 Bass/ZOR Techno 909 Rubber.helm
 Bass/ZOR Techno Acid 303.helm
 Bass/ZOR Techno Acid Venom.helm
@@ -95,6 +97,10 @@ Bass/ZOR Techno Concrete Hammer.helm
 Bass/ZOR Techno Detroit Sub.helm
 Bass/ZOR Techno EBM Stalker.helm
 Bass/ZOR Techno Iron Teeth.helm
+Bass/ZOR Techno Motion Acid Valve.helm
+Bass/ZOR Techno Motion EBM Piston.helm
+Bass/ZOR Techno Motion Steel Rotor.helm
+Bass/ZOR Techno Motion Tunnel Pulse.helm
 Bass/ZOR Techno Motor City FM.helm
 Bass/ZOR Techno Night Conveyor.helm
 Bass/ZOR Techno Pressure Valve.helm
@@ -216,17 +222,21 @@ Pad/ZOR French House Analog Champagne.helm
 Pad/ZOR French House Disco Strings.helm
 Pad/ZOR French House Filtered Air.helm
 Pad/ZOR French House Funk Machine.helm
+Pad/ZOR French House Motion Halo.helm
 Pad/ZOR French House Paris Chorus.helm
 Pad/ZOR HipHop Boom Bap Strings.helm
 Pad/ZOR HipHop Dusty Tape Keys.helm
 Pad/ZOR HipHop Neo Soul Clouds.helm
 Pad/ZOR HipHop Vinyl Dreams.helm
 Pad/ZOR HipHop West Coast Sunset.helm
+Pad/ZOR House Motion Afterhours.helm
 Pad/ZOR Techno Acid Atmosphere.helm
 Pad/ZOR Techno Detroit Strings.helm
 Pad/ZOR Techno Hypnotic Pulse.helm
 Pad/ZOR Techno Industrial Haze.helm
 Pad/ZOR Techno Midnight Drone.helm
+Pad/ZOR Techno Motion Black Fog.helm
+Pad/ZOR Techno Motion Circuit Wash.helm
 Percussion/CM House Pluck.helm
 Percussion/CM Lo-Fi Pluck.helm
 Percussion/COA Broken Digital Snare.helm
@@ -337,9 +347,11 @@ Synth/ZOR Eurodance Brass.helm
 Synth/ZOR Eurodance Pulse Chords.helm
 Synth/ZOR FM Electric Rain.helm
 Synth/ZOR FM Glass Keys.helm
+Synth/ZOR French House Motion Chord Sweep.helm
 Synth/ZOR French Touch Filter Keys.helm
 Synth/ZOR Garage Hollow Keys.helm
 Synth/ZOR Happy Hardcore Keys.helm
+Synth/ZOR House Motion Organ Lift.helm
 Synth/ZOR Italo Chorus Chords.helm
 Synth/ZOR Italo Disco Poly.helm
 Synth/ZOR Jungle Atmospheric Keys.helm
@@ -354,6 +366,10 @@ Synth/ZOR Rave Organ Stab.helm
 Synth/ZOR Rave Piano House.helm
 Synth/ZOR Rave Supersaw Stack.helm
 Synth/ZOR Rhodes Style Poly.helm
+Synth/ZOR Techno Motion Alarm Chord.helm
+Synth/ZOR Techno Motion Cold Stab.helm
+Synth/ZOR Techno Motion Iron Brass.helm
+Synth/ZOR Techno Motion Razor Gate.helm
 Synth/ZOR Trance Anthem Poly.helm
 Synth/ZOR Trance Poly Hook.helm
 Synth/ZOR UK Garage Chords.helm

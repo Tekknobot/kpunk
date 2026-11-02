@@ -110,6 +110,11 @@ namespace ZPunk.DAW
             {
                 int[] harmony = MakeHarmonyPlan(bars, genre, minor, progressionChoice,
                                                  progressionBarOffset, harmonyDegrees);
+                // INDUSTRIAL default is a tonic-locked EBM vamp, not a forced
+                // V-chord turnaround. Respect explicitly selected progressions
+                // and externally supplied harmonic degrees.
+                if (genre == 2 && style == 2 && progressionChoice == 0 && harmonyDegrees == null)
+                    for (int bar = 0; bar < harmony.Length; bar++) harmony[bar] = 0;
                 // Compute once per clip. All three instrument tracks see the same
                 // chord identities even when generated in separate passes.
                 var chordPlan = new ZPunkChordLibrary.Chord[bars];
@@ -612,7 +617,12 @@ namespace ZPunk.DAW
                                          int bars, int rhythm, int character,
                                          int tempoBand, bool bass)
         {
-            int choice = Mod(rhythm + (style == 1 ? 0 : (bar == 2 ? 1 : 0)), patterns.Length);
+            // Industrial chooses from eight motifs deterministically; the
+            // motif's identity remains stable across all bars, except one small
+            // A/B turn in bar three. DRIVING and MINIMAL remain unchanged.
+            int choice = style == 2
+                ? Mod(rhythm * 2 + character + (bar == 2 ? 1 : 0), patterns.Length)
+                : Mod(rhythm + (style == 1 ? 0 : (bar == 2 ? 1 : 0)), patterns.Length);
             var steps = new List<int>(patterns[choice]);
             if (style == 1)
             {
@@ -643,7 +653,13 @@ namespace ZPunk.DAW
         };
         private static readonly int[][] TechnoIndustrialBass = {
             new[] { 0, 3, 6, 8, 11, 14 }, new[] { 0, 2, 5, 8, 11, 13, 15 },
-            new[] { 0, 3, 5, 8, 10, 13, 15 }, new[] { 0, 1, 4, 7, 8, 11, 14 }
+            new[] { 0, 1, 4, 7, 8, 11, 14 },
+            // More 16-step motifs: alternating machine pulse, rolling offbeat,
+            // stuttering two-note cell and tension/release gaps.
+            new[] { 0, 2, 3, 6, 8, 10, 11, 14 },
+            new[] { 0, 3, 4, 7, 8, 11, 12, 15 },
+            new[] { 0, 2, 5, 6, 9, 10, 13, 14 },
+            new[] { 0, 1, 3, 7, 8, 9, 11, 15 }
         };
         private static readonly int[][] TechnoDrivingBass = {
             new[] { 0, 2, 3, 5, 6, 8, 10, 11, 13, 15 },
@@ -657,7 +673,11 @@ namespace ZPunk.DAW
         };
         private static readonly int[][] TechnoIndustrialLead = {
             new[] { 0, 3, 6, 10, 13 }, new[] { 2, 5, 8, 11, 14 },
-            new[] { 0, 3, 7, 10, 15 }, new[] { 1, 4, 7, 11, 14 }
+            new[] { 1, 4, 7, 11, 14 },
+            new[] { 0, 4, 6, 8, 12, 14 },
+            new[] { 2, 3, 7, 10, 11, 15 },
+            new[] { 0, 3, 6, 9, 13 },
+            new[] { 1, 5, 8, 12, 15 }
         };
         private static readonly int[][] TechnoDrivingLead = {
             new[] { 0, 2, 3, 5, 7, 8, 10, 13, 15 },
@@ -694,10 +714,18 @@ namespace ZPunk.DAW
                 }
                 else if (style == 2)
                 {
-                    // Root/fifth weight, octave blows on the cross-beat; don't
-                    // scatter random off-key chromatic notes through the loop.
+                    // EBM: a repeating root/upper-root cell. One *chosen*
+                    // tension tone (minor second or tritone) lands in a fixed
+                    // late-step slot, rather than random off-key notes.
                     if ((i + pitchChange) % 5 == 3) pitch = root + fifth;
                     else if ((i + motif) % 4 == 1) pitch = root + 12;
+                    int tensionStep = (character % 2 == 0) ? 11 : 13;
+                    if (step == tensionStep && (bar & 1) == 1)
+                        pitch = root + (character % 3 == 0 ? 1 : 6);
+                    // A brief semitone pickup in the fourth bar resolves to
+                    // the next tonic; preserve manually chosen chord changes.
+                    if (bar == bars - 1 && step == 15 && character == 4)
+                        pitch = root - 1;
                 }
                 else // DRIVING: short low 16ths with purposeful octave accents.
                 {
@@ -743,7 +771,11 @@ namespace ZPunk.DAW
                 else if (style == 2)
                 {
                     if ((i + motif) % 5 == 2) pitch += fifth;
-                    else if ((i + motif) % 5 == 4) pitch += third;
+                    else if ((i + motif) % 5 == 4) pitch += 12;
+                    // Two recurring, intentional tension colors. The pitch
+                    // returns to the root on subsequent steps.
+                    if (step == (character % 2 == 0 ? 11 : 13) && bar % 2 == 1)
+                        pitch = tonic + (character % 3 == 0 ? 1 : 6);
                 }
                 else // DRIVING: keep the 16th grid and a recognisable octave cell.
                 {
@@ -768,8 +800,9 @@ namespace ZPunk.DAW
                                                int rhythm, int character, Random r)
         {
             int root = FoldPitch(60 + key + chord.RootSemitones, 64, 54, 72);
-            // Every note belongs to the selected chord even in INDUSTRIAL.
-            int color = style == 2 ? chord.ToneNearest(3, 4) : chord.ToneNearest(7, 7);
+            // Industrial stabs are open-power intervals with occasional
+            // tritone grit; other styles still use their selected chords.
+            int color = style == 2 ? (character % 4 == 0 ? 6 : 7) : chord.ToneNearest(7, 7);
             int[] steps = style == 1 ? (rhythm % 2 == 0 ? new[] { 3 } : new[] { 11 }) :
                           style == 2 ? (rhythm % 2 == 0 ? new[] { 3, 10, 15 } : new[] { 2, 7, 13 }) :
                                        (rhythm % 2 == 0 ? new[] { 2, 6, 14 } : new[] { 3, 10, 14 });

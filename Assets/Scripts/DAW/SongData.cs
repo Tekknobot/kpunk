@@ -46,6 +46,9 @@ namespace ZPunk.DAW
         public float masterWidthOffset = 0f; // -1..1 = 70..130% stereo sides
         public float masterOutputTrimDb = 0f; // -12..+3 dB; applied before limiter
         public bool masterFxBypassed = false; // limiter always remains engaged
+        // 2.3.5: Optional club dynamics. Zero is a strict bypass for older projects.
+        public float kickRumble = 0f;   // 0..1, kick-only low passed tail
+        public float bassDuck = 0f;     // 0..1, gentle kick-triggered bass attenuation
         public List<TrackData> tracks = new List<TrackData>();
         public List<ClipContentData> contents = new List<ClipContentData>();
 
@@ -93,6 +96,11 @@ namespace ZPunk.DAW
         public List<DrumShapeData> drumDesign = new List<DrumShapeData>();
         public int legacyChordMode;
         public float savedMasterVolume = -1f;
+        // 2.3.5: Tempo-locked filter movement is opt-in and independent per synth.
+        public bool filterMotionEnabled;
+        public float filterMotionDepth; // 0..1, modulation size
+        public int filterMotionRate;    // 0=1/2 bar, 1=1 bar, 2=2 bars, 3=4 bars
+        public float filterMotionCenter = -1f; // normalized Helm cutoff; -1=uncaptured
     }
 
     [Serializable]

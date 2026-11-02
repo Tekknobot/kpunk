@@ -63,6 +63,10 @@ namespace ZPunk.DAW
         private KMusicPadSynthRuntime padRuntime;
         private KMusicHelmPresetPickerUI mainPicker;
         private ZPunkInstrumentRack rack;
+        private KMusicProjectManager songProjects;
+        private ZPunkSongTransport songTransport;
+        private Button motionToggle, motionDepthMinus, motionDepthPlus, motionRate;
+        private Label motionCaption;
         private TrackKind selected = TrackKind.Synth;
         private float nextRefresh;
         private float lastModuleWidth = -1f;
@@ -207,6 +211,8 @@ namespace ZPunk.DAW
             keyboardDrawer = keyboardBody = keyboardFrame = null;
             keyboardToggle = octaveDown = octaveUp = null;
             octaveCaption = null;
+            motionToggle = motionDepthMinus = motionDepthPlus = motionRate = null;
+            motionCaption = null;
             lastModuleWidth = -1f;
             dragging = null; dragPointer = -1;
             root.RegisterCallback<PointerDownEvent>(OnKnobDown, TrickleDown.TrickleDown);
@@ -316,6 +322,7 @@ namespace ZPunk.DAW
                 K("filter.sus", "ENV SUSTAIN", Param.kFilterSustain),
                 K("filter.rel", "ENV RELEASE", Param.kFilterRelease)
             });
+            BuildFilterMotionControls();
             BuildModule("AMPLITUDE / GLIDE", Blue, null, null, new[] {
                 K("amp.atk", "ATTACK", Param.kAmplitudeAttack),
                 K("amp.dec", "DECAY", Param.kAmplitudeDecay),
@@ -752,6 +759,123 @@ namespace ZPunk.DAW
             if (padRuntime == null) padRuntime = FindObjectOfType<KMusicPadSynthRuntime>();
             if (mainPicker == null) mainPicker = FindObjectOfType<KMusicHelmPresetPickerUI>();
             if (rack == null) rack = FindObjectOfType<ZPunkInstrumentRack>();
+            if (songProjects == null) songProjects = FindObjectOfType<KMusicProjectManager>();
+            if (songTransport == null) songTransport = FindObjectOfType<ZPunkSongTransport>();
+        }
+
+        // Small, non-scrolling performance row directly below the FILTER module.
+        // Unlike Helm LFO routing this always modulates Helm FILTER CUTOFF and
+        // always follows the current song's beat clock. No scene/UXML edits.
+        private void BuildFilterMotionControls()
+        {
+            var panel = new VisualElement();
+            panel.style.backgroundColor = Tile;
+            panel.style.width = Length.Percent(100);
+            panel.style.flexShrink = 0;
+            Corners(panel, 6);
+            panel.style.paddingLeft = 8;
+            panel.style.paddingRight = 8;
+            panel.style.paddingTop = 8;
+            panel.style.paddingBottom = 8;
+            panel.style.marginBottom = 8;
+            var heading = T("FILTER MOTION  /  TEMPO SYNC", 12, Gold);
+            heading.style.unityFontStyleAndWeight = FontStyle.Bold;
+            panel.Add(heading);
+            var controls = new VisualElement();
+            controls.style.flexDirection = FlexDirection.Row;
+            controls.style.flexWrap = Wrap.NoWrap;
+            controls.style.width = Length.Percent(100);
+            controls.style.marginTop = 6;
+            panel.Add(controls);
+            motionToggle = Action("OFF", () =>
+            {
+                EditFilterMotion(i =>
+                {
+                    i.filterMotionEnabled = !i.filterMotionEnabled;
+                    if (i.filterMotionEnabled)
+                    {
+                        // Capture the current patch cutoff when enabling. Keep
+                        // a previously chosen rate when re-enabling this track.
+                        if (ReadPercent(Controller(), Param.kFilterCutoff, out float current))
+                            i.filterMotionCenter = current;
+                        if (i.filterMotionDepth < .001f)
+                        {
+                            i.filterMotionDepth = .4f;
+                            i.filterMotionRate = 1;
+                        }
+                    }
+                });
+            });
+            motionDepthMinus = Action("−", () => EditFilterMotion(i =>
+                i.filterMotionDepth = Mathf.Clamp01(Mathf.Round(i.filterMotionDepth * 10f - 1f) / 10f)));
+            motionDepthPlus = Action("+", () => EditFilterMotion(i =>
+                i.filterMotionDepth = Mathf.Clamp01(Mathf.Round(i.filterMotionDepth * 10f + 1f) / 10f)));
+            motionRate = Action("1 BAR", () => EditFilterMotion(i =>
+                i.filterMotionRate = (Mathf.Clamp(i.filterMotionRate, 0, 3) + 1) % 4));
+            foreach (var button in new[] { motionToggle, motionDepthMinus, motionDepthPlus, motionRate })
+            {
+                button.style.minWidth = 0;
+                button.style.flexShrink = 1;
+                button.style.flexGrow = 1;
+                button.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                button.style.marginRight = 3;
+                controls.Add(button);
+            }
+            motionRate.style.flexGrow = 1.5f;
+            motionCaption = T("DEPTH 0%  ·  Set FILTER CUTOFF for center", 11, Dim);
+            motionCaption.style.whiteSpace = WhiteSpace.Normal;
+            motionCaption.style.marginTop = 6;
+            panel.Add(motionCaption);
+            moduleLayout.Add(panel);
+        }
+
+        private InstrumentState SelectedMotionState()
+        {
+            FindServices();
+            var song = songProjects != null ? songProjects.GetSongForArrangementEditor() : null;
+            int index = (int)selected;
+            if (song == null || song.tracks == null || index < 0 || index >= song.tracks.Count)
+                return null;
+            return song.tracks[index] != null ? song.tracks[index].instrument : null;
+        }
+
+        private void EditFilterMotion(Action<InstrumentState> edit)
+        {
+            FindServices();
+            if (songProjects == null) return;
+            var song = songProjects.GetSongForArrangementEditor();
+            int index = (int)selected;
+            if (song == null || song.tracks == null || index < 0 || index >= song.tracks.Count ||
+                song.tracks[index] == null) return;
+            if (!ReferenceEquals(songProjects.CurrentSong, song))
+                song = ArrangementEditing.IndependentCopy(song);
+            if (song.tracks[index].instrument == null)
+                song.tracks[index].instrument = new InstrumentState();
+            edit(song.tracks[index].instrument);
+            songProjects.AcceptArrangementEdit(song);
+            if (songTransport != null) songTransport.ApplyLiveMix(song);
+            RefreshMotionButtons();
+        }
+
+        private void RefreshMotionButtons()
+        {
+            var state = SelectedMotionState();
+            bool enabled = state != null && state.filterMotionEnabled;
+            if (motionToggle != null)
+            {
+                motionToggle.text = enabled ? "ON" : "OFF";
+                motionToggle.style.backgroundColor = enabled ? Aqua : Face;
+                motionToggle.style.color = enabled ? Face : Ink;
+            }
+            if (motionRate != null)
+            {
+                int rate = state != null ? Mathf.Clamp(state.filterMotionRate, 0, 3) : 1;
+                motionRate.text = new[] { "1/2 BAR", "1 BAR", "2 BARS", "4 BARS" }[rate];
+            }
+            if (motionCaption != null)
+                motionCaption.text = "DEPTH " + Mathf.RoundToInt(state != null ?
+                    Mathf.Clamp01(state.filterMotionDepth) * 100f : 0f) +
+                    "%   ·   CUTOFF sets the center";
         }
 
         private static bool IsDistortion(Param param)
@@ -816,6 +940,7 @@ namespace ZPunk.DAW
             }
             if (subhead != null)
                 subhead.text = selected.ToString().ToUpperInvariant() + "  /  AUDIO HELM";
+            RefreshMotionButtons();
             foreach (var m in macros) m.lastDisplay = -999;
             foreach (var sw in switches) sw.lastState = -1;
             Refresh();
@@ -944,6 +1069,7 @@ namespace ZPunk.DAW
             }
             if (presetName != null && presetName.text != preset) presetName.text = preset;
 
+            RefreshMotionButtons();
             var bus = CurrentBus();
             foreach (var sw in switches)
             {
@@ -977,6 +1103,13 @@ namespace ZPunk.DAW
                 {
                     amount = Mathf.Clamp01(stored.Normalized);
                     available = true;
+                }
+                // Show the editable center, not the currently oscillating cutoff.
+                if (m.id == "filter.cutoff")
+                {
+                    var state = SelectedMotionState();
+                    if (state != null && state.filterMotionEnabled && state.filterMotionCenter >= 0f)
+                    { amount = Mathf.Clamp01(state.filterMotionCenter); available = true; }
                 }
                 int shown = available ? Mathf.RoundToInt(amount * 1000f) : -1;
                 m.normalized = amount;
@@ -1099,6 +1232,12 @@ namespace ZPunk.DAW
                     controller.SetParameterPercent(param, amount);
 
                 RecordLiveEdit(controller, param, amount);
+                if (param == Param.kFilterCutoff)
+                {
+                    var motion = SelectedMotionState();
+                    if (motion != null && motion.filterMotionEnabled)
+                        EditFilterMotion(i => i.filterMotionCenter = amount);
+                }
 
                 // A single-voice patch has no unison spread, so DETUNE can
                 // appear broken. Raise only that oscillator to 2 voices on

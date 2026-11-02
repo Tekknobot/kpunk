@@ -632,7 +632,24 @@ namespace ZPunk.DAW
             MasterFxKnob(grid, "OUT", -12f, 3f, 15, output,
                 v => EditMasterFx(s => s.masterOutputTrimDb = v),
                 v => (v > 0f ? "+" : "") + Mathf.RoundToInt(v) + "dB");
-            var detail = Text("Tap L/R or drag to step. Master limiter always on (-1 dBFS sample peak).", 10, Dim);
+            // These are NOT master-bus FX: RUMBLE creates a separate kick tail;
+            // DUCK attenuates the BASS output on audible kick triggers only.
+            var lowEndHeader = Text("KICK / BASS  ·  CLUB LOW END", 12, Aqua);
+            lowEndHeader.style.unityFontStyleAndWeight = FontStyle.Bold;
+            lowEndHeader.style.marginTop = 9;
+            panel.Add(lowEndHeader);
+            var lowEndGrid = new VisualElement();
+            lowEndGrid.style.flexDirection = FlexDirection.Row;
+            lowEndGrid.style.width = Length.Percent(100);
+            panel.Add(lowEndGrid);
+            MasterFxKnob(lowEndGrid, "RUMBLE", 0f, 1f, 10, song != null ? song.kickRumble : 0f,
+                v => EditMasterFx(s => s.kickRumble = v),
+                v => Mathf.RoundToInt(v * 100f) + "%");
+            MasterFxKnob(lowEndGrid, "BASS DUCK", 0f, 1f, 10, song != null ? song.bassDuck : 0f,
+                v => EditMasterFx(s => s.bassDuck = v),
+                v => Mathf.RoundToInt(v * 100f) + "%");
+            foreach (var control in lowEndGrid.Children()) control.style.width = Length.Percent(50);
+            var detail = Text("Tap L/R or drag to step. Master limiter always on (-1 dBFS sample peak). Rumble requires routed drum voices.", 10, Dim);
             detail.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(detail);
             lanes.Add(panel);
