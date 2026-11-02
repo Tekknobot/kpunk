@@ -2225,22 +2225,40 @@ namespace ZPunk.DAW
 
         private void ShowSampler(bool value)
         {
+            // This method also runs on CREATE track changes. Never turn a closed
+            // chord menu back on when restoring the regular editor controls.
+            CloseChordMenu();
+            bool wasShowingSampler = showingSampler;
             showingSampler = value;
-            // The Drum Designer is an overlay, not part of the normal clip-editor
-            // layout. Track switches call ShowSampler(false), so never restore the
-            // overlay along with the regular editor controls.
             ShowDrumDesigner(false);
             if (root == null || samplerPage == null) return;
+            if (!value && !wasShowingSampler)
+            {
+                // No sampler transition: leave the other controls' visibility
+                // alone. In particular, don't revive a hidden popup or toolbar.
+                CloseGenerator();
+                RefreshChordDrawToolbar();
+                RefreshKitSelector();
+                return;
+            }
             foreach (var child in root.Children())
             {
-                if (child == generatorPanel || child == drumDesignerPage)
+                if (child == generatorPanel || child == drumDesignerPage || child == chordMenuOverlay)
                     child.style.display = DisplayStyle.None;
                 else if (child == samplerPage)
                     child.style.display = value ? DisplayStyle.Flex : DisplayStyle.None;
+                else if (child == chordDrawToolbar)
+                    child.style.display = !value && IsChordTrack ? DisplayStyle.Flex : DisplayStyle.None;
                 else
                     child.style.display = value ? DisplayStyle.None : DisplayStyle.Flex;
             }
-            if (!value) { RefreshKitSelector(); return; }
+            if (!value)
+            {
+                RefreshChordDrawToolbar();
+                RefreshClipSampleKeyReference();
+                RefreshKitSelector();
+                return;
+            }
             FindSampler();
             samplePlayer?.DawPrepareSliceLab();
             if (samplerWave != null && samplerWave.childCount == 0)
@@ -2411,6 +2429,7 @@ namespace ZPunk.DAW
         public void OnShown(int requestedTrack=-1, string requestedClip=null)
         {
             if (!ready) return;
+            CloseChordMenu();
             ShowSampler(false);
             ShowDrumDesigner(false);
             if (projects == null) projects = FindObjectOfType<KMusicProjectManager>();
@@ -2507,6 +2526,7 @@ namespace ZPunk.DAW
         }
         private void SelectTrack(int index)
         {
+            CloseChordMenu();
             ShowDrumDesigner(false);
             ShowSampler(false);
             trackIndex = index;
