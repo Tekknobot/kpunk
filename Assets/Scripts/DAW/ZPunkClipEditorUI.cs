@@ -66,6 +66,28 @@ namespace ZPunk.DAW
         private ZPunkSongTransport songTransport;
         private ScrollView scroller;
         private Label title, info, selectedInfo;
+        // 2.3.4: The chord brush is exclusive to SYNTH and PADS. Chord groups
+        // are ordinary MIDI notes, with an optional persistent edit-group ID.
+        private VisualElement chordDrawToolbar;
+        private Button noteDrawButton, chordDrawButton;
+        private PopupField<string> chordQualityField, chordLengthField;
+        private bool chordDrawEnabled;
+        private int chordQualityIndex = 1; // Minor triad
+        private int chordLengthIndex = 2; // Quarter note
+        private static readonly string[] ChordQualityLabels =
+            { "MAJ", "MIN", "DIM", "SUS2", "SUS4", "7", "MAJ7", "MIN7" };
+        private static readonly int[][] ChordIntervals = {
+            new[] { 0, 4, 7 }, new[] { 0, 3, 7 }, new[] { 0, 3, 6 },
+            new[] { 0, 2, 7 }, new[] { 0, 5, 7 }, new[] { 0, 4, 7, 10 },
+            new[] { 0, 4, 7, 11 }, new[] { 0, 3, 7, 10 }
+        };
+        private static readonly string[] ChordLengthLabels =
+            { "1/16", "1/8", "1/4", "1/2", "1 BAR", "2 BARS" };
+        private static readonly long[] ChordLengthTicks = {
+            SongData.TicksPerSixteenth, SongData.TicksPerSixteenth * 2L,
+            SongData.TicksPerQuarter, SongData.TicksPerQuarter * 2L,
+            SongData.TicksPerBar4, SongData.TicksPerBar4 * 2L
+        };
         private VisualElement velocityFill, velocityThumb;
         private readonly List<VelocityDisplay> velocityDisplays = new List<VelocityDisplay>();
         private VisualElement kitSelector, trackScopeRow;
@@ -128,6 +150,16 @@ namespace ZPunk.DAW
             public long candidateTick;
             public long candidateDuration;
             public int candidatePitch;
+            public List<ChordGestureNote> chordMembers; // populated only in CHORD mode
+        }
+        private sealed class ChordGestureNote
+        {
+            public int index;
+            public long tick, duration;
+            public int pitch;
+            public long candidateTick, candidateDuration;
+            public int candidatePitch;
+            public VelocityDisplay display;
         }
         private Drag drag;
         private sealed class MidiNoteTouchTarget
@@ -384,6 +416,51 @@ namespace ZPunk.DAW
             controls.Add(deleteNote);
             controls.Add(generatorQuickButton);
             root.Add(controls);
+
+            // A compact second row appears only on SYNTH/PADS. Popup selectors
+            // offer direct access to every chord quality and duration on phones.
+            chordDrawToolbar = new VisualElement { name = "ZPunkChordDrawToolbar" };
+            chordDrawToolbar.style.flexDirection = FlexDirection.Row;
+            chordDrawToolbar.style.flexWrap = Wrap.NoWrap;
+            chordDrawToolbar.style.alignItems = Align.Center;
+            chordDrawToolbar.style.width = new Length(100, LengthUnit.Percent);
+            chordDrawToolbar.style.height = 45;
+            chordDrawToolbar.style.flexShrink = 0;
+            chordDrawToolbar.style.marginBottom = 3;
+            noteDrawButton = EqualButton("NOTE", () => { chordDrawEnabled = false; RefreshChordDrawToolbar(); RefreshVelocityDisplays(); });
+            chordDrawButton = EqualButton("CHORD", () => { chordDrawEnabled = true; RefreshChordDrawToolbar(); RefreshVelocityDisplays(); });
+            noteDrawButton.tooltip = "Draw and edit individual notes";
+            chordDrawButton.tooltip = "Tap a root pitch to draw a whole chord; drag any chord note to move the group";
+            chordDrawToolbar.Add(noteDrawButton);
+            chordDrawToolbar.Add(chordDrawButton);
+            chordQualityField = new PopupField<string>(new List<string>(ChordQualityLabels), chordQualityIndex);
+            chordQualityField.name = "ZPunkChordQuality";
+            chordQualityField.tooltip = "Chord quality (tap to choose)";
+            chordQualityField.style.flexGrow = 1;
+            chordQualityField.style.flexShrink = 1;
+            chordQualityField.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            chordQualityField.style.minWidth = 0;
+            chordQualityField.style.marginLeft = 2;
+            chordQualityField.style.marginRight = 2;
+            chordQualityField.style.color = Ink;
+            chordQualityField.RegisterValueChangedCallback(evt =>
+                chordQualityIndex = Math.Max(0, Array.IndexOf(ChordQualityLabels, evt.newValue)));
+            chordDrawToolbar.Add(chordQualityField);
+            chordLengthField = new PopupField<string>(new List<string>(ChordLengthLabels), chordLengthIndex);
+            chordLengthField.name = "ZPunkChordLength";
+            chordLengthField.tooltip = "Chord note duration (tap to choose)";
+            chordLengthField.style.flexGrow = 1;
+            chordLengthField.style.flexShrink = 1;
+            chordLengthField.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            chordLengthField.style.minWidth = 0;
+            chordLengthField.style.marginLeft = 2;
+            chordLengthField.style.marginRight = 2;
+            chordLengthField.style.color = Ink;
+            chordLengthField.RegisterValueChangedCallback(evt =>
+                chordLengthIndex = Math.Max(0, Array.IndexOf(ChordLengthLabels, evt.newValue)));
+            chordDrawToolbar.Add(chordLengthField);
+            root.Add(chordDrawToolbar);
+            RefreshChordDrawToolbar();
 
             info = Txt("Choose a track, then create or select a clip.",11,Muted);
             info.style.height = 28;
@@ -2449,13 +2526,160 @@ namespace ZPunk.DAW
             Redraw(false);
             FocusPatternNotes();
         }
+        private bool IsChordTrack => song != null && song.tracks != null &&
+            trackIndex >= 0 && trackIndex < song.tracks.Count &&
+            (song.tracks[trackIndex].kind == TrackKind.Synth ||
+             song.tracks[trackIndex].kind == TrackKind.Pads);
+
+        private bool IsChordDrawing => IsChordTrack && IsMidi && chordDrawEnabled;
+
+        private void RefreshChordDrawToolbar()
+        {
+            if (chordDrawToolbar == null) return;
+            bool available = IsChordTrack;
+            chordDrawToolbar.style.display = available ? DisplayStyle.Flex : DisplayStyle.None;
+            if (noteDrawButton != null)
+            {
+                noteDrawButton.style.backgroundColor = !chordDrawEnabled ? SelectedColor() : Raised;
+                noteDrawButton.style.color = !chordDrawEnabled ? Accent : Ink;
+            }
+            if (chordDrawButton != null)
+            {
+                chordDrawButton.style.backgroundColor = chordDrawEnabled ? SelectedColor() : Raised;
+                chordDrawButton.style.color = chordDrawEnabled ? Accent : Ink;
+            }
+            chordQualityField?.SetEnabled(available && chordDrawEnabled);
+            chordLengthField?.SetEnabled(available && chordDrawEnabled);
+        }
+
+        private string SelectedChordGroup()
+        {
+            if (!IsChordDrawing || content?.notes == null || selectedNote < 0 ||
+                selectedNote >= content.notes.Count) return null;
+            return content.notes[selectedNote]?.chordGroupId;
+        }
+
+        private bool IsMemberOfSelectedChord(int index)
+        {
+            if (index == selectedNote && selectedNote >= 0) return true;
+            string group = SelectedChordGroup();
+            return !string.IsNullOrEmpty(group) && content?.notes != null &&
+                index >= 0 && index < content.notes.Count &&
+                content.notes[index] != null && content.notes[index].chordGroupId == group;
+        }
+
+        // Tap the root in any of the 128 pitch rows; it is never forced to a
+        // preset octave. Existing notes remain untouched. The new group is
+        // saved with the clip and consists of standard NoteEvent instances.
+        // Ensure long chords play their full duration, without overlapping the
+        // next arrangement clip on the same track. Used by LEN +/- as well.
+        private bool EnsureChordClipDuration(long end)
+        {
+            if (clip == null || song == null || !IsChordTrack) return false;
+            long newLength = Math.Max(clip.lengthTicks, end - Math.Max(0L, clip.sourceOffsetTick));
+            if (newLength <= clip.lengthTicks) return true;
+            if (clip.startTick + newLength > ArrangementEditing.MaxSongTicks)
+            {
+                if (info != null) info.text = "CHORD EXCEEDS SONG LIMIT";
+                return false;
+            }
+            var track = song.tracks[trackIndex];
+            if (track?.clips != null)
+                foreach (var other in track.clips)
+                    if (other != null && other != clip && other.lengthTicks > 0 &&
+                        other.startTick < clip.startTick + newLength &&
+                        other.startTick + other.lengthTicks > clip.startTick + clip.lengthTicks)
+                    {
+                        if (info != null) info.text = "NO ROOM FOR CHORD  /  EXTEND OR MOVE THE CLIP";
+                        return false;
+                    }
+            clip.lengthTicks = newLength;
+            clip.loopEnabled = false;
+            ArrangementEditing.ExtendSong(song, clip.startTick + newLength);
+            return true;
+        }
+
+        private void InsertChord(int rootPitch, int step)
+        {
+            if (!IsChordDrawing || content == null || clip == null) return;
+            int[] intervals = ChordIntervals[Mathf.Clamp(chordQualityIndex, 0, ChordIntervals.Length - 1)];
+            if (rootPitch + intervals[intervals.Length - 1] > 127)
+            {
+                if (info != null) info.text = "CHORD ABOVE MIDI RANGE  /  CHOOSE A LOWER ROOT";
+                return;
+            }
+            long tick = (long)step * quantum;
+            long duration = ChordLengthTicks[Mathf.Clamp(chordLengthIndex, 0, ChordLengthTicks.Length - 1)];
+            long end = tick + duration;
+            // A long chord must be audible in full, not silently cut off at the
+            // end of a one-bar arrangement clip. Grow only into free track space.
+            long proposedClipLength = Math.Max(clip.lengthTicks, end - Math.Max(0L, clip.sourceOffsetTick));
+            if (proposedClipLength > clip.lengthTicks)
+            {
+                if (clip.startTick + proposedClipLength > ArrangementEditing.MaxSongTicks)
+                {
+                    if (info != null) info.text = "CHORD EXCEEDS SONG LIMIT";
+                    return;
+                }
+                var track = song.tracks[trackIndex];
+                if (track?.clips != null)
+                    foreach (var other in track.clips)
+                        if (other != null && other != clip && other.lengthTicks > 0 &&
+                            other.startTick < clip.startTick + proposedClipLength &&
+                            other.startTick + other.lengthTicks > clip.startTick + clip.lengthTicks)
+                        {
+                            if (info != null) info.text = "NO ROOM FOR CHORD  /  EXTEND OR MOVE THE CLIP";
+                            return;
+                        }
+            }
+            if (!Writable() || content == null || clip == null) return;
+            if (content.notes == null) content.notes = new List<NoteEvent>();
+            string group = ArrangementEditing.Id("chord");
+            int firstIndex = content.notes.Count;
+            foreach (int interval in intervals)
+                content.notes.Add(new NoteEvent {
+                    pitch = rootPitch + interval, startTick = tick,
+                    durationTicks = duration, velocity = velocity,
+                    chordGroupId = group
+                });
+            content.lengthTicks = Math.Max(content.lengthTicks, end);
+            if (proposedClipLength > clip.lengthTicks) EnsureChordClipDuration(end);
+            selectedNote = firstIndex;
+            selectedEventRow = -1;
+            selectedEventTick = -1;
+            Changed();
+            var focusedClip = clipId;
+            int focusedIndex = firstIndex;
+            scroller?.schedule.Execute(() => {
+                if (clipId == focusedClip && selectedNote == focusedIndex)
+                    FocusSelectedChord(focusedIndex);
+            }).ExecuteLater(30);
+        }
+
         private void ChangeLength(int direction)
         {
             if (content == null || !Writable()) return;
             if (content.kind == ClipKind.Midi && content.notes != null && selectedNote >= 0 && selectedNote < content.notes.Count)
             {
                 var n = content.notes[selectedNote];
-                n.durationTicks = Math.Max(quantum,n.durationTicks + direction * quantum);
+                if (n == null) return;
+                string group = SelectedChordGroup();
+                if (string.IsNullOrEmpty(group))
+                    n.durationTicks = Math.Max(quantum, n.durationTicks + direction * quantum);
+                else
+                {
+                    long desiredEnd = 0L;
+                    foreach (var member in content.notes)
+                        if (member != null && member.chordGroupId == group)
+                            desiredEnd = Math.Max(desiredEnd, member.startTick +
+                                Math.Max(quantum, member.durationTicks + direction * quantum));
+                    if (!EnsureChordClipDuration(desiredEnd)) return;
+                    foreach (var member in content.notes)
+                        if (member != null && member.chordGroupId == group)
+                            member.durationTicks = Math.Max(quantum, member.durationTicks + direction * quantum);
+                }
+                long noteEnd = n.startTick + n.durationTicks;
+                content.lengthTicks = Math.Max(content.lengthTicks, noteEnd);
                 Changed();
             }
             else if (clip != null)
@@ -2476,10 +2700,13 @@ namespace ZPunk.DAW
             // than leaving an inaccessible note underneath the visible one.
             int pitch = selected.pitch;
             int step = GridStepForTick(selected.startTick);
+            string group = SelectedChordGroup();
             for (int i = content.notes.Count - 1; i >= 0; i--)
             {
                 var note = content.notes[i];
-                if (note != null && note.pitch == pitch && GridStepForTick(note.startTick) == step)
+                if (note != null && (!string.IsNullOrEmpty(group)
+                    ? note.chordGroupId == group
+                    : note.pitch == pitch && GridStepForTick(note.startTick) == step))
                     content.notes.RemoveAt(i);
             }
             selectedNote = -1;
@@ -2546,7 +2773,7 @@ namespace ZPunk.DAW
         {
             foreach (var display in velocityDisplays)
             {
-                bool selected = IsMidi ? display.noteIndex == selectedNote && selectedNote >= 0 :
+                bool selected = IsMidi ? IsMemberOfSelectedChord(display.noteIndex) :
                     display.row == selectedEventRow && display.tick == selectedEventTick && selectedEventRow >= 0;
                 display.cell.style.backgroundColor = selected ? Accent : colors[Mathf.Min(trackIndex, 4)];
                 display.cell.style.borderBottomWidth = selected ? 2 : 0;
@@ -2563,8 +2790,11 @@ namespace ZPunk.DAW
             if (content.kind == ClipKind.Midi)
             {
                 if (selectedNote < 0 || content.notes == null || selectedNote >= content.notes.Count ||
-                    content.notes[selectedNote] == null || content.notes[selectedNote].velocity == velocity || !Writable()) return;
-                content.notes[selectedNote].velocity = velocity;
+                    content.notes[selectedNote] == null || !Writable()) return;
+                string group = SelectedChordGroup();
+                if (string.IsNullOrEmpty(group)) content.notes[selectedNote].velocity = velocity;
+                else foreach (var member in content.notes)
+                    if (member != null && member.chordGroupId == group) member.velocity = velocity;
             }
             else if (content.kind == ClipKind.Drums)
             {
@@ -2589,7 +2819,7 @@ namespace ZPunk.DAW
             // slider is moving; the scroll position and touch gesture stay put.
             foreach (var display in velocityDisplays)
             {
-                bool selected = IsMidi ? display.noteIndex == selectedNote && selectedNote >= 0 :
+                bool selected = IsMidi ? IsMemberOfSelectedChord(display.noteIndex) :
                     display.row == selectedEventRow && display.tick == selectedEventTick && selectedEventRow >= 0;
                 if (selected) display.velocity = velocity;
             }
@@ -3010,9 +3240,48 @@ namespace ZPunk.DAW
                 newPitch = Mathf.Clamp(d.pitch - Mathf.RoundToInt(dy / RowH), 0, 127);
             }
 
+            if (d.chordMembers != null && d.chordMembers.Count > 0)
+            {
+                long minTick = long.MaxValue, maxEnd = 0L;
+                int minPitch = 127, maxPitch = 0;
+                foreach (var member in d.chordMembers)
+                {
+                    minTick = Math.Min(minTick, member.tick);
+                    maxEnd = Math.Max(maxEnd, member.tick + member.duration);
+                    minPitch = Math.Min(minPitch, member.pitch);
+                    maxPitch = Math.Max(maxPitch, member.pitch);
+                }
+                long deltaTick = 0L, deltaDuration = 0L;
+                int deltaPitch = 0;
+                if (d.mode == MidiDragMode.Move)
+                {
+                    deltaTick = Math.Max(-minTick, Math.Min(gridEnd - maxEnd,
+                        (long)stepDelta * quantum));
+                    deltaPitch = Mathf.Clamp(-Mathf.RoundToInt(dy / RowH), -minPitch, 127 - maxPitch);
+                }
+                else
+                {
+                    long shortest = long.MaxValue;
+                    foreach (var member in d.chordMembers) shortest = Math.Min(shortest, member.duration);
+                    deltaDuration = Math.Max(quantum - shortest, Math.Min(gridEnd - maxEnd,
+                        (long)stepDelta * quantum));
+                }
+                foreach (var member in d.chordMembers)
+                {
+                    member.candidateTick = member.tick + deltaTick;
+                    member.candidateDuration = member.duration + deltaDuration;
+                    member.candidatePitch = member.pitch + deltaPitch;
+                    PositionMidiPreview(member.display, member.candidateTick,
+                        member.candidateDuration, member.candidatePitch);
+                }
+                newStart = d.startTick + deltaTick;
+                newDuration = d.duration + deltaDuration;
+                newPitch = d.pitch + deltaPitch;
+            }
             d.candidateTick = newStart;
             d.candidateDuration = newDuration;
             d.candidatePitch = newPitch;
+            if (d.chordMembers != null) { SyncMidiNoteTouchTargets(); return; }
             if (d.preview == null) return;
             float width = Mathf.Max(13f, (float)newDuration / quantum * StepW - 2f);
             d.preview.style.left = (float)newStart / quantum * StepW + 1f;
@@ -3029,8 +3298,33 @@ namespace ZPunk.DAW
             }
         }
 
+        private static void PositionMidiPreview(VelocityDisplay display, long tick, long duration, int pitch)
+        {
+            if (display == null || display.cell == null) return;
+            float width = Mathf.Max(13f, (float)duration / SongData.TicksPerSixteenth * StepW - 2f);
+            display.cell.style.left = (float)tick / SongData.TicksPerSixteenth * StepW + 1f;
+            display.cell.style.top = (127 - pitch) * RowH + 4f;
+            display.cell.style.width = width;
+            display.meter.style.width = Mathf.Max(1f, (width - 6f) *
+                Mathf.Clamp(display.velocity, 1, 127) / 127f);
+            if (display.number != null)
+                display.number.style.display = width >= 28f ? DisplayStyle.Flex : DisplayStyle.None;
+        }
+
         private void RestoreMidiDragPreview(Drag d)
         {
+            if (d?.chordMembers != null)
+            {
+                foreach (var member in d.chordMembers)
+                {
+                    member.candidateTick = member.tick;
+                    member.candidateDuration = member.duration;
+                    member.candidatePitch = member.pitch;
+                    PositionMidiPreview(member.display, member.tick, member.duration, member.pitch);
+                }
+                SyncMidiNoteTouchTargets();
+                return;
+            }
             if (d == null || d.preview == null) return;
             float width = Mathf.Max(13f, (float)d.duration / quantum * StepW - 2f);
             d.preview.style.left = (float)d.startTick / quantum * StepW + 1f;
@@ -3140,6 +3434,32 @@ namespace ZPunk.DAW
             }
         }
 
+        private void FocusSelectedChord(int index)
+        {
+            FocusSelectedMidiNote(index);
+            if (!IsChordDrawing || scroller?.contentViewport == null ||
+                content?.notes == null || index < 0 || index >= content.notes.Count) return;
+            string group = content.notes[index]?.chordGroupId;
+            if (string.IsNullOrEmpty(group)) return;
+            float top = float.MaxValue, bottom = float.MinValue;
+            foreach (var member in content.notes)
+            {
+                if (member == null || member.chordGroupId != group) continue;
+                float y = 25f + RowForPitch(member.pitch) * RowH;
+                top = Mathf.Min(top, y);
+                bottom = Mathf.Max(bottom, y + RowH);
+            }
+            float visible = scroller.contentViewport.resolvedStyle.height;
+            if (top == float.MaxValue || visible < RowH * 2f || bottom - top > visible - 20f) return;
+            Vector2 offset = scroller.scrollOffset;
+            if (top >= offset.y + 10f && bottom <= offset.y + visible - 10f) return;
+            float maxY = Mathf.Max(0f, 25f + EditorHeight - visible);
+            scroller.scrollOffset = new Vector2(offset.x,
+                Mathf.Clamp((top + bottom - visible) * 0.5f, 0f, maxY));
+            SyncPianoRollLabels();
+            SyncMidiNoteTouchTargets();
+        }
+
         // Create one transparent, independent touch target for each MIDI note.
         // The rightmost portion is the resize anchor; the body moves the note.
         private void AddMidiNoteTouchTarget(int index)
@@ -3181,6 +3501,22 @@ namespace ZPunk.DAW
                     candidateTick = note.startTick, candidateDuration = note.durationTicks,
                     candidatePitch = note.pitch
                 };
+                if (IsChordDrawing && !string.IsNullOrEmpty(note.chordGroupId))
+                {
+                    drag.chordMembers = new List<ChordGestureNote>();
+                    for (int i = 0; i < content.notes.Count; i++)
+                    {
+                        var member = content.notes[i];
+                        if (member == null || member.chordGroupId != note.chordGroupId) continue;
+                        drag.chordMembers.Add(new ChordGestureNote {
+                            index = i, tick = member.startTick, duration = member.durationTicks,
+                            pitch = member.pitch, candidateTick = member.startTick,
+                            candidateDuration = member.durationTicks, candidatePitch = member.pitch,
+                            display = velocityDisplays.Find(v => v.noteIndex == i)
+                        });
+                    }
+                }
+                RefreshVelocityDisplays();
                 var active = drag;
                 // Scheduled scrolling also works if the finger is held motionless
                 // at an edge of the viewport.
@@ -3244,9 +3580,10 @@ namespace ZPunk.DAW
                 var note = content.notes[target.noteIndex];
                 if (note == null) continue;
                 var active = drag != null && drag.index == target.noteIndex ? drag : null;
-                long tick = active != null ? active.candidateTick : note.startTick;
-                long duration = active != null ? active.candidateDuration : note.durationTicks;
-                int pitch = active != null ? active.candidatePitch : note.pitch;
+                ChordGestureNote member = drag?.chordMembers?.Find(m => m.index == target.noteIndex);
+                long tick = member != null ? member.candidateTick : active != null ? active.candidateTick : note.startTick;
+                long duration = member != null ? member.candidateDuration : active != null ? active.candidateDuration : note.durationTicks;
+                int pitch = member != null ? member.candidatePitch : active != null ? active.candidatePitch : note.pitch;
                 target.body.style.left = (float)tick / quantum * StepW + 1f - offset.x;
                 target.body.style.top = RowForPitch(pitch) * RowH + 4f - offset.y;
                 target.body.style.width = Mathf.Max(13f, (float)duration / quantum * StepW - 2f);
@@ -3267,10 +3604,26 @@ namespace ZPunk.DAW
             }
             var note = content.notes[d.index];
             if (note == null) { RestoreMidiDragPreview(d); return; }
-            note.startTick = d.candidateTick;
-            note.durationTicks = d.candidateDuration;
-            note.pitch = d.candidatePitch;
-            content.lengthTicks = Math.Max(content.lengthTicks, note.startTick + note.durationTicks);
+            if (d.chordMembers != null && d.chordMembers.Count > 0)
+            {
+                foreach (var member in d.chordMembers)
+                {
+                    if (member.index < 0 || member.index >= content.notes.Count ||
+                        content.notes[member.index] == null) continue;
+                    var n = content.notes[member.index];
+                    n.startTick = member.candidateTick;
+                    n.durationTicks = member.candidateDuration;
+                    n.pitch = member.candidatePitch;
+                    content.lengthTicks = Math.Max(content.lengthTicks, n.startTick + n.durationTicks);
+                }
+            }
+            else
+            {
+                note.startTick = d.candidateTick;
+                note.durationTicks = d.candidateDuration;
+                note.pitch = d.candidatePitch;
+                content.lengthTicks = Math.Max(content.lengthTicks, note.startTick + note.durationTicks);
+            }
             selectedNote = d.index;
             // Selected note remains visible after a commit, including when the
             // viewport has followed the drag to a new pitch or beat.
@@ -3285,7 +3638,7 @@ namespace ZPunk.DAW
             {
                 if (scroller == focusedScroller && clipId == focusedClipId &&
                     selectedNote == focusedIndex && IsMidi)
-                    FocusSelectedMidiNote(focusedIndex);
+                    FocusSelectedChord(focusedIndex);
             }).ExecuteLater(20);
         }
 
@@ -3379,6 +3732,7 @@ namespace ZPunk.DAW
             var designButton = root.Q<Button>("ZPunkDrumDesignerButton");
             if (designButton != null) designButton.style.display = trackIndex == 0 ? DisplayStyle.Flex : DisplayStyle.None;
             RefreshClipSampleKeyReference();
+            RefreshChordDrawToolbar();
             if (generatorQuickButton != null)
                 generatorQuickButton.SetEnabled(song.tracks[trackIndex].kind != TrackKind.Chops);
             if (title != null) title.text = song.tracks[trackIndex].name.ToUpperInvariant()+"  /  " + (clip != null ? clip.name : "NO CLIP");
@@ -3636,7 +3990,10 @@ namespace ZPunk.DAW
                     tap.hold?.Pause();
                     if (plane.HasPointerCapture(evt.pointerId)) plane.ReleasePointer(evt.pointerId);
                     if (!tap.handled && ((Vector2)evt.position - tap.start).sqrMagnitude <= 49f)
-                        ToggleGrid(tap.row, tap.step);
+                    {
+                        if (IsChordDrawing) InsertChord(PitchForRow(tap.row), tap.step);
+                        else ToggleGrid(tap.row, tap.step);
+                    }
                     evt.StopPropagation();
                     return;
                 }

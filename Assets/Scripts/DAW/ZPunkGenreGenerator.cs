@@ -845,7 +845,7 @@ namespace ZPunk.DAW
             var copy = new List<NoteEvent>(notes.Count);
             foreach (var n in notes)
                 copy.Add(new NoteEvent { startTick = n.startTick, durationTicks = n.durationTicks,
-                    pitch = n.pitch, velocity = n.velocity });
+                    pitch = n.pitch, velocity = n.velocity, chordGroupId = n.chordGroupId });
             return copy;
         }
 

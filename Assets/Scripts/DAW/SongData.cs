@@ -142,6 +142,9 @@ namespace ZPunk.DAW
         public long startTick;
         public long durationTicks;
         public int velocity;
+        // Optional 2.3.4 manual chord edit group. Older project JSON defaults to null.
+        // Chord notes remain regular independent NoteEvents for playback/export.
+        public string chordGroupId;
     }
 
     [Serializable]

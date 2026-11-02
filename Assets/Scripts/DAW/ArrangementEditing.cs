@@ -210,14 +210,31 @@ namespace ZPunk.DAW
                     {
                         var source = new List<NoteEvent>(content.notes);
                         for (long offset = period; offset < requiredSourceEnd; offset += period)
+                        {
+                            // Give each repeated chord a distinct group, but keep
+                            // the voices of that one repetition linked together.
+                            var repeatedGroups = new Dictionary<string, string>();
                             foreach (var note in source)
-                                if (note != null && note.startTick >= 0 && note.startTick < period &&
-                                    offset + note.startTick < requiredSourceEnd)
-                                    content.notes.Add(new NoteEvent {
-                                        pitch = note.pitch, velocity = note.velocity,
-                                        startTick = offset + note.startTick,
-                                        durationTicks = Math.Max(1L, Math.Min(note.durationTicks,
-                                            requiredSourceEnd - offset - note.startTick)) });
+                            {
+                                if (note == null || note.startTick < 0 || note.startTick >= period ||
+                                    offset + note.startTick >= requiredSourceEnd) continue;
+                                string group = null;
+                                if (!string.IsNullOrEmpty(note.chordGroupId))
+                                {
+                                    if (!repeatedGroups.TryGetValue(note.chordGroupId, out group))
+                                    {
+                                        group = Id("chord");
+                                        repeatedGroups[note.chordGroupId] = group;
+                                    }
+                                }
+                                content.notes.Add(new NoteEvent {
+                                    pitch = note.pitch, velocity = note.velocity,
+                                    chordGroupId = group,
+                                    startTick = offset + note.startTick,
+                                    durationTicks = Math.Max(1L, Math.Min(note.durationTicks,
+                                        requiredSourceEnd - offset - note.startTick)) });
+                            }
+                        }
                     }
                     if (content.drums != null)
                     {
