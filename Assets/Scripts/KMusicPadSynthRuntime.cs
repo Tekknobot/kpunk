@@ -72,6 +72,9 @@ namespace KMusic
 
         public int CurrentPresetIndex => _index;
         public int PresetCount => _all.Count;
+        // SOUND browser uses the same preset paths/order as the existing pad arrows.
+        public string PresetPathAt(int index) => index >= 0 && index < _all.Count
+            ? _all[index].relPath : null;
         public string LastAppliedPresetRelPath { get; private set; }
 
         public string CurrentPresetRelPath

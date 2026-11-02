@@ -31,6 +31,15 @@ namespace ZPunk.DAW
         public string BassPresetName => bassPresetIndex>=0 && bassPresetIndex<bassPresets.Count
             ? Path.GetFileNameWithoutExtension(bassPresets[bassPresetIndex]):"INITIALIZING";
         public int BassPresetCount => bassPresets.Count;
+        public string BassPresetPathAt(int index) => index >= 0 && index < bassPresets.Count
+            ? bassPresets[index] : null;
+        // Direct selection follows the identical save/load path as stepping arrows.
+        public void SelectBassPreset(int index)
+        {
+            if (index < 0 || index >= bassPresets.Count) return;
+            if (index == bassPresetIndex && loadingPresetIndex < 0) return;
+            StartCoroutine(LoadBassPreset(index, true));
+        }
         // Retained public API used by KMusicProjectManager and ZPunkSoundUI.
         public int BassPresetIndex => bassPresetIndex;
         public string CurrentBassPresetRelPath => bassPresetIndex >= 0 && bassPresetIndex < bassPresets.Count

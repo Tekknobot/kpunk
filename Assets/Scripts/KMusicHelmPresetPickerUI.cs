@@ -60,6 +60,9 @@ namespace KMusic
         public string LastAppliedPresetRelPath { get; private set; }
         public int CurrentPresetIndex => _index;
         public int SynthPresetCount => _all.Count;
+        // Read-only curated list for the SOUND search browser; same order as arrow navigation.
+        public string PresetPathAt(int index) => index >= 0 && index < _all.Count
+            ? _all[index].relPath : null;
 
         public string CurrentPresetRelPath
         {

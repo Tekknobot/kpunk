@@ -54,6 +54,13 @@ namespace ZPunk.DAW
             public int midi;
         }
         private Label subhead, presetName, instrumentStatus;
+        // Lightweight SOUND-local browser: no UXML/scene changes or new asset dependencies.
+        private VisualElement presetBrowser, presetResults;
+        private ScrollView presetScroll;
+        private Label presetResultCount;
+        private readonly Dictionary<string, Button> presetFilterButtons = new Dictionary<string, Button>();
+        private string presetFilter = "ALL";
+        private TrackKind browserTrack;
         private readonly List<Macro> macros = new List<Macro>();
         private readonly List<Switch> switches = new List<Switch>();
         private readonly List<VisualElement> moduleCells = new List<VisualElement>();
@@ -204,6 +211,11 @@ namespace ZPunk.DAW
             root.UnregisterCallback<PointerCancelEvent>(OnKnobCancel, TrickleDown.TrickleDown);
             root.UnregisterCallback<PointerCaptureOutEvent>(OnKnobCaptureLost);
             root.Clear();
+            presetBrowser = presetResults = null;
+            presetScroll = null;
+            presetResultCount = null;
+            presetFilterButtons.Clear();
+            presetFilter = "ALL";
             macros.Clear(); switches.Clear(); moduleCells.Clear();
             selectors.Clear(); knobTargets.Clear();
             auditionKeys.Clear();
@@ -259,7 +271,7 @@ namespace ZPunk.DAW
             var presetCard = new VisualElement();
             presetCard.style.flexDirection = FlexDirection.Row;
             presetCard.style.alignItems = Align.Center;
-            presetCard.style.height = 60;
+            presetCard.style.height = 74;
             presetCard.style.flexShrink = 0;
             presetCard.style.paddingLeft = 8;
             presetCard.style.paddingRight = 8;
@@ -270,12 +282,26 @@ namespace ZPunk.DAW
             prev.style.width = 44;
             prev.style.marginRight = 5;
             presetCard.Add(prev);
+            var presetCenter = new VisualElement();
+            presetCenter.style.flexGrow = 1;
+            presetCenter.style.flexShrink = 1;
+            presetCenter.style.minWidth = 0;
+            presetCenter.style.justifyContent = Justify.Center;
+            presetCenter.pickingMode = PickingMode.Position;
             presetName = T("LOADING PRESET", 12, Ink);
-            presetName.style.flexGrow = 1;
-            presetName.style.minWidth = 0;
             presetName.style.unityTextAlign = TextAnchor.MiddleCenter;
             presetName.style.whiteSpace = WhiteSpace.Normal;
-            presetCard.Add(presetName);
+            presetCenter.Add(presetName);
+            var browseHint = T("TAP TO BROWSE PATCHES", 10, Aqua);
+            browseHint.style.unityTextAlign = TextAnchor.MiddleCenter;
+            browseHint.style.marginTop = 3;
+            presetCenter.Add(browseHint);
+            // The center section is an easily discovered, generous touch target.
+            presetCenter.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (evt.button == 0) OpenPresetBrowser();
+            });
+            presetCard.Add(presetCenter);
             var next = Action(">", () => ChangePreset(1));
             next.style.width = 44;
             next.style.marginLeft = 5;
@@ -370,6 +396,7 @@ namespace ZPunk.DAW
             note.style.marginBottom = 16;
             note.style.marginLeft = 6;
             moduleLayout.Add(note);
+            BuildPresetBrowser(); // Last child is the topmost SOUND overlay.
             OnShown();
         }
 
@@ -706,11 +733,12 @@ namespace ZPunk.DAW
 
         public void OnHidden()
         {
+            ClosePresetBrowser();
             ReleaseAllAuditionNotes();
         }
 
-        private void OnDisable() { ReleaseAllAuditionNotes(); }
-        private void OnDestroy() { ReleaseAllAuditionNotes(); }
+        private void OnDisable() { ClosePresetBrowser(); ReleaseAllAuditionNotes(); }
+        private void OnDestroy() { ClosePresetBrowser(); ReleaseAllAuditionNotes(); }
         private void OnApplicationPause(bool paused)
         {
             if (paused) ReleaseAllAuditionNotes();
@@ -909,6 +937,7 @@ namespace ZPunk.DAW
         }
         private void Select(TrackKind track)
         {
+            if (selected != track) ClosePresetBrowser();
             if (selected != track) ReleaseAllAuditionNotes();
             if (dragging != null && root != null && root.HasPointerCapture(dragPointer))
                 root.ReleasePointer(dragPointer);
@@ -924,7 +953,11 @@ namespace ZPunk.DAW
                 var kind = (TrackKind)requestedTrack;
                 if (kind == TrackKind.Bass || kind == TrackKind.Synth || kind == TrackKind.Pads)
                 {
-                    if (selected != kind) ReleaseAllAuditionNotes();
+                    if (selected != kind)
+                    {
+                        ClosePresetBrowser();
+                        ReleaseAllAuditionNotes();
+                    }
                     selected = kind;
                 }
             }
@@ -963,6 +996,206 @@ namespace ZPunk.DAW
                 mainPicker.ApplyPresetChoice(mainPicker.CurrentPresetIndex + direction, null);
             else if (selected == TrackKind.Pads && padRuntime != null)
                 padRuntime.StepPreset(direction);
+            Refresh();
+        }
+
+        // ---------------------------------------------------------------------
+        // Searchable ZOR preset browser for BASS / SYNTH / PADS.
+        // The list is drawn from the existing indexed banks; choosing a row
+        // calls the existing loader, preserving project saves and patch edits.
+        // ---------------------------------------------------------------------
+        private void BuildPresetBrowser()
+        {
+            presetBrowser = new VisualElement();
+            presetBrowser.style.position = Position.Absolute;
+            presetBrowser.style.left = 0;
+            presetBrowser.style.right = 0;
+            presetBrowser.style.top = 0;
+            presetBrowser.style.bottom = 0;
+            presetBrowser.style.backgroundColor = Bg;
+            presetBrowser.style.paddingLeft = 12;
+            presetBrowser.style.paddingRight = 12;
+            presetBrowser.style.paddingTop = 12;
+            presetBrowser.style.paddingBottom = 12;
+            presetBrowser.style.flexDirection = FlexDirection.Column;
+            presetBrowser.style.display = DisplayStyle.None;
+            root.Add(presetBrowser);
+
+            var header = new VisualElement();
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.alignItems = Align.Center;
+            header.style.flexShrink = 0;
+            header.style.marginBottom = 8;
+            presetBrowser.Add(header);
+            var heading = T("BROWSE PATCHES", 16, Ink);
+            heading.style.unityFontStyleAndWeight = FontStyle.Bold;
+            heading.style.flexGrow = 1;
+            header.Add(heading);
+            var close = Action("CLOSE  X", ClosePresetBrowser);
+            close.style.minHeight = 44;
+            close.style.paddingLeft = 12;
+            close.style.paddingRight = 12;
+            header.Add(close);
+
+            var hint = T("SELECT A PATCH  /  TAP TO LOAD", 11, Dim);
+            hint.style.marginBottom = 10;
+            presetBrowser.Add(hint);
+
+            var filters = new VisualElement();
+            filters.style.flexDirection = FlexDirection.Row;
+            filters.style.flexShrink = 0;
+            filters.style.marginBottom = 10;
+            foreach (var filter in new[] { "ALL", "TECHNO", "HOUSE", "MOTION" })
+            {
+                string chosen = filter;
+                var chip = Action(chosen, () =>
+                {
+                    presetFilter = chosen;
+                    PopulatePresetResults();
+                });
+                chip.style.flexGrow = 1;
+                chip.style.flexShrink = 1;
+                chip.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                chip.style.minWidth = 0;
+                chip.style.marginLeft = 2;
+                chip.style.marginRight = 2;
+                chip.style.fontSize = 10;
+                chip.style.paddingLeft = 1;
+                chip.style.paddingRight = 1;
+                presetFilterButtons[chosen] = chip;
+                filters.Add(chip);
+            }
+            presetBrowser.Add(filters);
+
+            presetResultCount = T("", 11, Dim);
+            presetResultCount.style.marginBottom = 5;
+            presetBrowser.Add(presetResultCount);
+            presetScroll = new ScrollView(ScrollViewMode.Vertical);
+            presetScroll.style.flexGrow = 1;
+            presetScroll.style.minHeight = 0;
+            presetScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            presetScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            presetBrowser.Add(presetScroll);
+            presetResults = new VisualElement();
+            presetResults.style.width = Length.Percent(100);
+            presetResults.style.flexDirection = FlexDirection.Column;
+            presetScroll.Add(presetResults);
+        }
+
+        private int BrowserPresetCount()
+        {
+            if (selected == TrackKind.Bass) return rack != null ? rack.BassPresetCount : 0;
+            if (selected == TrackKind.Pads) return padRuntime != null ? padRuntime.PresetCount : 0;
+            return mainPicker != null ? mainPicker.SynthPresetCount : 0;
+        }
+
+        private int BrowserCurrentIndex()
+        {
+            if (selected == TrackKind.Bass) return rack != null ? rack.BassPresetIndex : -1;
+            if (selected == TrackKind.Pads) return padRuntime != null ? padRuntime.CurrentPresetIndex : -1;
+            return mainPicker != null ? mainPicker.CurrentPresetIndex : -1;
+        }
+
+        private string BrowserPresetPath(int index)
+        {
+            if (selected == TrackKind.Bass) return rack != null ? rack.BassPresetPathAt(index) : null;
+            if (selected == TrackKind.Pads) return padRuntime != null ? padRuntime.PresetPathAt(index) : null;
+            return mainPicker != null ? mainPicker.PresetPathAt(index) : null;
+        }
+
+        private void OpenPresetBrowser()
+        {
+            FindServices();
+            if (presetBrowser == null || BrowserPresetCount() == 0) return;
+            ReleaseAllAuditionNotes();
+            browserTrack = selected;
+            presetFilter = "ALL";
+            // Reset the search every time so a previously hidden result is
+            // never confused with an unavailable preset.
+            presetBrowser.style.display = DisplayStyle.Flex;
+            PopulatePresetResults();
+        }
+
+        private void ClosePresetBrowser()
+        {
+            if (presetBrowser != null) presetBrowser.style.display = DisplayStyle.None;
+        }
+
+        private void PopulatePresetResults()
+        {
+            if (presetResults == null || presetBrowser == null) return;
+            if (browserTrack != selected) { ClosePresetBrowser(); return; }
+            presetResults.Clear();
+            foreach (var pair in presetFilterButtons)
+            {
+                bool chosen = pair.Key == presetFilter;
+                pair.Value.style.backgroundColor = chosen ? Aqua : Tile;
+                pair.Value.style.color = chosen ? Face : Ink;
+            }
+
+            int total = BrowserPresetCount();
+            int current = BrowserCurrentIndex();
+            int shown = 0;
+            VisualElement currentRow = null;
+            for (int i = 0; i < total; ++i)
+            {
+                string path = BrowserPresetPath(i);
+                if (string.IsNullOrEmpty(path)) continue;
+                string name = DisplayPath(path);
+                if (presetFilter != "ALL" && name.IndexOf(presetFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                int choice = i;
+                bool active = i == current;
+                var row = new Button(() => SelectPresetFromBrowser(choice));
+                row.text = (active ? "CURRENT  /  " : "") + name;
+                row.style.minHeight = 52;
+                row.style.paddingLeft = 12;
+                row.style.paddingRight = 12;
+                row.style.paddingTop = 10;
+                row.style.paddingBottom = 10;
+                row.style.marginBottom = 5;
+                row.style.unityTextAlign = TextAnchor.MiddleLeft;
+                row.style.whiteSpace = WhiteSpace.Normal;
+                row.style.fontSize = 13;
+                row.style.flexShrink = 0;
+                row.style.backgroundColor = active ? Aqua : Tile;
+                row.style.color = active ? Face : Ink;
+                Corners(row, 5);
+                presetResults.Add(row);
+                if (active) currentRow = row;
+                shown++;
+            }
+            if (shown == 0)
+            {
+                var empty = T("NO PATCHES IN THIS CATEGORY", 12, Dim);
+                empty.style.whiteSpace = WhiteSpace.Normal;
+                empty.style.marginTop = 18;
+                presetResults.Add(empty);
+            }
+            if (presetResultCount != null)
+                presetResultCount.text = selected.ToString().ToUpperInvariant() + "  /  " +
+                    shown + " OF " + total + " PATCHES";
+            // Only jump to selected on initial unfiltered browsing.
+            if (shown > 0 && currentRow != null && presetFilter == "ALL")
+                presetScroll.ScrollTo(currentRow);
+        }
+
+        private void SelectPresetFromBrowser(int index)
+        {
+            FindServices();
+            if (browserTrack != selected || index < 0 || index >= BrowserPresetCount())
+            { ClosePresetBrowser(); return; }
+            string path = BrowserPresetPath(index);
+            if (string.IsNullOrEmpty(path)) return;
+            ReleaseAllAuditionNotes();
+            if (selected == TrackKind.Bass && rack != null)
+                rack.SelectBassPreset(index);
+            else if (selected == TrackKind.Synth && mainPicker != null)
+                mainPicker.ApplyPresetChoice(index, path);
+            else if (selected == TrackKind.Pads && padRuntime != null)
+                padRuntime.ApplyPresetChoice(index, path);
+            ClosePresetBrowser();
             Refresh();
         }
 
