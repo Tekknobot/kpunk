@@ -70,7 +70,11 @@ namespace ZPunk.DAW
         // are ordinary MIDI notes, with an optional persistent edit-group ID.
         private VisualElement chordDrawToolbar;
         private Button noteDrawButton, chordDrawButton;
-        private PopupField<string> chordQualityField, chordLengthField;
+        // Compact ZPUNK-styled selectors: the Unity PopupField's reserved arrow
+        // space clipped labels such as MIN7 and 2 BARS on portrait phones.
+        private Button chordQualityButton, chordLengthButton;
+        private Label chordQualityValue, chordLengthValue;
+        private VisualElement chordMenuOverlay, chordMenuPanel;
         private bool chordDrawEnabled;
         private int chordQualityIndex = 1; // Minor triad
         private int chordLengthIndex = 2; // Quarter note
@@ -433,32 +437,17 @@ namespace ZPunk.DAW
             chordDrawButton.tooltip = "Tap a root pitch to draw a whole chord; drag any chord note to move the group";
             chordDrawToolbar.Add(noteDrawButton);
             chordDrawToolbar.Add(chordDrawButton);
-            chordQualityField = new PopupField<string>(new List<string>(ChordQualityLabels), chordQualityIndex);
-            chordQualityField.name = "ZPunkChordQuality";
-            chordQualityField.tooltip = "Chord quality (tap to choose)";
-            chordQualityField.style.flexGrow = 1;
-            chordQualityField.style.flexShrink = 1;
-            chordQualityField.style.flexBasis = new Length(0, LengthUnit.Pixel);
-            chordQualityField.style.minWidth = 0;
-            chordQualityField.style.marginLeft = 2;
-            chordQualityField.style.marginRight = 2;
-            chordQualityField.style.color = Ink;
-            chordQualityField.RegisterValueChangedCallback(evt =>
-                chordQualityIndex = Math.Max(0, Array.IndexOf(ChordQualityLabels, evt.newValue)));
-            chordDrawToolbar.Add(chordQualityField);
-            chordLengthField = new PopupField<string>(new List<string>(ChordLengthLabels), chordLengthIndex);
-            chordLengthField.name = "ZPunkChordLength";
-            chordLengthField.tooltip = "Chord note duration (tap to choose)";
-            chordLengthField.style.flexGrow = 1;
-            chordLengthField.style.flexShrink = 1;
-            chordLengthField.style.flexBasis = new Length(0, LengthUnit.Pixel);
-            chordLengthField.style.minWidth = 0;
-            chordLengthField.style.marginLeft = 2;
-            chordLengthField.style.marginRight = 2;
-            chordLengthField.style.color = Ink;
-            chordLengthField.RegisterValueChangedCallback(evt =>
-                chordLengthIndex = Math.Max(0, Array.IndexOf(ChordLengthLabels, evt.newValue)));
-            chordDrawToolbar.Add(chordLengthField);
+            // Chord selectors deliberately get more width than NOTE / CHORD.
+            // The selected value and arrow are separate, so neither can force
+            // the other to truncate or trigger a horizontal scroll.
+            noteDrawButton.style.flexGrow = .95f;
+            chordDrawButton.style.flexGrow = .95f;
+            chordQualityButton = CreateChordSelector("ZPunkChordQuality", "Chord type",
+                ChordQualityLabels[chordQualityIndex], () => OpenChordMenu(true), out chordQualityValue);
+            chordLengthButton = CreateChordSelector("ZPunkChordLength", "Chord note length",
+                ChordLengthLabels[chordLengthIndex], () => OpenChordMenu(false), out chordLengthValue);
+            chordDrawToolbar.Add(chordQualityButton);
+            chordDrawToolbar.Add(chordLengthButton);
             root.Add(chordDrawToolbar);
             RefreshChordDrawToolbar();
 
@@ -631,6 +620,7 @@ namespace ZPunk.DAW
             BuildSamplerPage();
             BuildGeneratorPanel();
             BuildDrumDesignerPage();
+            BuildChordMenuOverlay(); // Added last so it floats above the piano roll.
         }
 
         // The designer is a compact, fixed two-row panel rather than a scroll view.
@@ -2533,6 +2523,197 @@ namespace ZPunk.DAW
 
         private bool IsChordDrawing => IsChordTrack && IsMidi && chordDrawEnabled;
 
+        // No OS/Unity PopupField menus: use the app's own visual language and
+        // a fixed two-column flyout. Nothing in either menu scrolls sideways.
+        private Button CreateChordSelector(string elementName, string tooltip,
+            string initialValue, Action onClick, out Label valueLabel)
+        {
+            var button = new Button(onClick) { name = elementName, tooltip = tooltip };
+            button.style.flexDirection = FlexDirection.Row;
+            button.style.alignItems = Align.Center;
+            button.style.justifyContent = Justify.SpaceBetween;
+            button.style.flexGrow = 1.35f;
+            button.style.flexShrink = 1;
+            button.style.flexBasis = new Length(0, LengthUnit.Pixel);
+            button.style.minWidth = 0;
+            button.style.height = 43;
+            button.style.marginLeft = 2;
+            button.style.marginRight = 2;
+            button.style.paddingLeft = 8;
+            button.style.paddingRight = 6;
+            button.style.paddingTop = 0;
+            button.style.paddingBottom = 0;
+            button.style.backgroundColor = Raised;
+            button.style.borderTopLeftRadius = 7;
+            button.style.borderTopRightRadius = 7;
+            button.style.borderBottomLeftRadius = 7;
+            button.style.borderBottomRightRadius = 7;
+            button.style.borderTopWidth = 1;
+            button.style.borderBottomWidth = 1;
+            button.style.borderLeftWidth = 1;
+            button.style.borderRightWidth = 1;
+            Color outline = new Color(.32f, .42f, .53f);
+            button.style.borderTopColor = outline;
+            button.style.borderBottomColor = outline;
+            button.style.borderLeftColor = outline;
+            button.style.borderRightColor = outline;
+            button.style.overflow = Overflow.Hidden;
+
+            valueLabel = Txt(initialValue, 11, Ink);
+            valueLabel.style.flexGrow = 1;
+            valueLabel.style.flexShrink = 1;
+            valueLabel.style.minWidth = 0;
+            valueLabel.style.whiteSpace = WhiteSpace.NoWrap;
+            valueLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            valueLabel.style.unityTextAlign = TextAnchor.MiddleLeft;
+            valueLabel.pickingMode = PickingMode.Ignore;
+            button.Add(valueLabel);
+
+            var arrow = Txt("▼", 9, Accent);
+            arrow.style.width = 13;
+            arrow.style.flexShrink = 0;
+            arrow.style.marginLeft = 2;
+            arrow.style.unityTextAlign = TextAnchor.MiddleCenter;
+            arrow.pickingMode = PickingMode.Ignore;
+            button.Add(arrow);
+            return button;
+        }
+
+        private void BuildChordMenuOverlay()
+        {
+            chordMenuOverlay = new VisualElement { name = "ZPunkChordMenuOverlay" };
+            chordMenuOverlay.style.position = Position.Absolute;
+            chordMenuOverlay.style.left = 0;
+            chordMenuOverlay.style.right = 0;
+            chordMenuOverlay.style.top = 0;
+            chordMenuOverlay.style.bottom = 0;
+            chordMenuOverlay.style.backgroundColor = new Color(0, 0, 0, .25f);
+            chordMenuOverlay.style.display = DisplayStyle.None;
+            // A tap on the translucent area closes the menu, without also
+            // placing a note in the piano roll underneath.
+            chordMenuOverlay.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.target != chordMenuOverlay) return;
+                CloseChordMenu();
+                evt.StopPropagation();
+            });
+            chordMenuPanel = new VisualElement { name = "ZPunkChordMenuPanel" };
+            chordMenuPanel.style.position = Position.Absolute;
+            chordMenuPanel.style.flexDirection = FlexDirection.Column;
+            chordMenuPanel.style.paddingTop = 8;
+            chordMenuPanel.style.paddingBottom = 8;
+            chordMenuPanel.style.paddingLeft = 7;
+            chordMenuPanel.style.paddingRight = 7;
+            chordMenuPanel.style.backgroundColor = new Color(.085f, .12f, .17f);
+            chordMenuPanel.style.borderTopLeftRadius = 9;
+            chordMenuPanel.style.borderTopRightRadius = 9;
+            chordMenuPanel.style.borderBottomLeftRadius = 9;
+            chordMenuPanel.style.borderBottomRightRadius = 9;
+            chordMenuPanel.style.borderTopWidth = 1;
+            chordMenuPanel.style.borderBottomWidth = 1;
+            chordMenuPanel.style.borderLeftWidth = 1;
+            chordMenuPanel.style.borderRightWidth = 1;
+            Color edge = new Color(.36f, .48f, .57f);
+            chordMenuPanel.style.borderTopColor = edge;
+            chordMenuPanel.style.borderBottomColor = edge;
+            chordMenuPanel.style.borderLeftColor = edge;
+            chordMenuPanel.style.borderRightColor = edge;
+            chordMenuOverlay.Add(chordMenuPanel);
+            root.Add(chordMenuOverlay);
+        }
+
+        private void CloseChordMenu()
+        {
+            if (chordMenuOverlay != null)
+                chordMenuOverlay.style.display = DisplayStyle.None;
+        }
+
+        private void OpenChordMenu(bool qualities)
+        {
+            if (!IsChordDrawing || chordMenuOverlay == null || chordMenuPanel == null)
+                return;
+            string[] options = qualities ? ChordQualityLabels : ChordLengthLabels;
+            int selected = qualities ? chordQualityIndex : chordLengthIndex;
+            var anchor = qualities ? chordQualityButton : chordLengthButton;
+            chordMenuPanel.Clear();
+
+            var header = Txt(qualities ? "CHORD TYPE" : "CHORD LENGTH", 11, Accent);
+            header.style.unityFontStyleAndWeight = FontStyle.Bold;
+            header.style.marginLeft = 5;
+            header.style.marginBottom = 6;
+            header.pickingMode = PickingMode.Ignore;
+            chordMenuPanel.Add(header);
+
+            // Two columns keep all options visible on a phone. Every option
+            // remains a full label: no clipped words and no horizontal ScrollView.
+            for (int rowIndex = 0; rowIndex < (options.Length + 1) / 2; rowIndex++)
+            {
+                var row = new VisualElement();
+                row.style.flexDirection = FlexDirection.Row;
+                row.style.height = 39;
+                row.style.marginBottom = 3;
+                row.style.flexShrink = 0;
+                for (int column = 0; column < 2; column++)
+                {
+                    int index = rowIndex * 2 + column;
+                    if (index >= options.Length) break;
+                    int choice = index;
+                    bool isSelected = choice == selected;
+                    var item = new Button(() =>
+                    {
+                        if (qualities)
+                        {
+                            chordQualityIndex = choice;
+                            if (chordQualityValue != null) chordQualityValue.text = ChordQualityLabels[choice];
+                        }
+                        else
+                        {
+                            chordLengthIndex = choice;
+                            if (chordLengthValue != null) chordLengthValue.text = ChordLengthLabels[choice];
+                        }
+                        CloseChordMenu();
+                    }) { text = options[index] };
+                    item.style.flexGrow = 1;
+                    item.style.flexShrink = 1;
+                    item.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                    item.style.minWidth = 0;
+                    item.style.height = 38;
+                    item.style.marginLeft = 2;
+                    item.style.marginRight = 2;
+                    item.style.paddingLeft = 2;
+                    item.style.paddingRight = 2;
+                    item.style.fontSize = 12;
+                    item.style.whiteSpace = WhiteSpace.NoWrap;
+                    item.style.unityTextAlign = TextAnchor.MiddleCenter;
+                    item.style.unityFontStyleAndWeight = FontStyle.Bold;
+                    item.style.backgroundColor = isSelected ? SelectedColor() : Raised;
+                    item.style.color = isSelected ? Accent : Ink;
+                    item.style.borderTopLeftRadius = 6;
+                    item.style.borderTopRightRadius = 6;
+                    item.style.borderBottomLeftRadius = 6;
+                    item.style.borderBottomRightRadius = 6;
+                    row.Add(item);
+                }
+                chordMenuPanel.Add(row);
+            }
+
+            float width = Mathf.Min(226f, Mathf.Max(0f, root.resolvedStyle.width - 16f));
+            float height = 43f + ((options.Length + 1) / 2) * 42f;
+            float rootWidth = root.resolvedStyle.width;
+            float rootHeight = root.resolvedStyle.height;
+            float left = anchor.worldBound.xMin - root.worldBound.xMin;
+            left = Mathf.Clamp(left, 8f, Mathf.Max(8f, rootWidth - width - 8f));
+            float top = anchor.worldBound.yMax - root.worldBound.yMin + 4f;
+            if (top + height > rootHeight - 8f)
+                top = anchor.worldBound.yMin - root.worldBound.yMin - height - 4f;
+            top = Mathf.Clamp(top, 8f, Mathf.Max(8f, rootHeight - height - 8f));
+            chordMenuPanel.style.width = width;
+            chordMenuPanel.style.left = left;
+            chordMenuPanel.style.top = top;
+            chordMenuOverlay.style.display = DisplayStyle.Flex;
+            chordMenuOverlay.BringToFront();
+        }
+
         private void RefreshChordDrawToolbar()
         {
             if (chordDrawToolbar == null) return;
@@ -2548,8 +2729,9 @@ namespace ZPunk.DAW
                 chordDrawButton.style.backgroundColor = chordDrawEnabled ? SelectedColor() : Raised;
                 chordDrawButton.style.color = chordDrawEnabled ? Accent : Ink;
             }
-            chordQualityField?.SetEnabled(available && chordDrawEnabled);
-            chordLengthField?.SetEnabled(available && chordDrawEnabled);
+            chordQualityButton?.SetEnabled(available && chordDrawEnabled);
+            chordLengthButton?.SetEnabled(available && chordDrawEnabled);
+            if (!available || !chordDrawEnabled) CloseChordMenu();
         }
 
         private string SelectedChordGroup()
