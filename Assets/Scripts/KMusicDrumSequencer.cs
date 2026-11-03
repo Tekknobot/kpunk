@@ -508,13 +508,15 @@ public class KMusicDrumSequencer : MonoBehaviour
         if (_rumbleClip != null) Destroy(_rumbleClip);
         _rumbleSourceKick = kick;
         int rate = Mathf.Max(8000, kick.frequency);
-        int frames = Mathf.CeilToInt(rate * .82f);
+        // Longer, darker kick-derived tail. Generated once per kit (not in the
+        // audio callback), so there is no extra work on each drum trigger.
+        int frames = Mathf.CeilToInt(rate * 1.15f);
         float[] output = new float[frames];
         float[] input = null;
         bool readable = false;
         try
         {
-            int samples = Mathf.Min(kick.samples, Mathf.CeilToInt(rate * .42f));
+            int samples = Mathf.Min(kick.samples, Mathf.CeilToInt(rate * .48f));
             input = new float[samples * Mathf.Max(1, kick.channels)];
             readable = kick.GetData(input, 0);
         }
@@ -524,25 +526,39 @@ public class KMusicDrumSequencer : MonoBehaviour
         float dcKeep = Mathf.Exp(-2f * Mathf.PI * 24f / rate);
         int delayA = Mathf.Max(1, Mathf.RoundToInt(rate * .105f));
         int delayB = Mathf.Max(1, Mathf.RoundToInt(rate * .213f));
+        int sourceOffset = Mathf.RoundToInt(rate * .045f);
         int kickChannels = Mathf.Max(1, kick.channels);
+        float peak = 0f;
         for (int i = 0; i < frames; i++)
         {
+            float t = i / (float)rate;
             float raw = 0f;
-            int sourceFrame = i - Mathf.RoundToInt(rate * .045f);
+            int sourceFrame = i - sourceOffset;
             if (readable && sourceFrame >= 0 && sourceFrame * kickChannels < input.Length)
                 for (int ch = 0; ch < kickChannels; ch++) raw += input[sourceFrame * kickChannels + ch] / kickChannels;
             else if (!readable)
             {
-                // Compressed/non-readable clips: a quiet, falling sine tail.
-                float t = i / (float)rate;
-                raw = Mathf.Sin(2f * Mathf.PI * (60f * t - 11f * t * t)) * Mathf.Exp(-t * 12f) * .5f;
+                // Non-readable imported kicks still get a falling low sine tail.
+                raw = Mathf.Sin(2f * Mathf.PI * (60f * t - 11f * t * t)) * Mathf.Exp(-t * 10f) * .6f;
             }
             low = keep * low + (1f - keep) * raw;
-            float smear = i >= delayA ? output[i - delayA] * .52f : 0f;
+            float smear = i >= delayA ? output[i - delayA] * .72f : 0f;
             if (i >= delayB) smear += output[i - delayB] * .23f;
-            float faded = (low * .25f + smear) * Mathf.Exp(-i / (rate * .58f));
+            float faded = (low * .52f + smear) * Mathf.Exp(-t / 1.10f);
             dc = dcKeep * dc + (1f - dcKeep) * faded;
-            output[i] = Mathf.Clamp(faded - dc, -.7f, .7f);
+            // Fade in/out to keep the kick transient and rumble boundaries click-free.
+            float fadeIn = Mathf.Clamp01(t / .018f);
+            float fadeOut = Mathf.Clamp01((1.15f - t) / .055f);
+            float sample = Mathf.Clamp(faded - dc, -.95f, .95f) * fadeIn * fadeOut;
+            output[i] = sample;
+            peak = Mathf.Max(peak, Mathf.Abs(sample));
+        }
+        // Normalize the low-frequency tail consistently across drum kits. The
+        // output voice volume below still determines intensity; silence stays silent.
+        if (peak > .001f)
+        {
+            float normalization = Mathf.Min(10f, .78f / peak);
+            for (int i = 0; i < frames; i++) output[i] *= normalization;
         }
         _rumbleClip = AudioClip.Create("ZPUNK Kick Rumble", frames, 1, rate, false);
         _rumbleClip.SetData(output, 0);
@@ -584,8 +600,10 @@ public class KMusicDrumSequencer : MonoBehaviour
         voice.clip = _rumbleClip;
         var meter = voice.GetComponent<ZPunkSampleChannelMeter>();
         if (meter != null) meter.PrepareHit(_rumbleClip.length);
-        // Conservative tail level: the existing limiter still protects the mix.
-        voice.volume = Mathf.Clamp01(velocity) * Mathf.Clamp01(DawKickRumble) * .40f;
+        // Tapered response: 0..25% remains restrained; 100% delivers an
+        // unmistakable rumble. The kick fader/mute still applies in the PCM tap.
+        float amount = Mathf.Pow(Mathf.Clamp01(DawKickRumble), 1.35f);
+        voice.volume = Mathf.Clamp01(velocity) * amount * .85f;
         voice.PlayScheduled(dspTime);
         _dawDrumVoiceStartsAt[voice] = dspTime;
         _dawDrumVoiceBusyUntil[voice] = dspTime + _rumbleClip.length;

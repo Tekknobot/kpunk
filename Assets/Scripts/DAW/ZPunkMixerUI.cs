@@ -649,7 +649,7 @@ namespace ZPunk.DAW
                 v => EditMasterFx(s => s.bassDuck = v),
                 v => Mathf.RoundToInt(v * 100f) + "%");
             foreach (var control in lowEndGrid.Children()) control.style.width = Length.Percent(50);
-            var detail = Text("Tap L/R or drag to step. Master limiter always on (-1 dBFS sample peak). Rumble requires routed drum voices.", 10, Dim);
+            var detail = Text("Tap L/R or drag to step. Master limiter always on (-1 dBFS sample peak).", 10, Dim);
             detail.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(detail);
             lanes.Add(panel);

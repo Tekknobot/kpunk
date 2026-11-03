@@ -1290,16 +1290,34 @@ namespace ZPunk.DAW
             }
         }
 
-        // One trigger per *audible, successfully queued* kick. The bass channel
-        // gains a short envelope rather than a compressor on the whole mix.
+        // Duck only the BASS mixer group on successfully scheduled kicks.
+        // A short attack/hold followed by a beat-relative, smooth recovery
+        // makes the pump audible without changing the native MIDI scheduler.
         private void UpdateBassDucking(double now)
         {
             while (kickDuckingStarts.Count > 0 && kickDuckingStarts.Peek() <= now)
                 lastKickDuckingAt = kickDuckingStarts.Dequeue();
             float depth = song != null ? Mathf.Clamp01(song.bassDuck) : 0f;
-            double elapsed = now - lastKickDuckingAt;
-            float next = depth > .001f && elapsed >= 0.0 && elapsed < 1.0
-                ? 1f - depth * .78f * Mathf.Exp(-(float)elapsed / .145f) : 1f;
+            float elapsed = (float)(now - lastKickDuckingAt);
+            float next = 1f;
+            if (depth > .001f && elapsed >= 0f)
+            {
+                // Roughly one beat including the hold (400ms at 135 BPM).
+                // At faster tempos it shortens for four-on-the-floor kicks.
+                float beatSeconds = 60f / Mathf.Clamp(song.bpm, 40f, 240f);
+                float releaseSeconds = Mathf.Clamp(beatSeconds * .82f, .27f, .55f);
+                const float attackSeconds = .012f;
+                const float holdSeconds = .035f;
+                if (elapsed < holdSeconds + releaseSeconds)
+                {
+                    float attack = Mathf.Clamp01(elapsed / attackSeconds);
+                    float progress = Mathf.Clamp01((elapsed - holdSeconds) / releaseSeconds);
+                    // Smoothstep: strong initial dip, musical return to full volume.
+                    float recovery = 1f - progress * progress * (3f - 2f * progress);
+                    float attenuation = .84f * Mathf.Pow(depth, 1.45f) * attack * recovery;
+                    next = 1f - attenuation;
+                }
+            }
             if (Mathf.Abs(next - currentBassDuckGain) < .004f) return;
             currentBassDuckGain = next;
             if (outputMixers.TryGetValue(1, out AudioMixer mixer) && mixer != null &&
