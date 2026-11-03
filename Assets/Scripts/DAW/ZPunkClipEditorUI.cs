@@ -99,7 +99,8 @@ namespace ZPunk.DAW
         private ZPunkTrackScope trackScope;
         private float nextTrackScopeSample;
         private KMusicDrumSequencer drumEngine;
-        private VisualElement drumDesignerPage;
+        private VisualElement drumDesignerPage, drumPresetOverlay, drumPresetPanel;
+        private Button drumPresetButton;
         private Label drumDesignerLaneLabel;
         private int drumDesignerLane;
         private bool showingDrumDesigner;
@@ -668,6 +669,33 @@ namespace ZPunk.DAW
             heading.style.marginBottom = 4;
             drumDesignerPage.Add(heading);
 
+            // Presets sit above the pads without adding a scroll region or changing
+            // the original two-row, four-knob layout.
+            var presetRow = new VisualElement();
+            presetRow.style.flexDirection = FlexDirection.Row;
+            presetRow.style.alignItems = Align.Center;
+            presetRow.style.height = 35;
+            presetRow.style.flexShrink = 0;
+            presetRow.style.marginBottom = 4;
+            var presetCaption = Txt("PRESET", 11, Muted);
+            presetCaption.style.minWidth = 52;
+            presetCaption.style.unityFontStyleAndWeight = FontStyle.Bold;
+            presetRow.Add(presetCaption);
+            drumPresetButton = Btn("CUSTOM  ▾", OpenDrumPresetMenu, 0);
+            drumPresetButton.style.height = 33;
+            drumPresetButton.style.flexGrow = 1;
+            drumPresetButton.style.flexShrink = 1;
+            drumPresetButton.style.minWidth = 0;
+            drumPresetButton.style.fontSize = 11;
+            drumPresetButton.style.unityTextAlign = TextAnchor.MiddleCenter;
+            presetRow.Add(drumPresetButton);
+            var savePreset = Btn("SAVE", OpenSaveDrumPresetMenu, 54);
+            savePreset.style.height = 33;
+            savePreset.style.fontSize = 11;
+            savePreset.style.marginRight = 0;
+            presetRow.Add(savePreset);
+            drumDesignerPage.Add(presetRow);
+
             var pads = new VisualElement();
             pads.style.flexDirection = FlexDirection.Row;
             pads.style.flexWrap = Wrap.Wrap;
@@ -713,6 +741,241 @@ namespace ZPunk.DAW
             hint.style.marginTop = 5;
             drumDesignerPage.Add(hint);
             root.Add(drumDesignerPage);
+            BuildDrumPresetOverlay();
+        }
+
+        // Menu content is an overlay, not a second page or persistent scroller.
+        // Only the popup may scroll on exceptionally short phone screens.
+        private void BuildDrumPresetOverlay()
+        {
+            drumPresetOverlay = new VisualElement { name = "ZPunkDrumPresetOverlay" };
+            drumPresetOverlay.style.position = Position.Absolute;
+            drumPresetOverlay.style.left = 0;
+            drumPresetOverlay.style.right = 0;
+            drumPresetOverlay.style.top = 0;
+            drumPresetOverlay.style.bottom = 0;
+            drumPresetOverlay.style.alignItems = Align.Center;
+            drumPresetOverlay.style.justifyContent = Justify.Center;
+            drumPresetOverlay.style.backgroundColor = new Color(0f, 0f, 0f, .55f);
+            drumPresetOverlay.style.display = DisplayStyle.None;
+            drumPresetOverlay.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.target != drumPresetOverlay) return;
+                CloseDrumPresetMenu();
+                evt.StopPropagation();
+            });
+            drumPresetPanel = new VisualElement { name = "ZPunkDrumPresetPanel" };
+            drumPresetPanel.style.width = Length.Percent(94);
+            drumPresetPanel.style.flexDirection = FlexDirection.Column;
+            drumPresetPanel.style.flexShrink = 1;
+            drumPresetPanel.style.minHeight = 0;
+            drumPresetPanel.style.paddingTop = 9;
+            drumPresetPanel.style.paddingBottom = 9;
+            drumPresetPanel.style.paddingLeft = 8;
+            drumPresetPanel.style.paddingRight = 8;
+            drumPresetPanel.style.backgroundColor = Surface;
+            drumPresetPanel.style.borderTopLeftRadius = 9;
+            drumPresetPanel.style.borderTopRightRadius = 9;
+            drumPresetPanel.style.borderBottomLeftRadius = 9;
+            drumPresetPanel.style.borderBottomRightRadius = 9;
+            drumPresetPanel.style.borderTopWidth = 1;
+            drumPresetPanel.style.borderBottomWidth = 1;
+            drumPresetPanel.style.borderLeftWidth = 1;
+            drumPresetPanel.style.borderRightWidth = 1;
+            drumPresetPanel.style.borderTopColor = Accent;
+            drumPresetPanel.style.borderBottomColor = Accent;
+            drumPresetPanel.style.borderLeftColor = Accent;
+            drumPresetPanel.style.borderRightColor = Accent;
+            drumPresetOverlay.Add(drumPresetPanel);
+            root.Add(drumPresetOverlay);
+        }
+
+        private void CloseDrumPresetMenu()
+        {
+            if (drumPresetOverlay != null)
+                drumPresetOverlay.style.display = DisplayStyle.None;
+        }
+
+        private void ShowDrumPresetMenu(string heading, Action<VisualElement> populate,
+            float preferredHeight = 405f)
+        {
+            if (!showingDrumDesigner || drumPresetOverlay == null || drumPresetPanel == null) return;
+            drumPresetPanel.Clear();
+            drumPresetPanel.style.height = Mathf.Min(preferredHeight,
+                Mathf.Max(130f, root.resolvedStyle.height - 16f));
+            var title = Txt(heading, 14, Accent);
+            title.style.unityFontStyleAndWeight = FontStyle.Bold;
+            title.style.marginBottom = 8;
+            drumPresetPanel.Add(title);
+            var list = new ScrollView(ScrollViewMode.Vertical);
+            list.style.flexShrink = 1;
+            list.style.flexGrow = 1;
+            list.style.minHeight = 0;
+            list.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            list.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            populate(list.contentContainer);
+            drumPresetPanel.Add(list);
+            var close = Btn("CANCEL", CloseDrumPresetMenu, 0);
+            close.style.height = 34;
+            close.style.marginRight = 0;
+            close.style.marginTop = 6;
+            close.style.unityTextAlign = TextAnchor.MiddleCenter;
+            drumPresetPanel.Add(close);
+            drumPresetOverlay.style.display = DisplayStyle.Flex;
+            drumPresetOverlay.BringToFront();
+        }
+
+        private void AddDrumPresetOptions(VisualElement target, string[] labels, Action<int> click)
+        {
+            for (int start = 0; start < labels.Length; start += 2)
+            {
+                var row = new VisualElement();
+                row.style.flexDirection = FlexDirection.Row;
+                row.style.height = 38;
+                row.style.flexShrink = 0;
+                row.style.marginBottom = 3;
+                for (int column = 0; column < 2; ++column)
+                {
+                    int index = start + column;
+                    if (index >= labels.Length) break;
+                    int chosen = index;
+                    var b = Btn(labels[index], () => click(chosen), 0);
+                    b.style.height = 36;
+                    b.style.flexGrow = 1;
+                    b.style.flexShrink = 1;
+                    b.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                    b.style.minWidth = 0;
+                    b.style.fontSize = 11;
+                    b.style.unityTextAlign = TextAnchor.MiddleCenter;
+                    b.style.paddingLeft = 3;
+                    b.style.paddingRight = 3;
+                    row.Add(b);
+                }
+                target.Add(row);
+            }
+        }
+
+        private List<DrumShapeData> CurrentDrumShapes()
+        {
+            if (song == null || song.tracks == null || song.tracks.Count == 0 ||
+                song.tracks[0] == null || song.tracks[0].instrument == null) return null;
+            return song.tracks[0].instrument.drumDesign;
+        }
+
+        private string SelectedDrumKitId()
+        {
+            FindDrumEngine();
+            if (drumEngine != null) return drumEngine.CaptureKitId();
+            var inst = song != null && song.tracks != null && song.tracks.Count > 0 &&
+                song.tracks[0] != null ? song.tracks[0].instrument : null;
+            return inst != null ? inst.drumKitId : null;
+        }
+
+        private void RefreshDrumPresetLabel()
+        {
+            if (drumPresetButton == null) return;
+            var shapes = CurrentDrumShapes();
+            string kitId = SelectedDrumKitId();
+            for (int i = 0; i < ZPunkDrumDesignPresets.Names.Length; ++i)
+            {
+                if (!ZPunkDrumDesignPresets.Matches(shapes,
+                    ZPunkDrumDesignPresets.CreateFactory(i, kitId))) continue;
+                drumPresetButton.text = ZPunkDrumDesignPresets.Names[i] + "  ▾";
+                return;
+            }
+            for (int i = 0; i < ZPunkDrumDesignPresets.UserSlotCount; ++i)
+            {
+                if (!ZPunkDrumDesignPresets.Matches(shapes,
+                    ZPunkDrumDesignPresets.LoadUser(i))) continue;
+                drumPresetButton.text = ZPunkDrumDesignPresets.UserLabel(i) + "  ▾";
+                return;
+            }
+            drumPresetButton.text = "CUSTOM  ▾";
+        }
+
+        private void ApplyDrumPreset(List<DrumShapeData> shapes)
+        {
+            if (shapes == null || !CanWriteDrumShape()) return;
+            // An independent new list prevents modifying a saved user preset.
+            song.tracks[0].instrument.drumDesign = ZPunkDrumDesignPresets.Clone(shapes);
+            FindDrumEngine();
+            drumEngine?.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
+            CloseDrumPresetMenu();
+            RefreshDrumDesigner();
+            AuditionDrumDesigner();
+        }
+
+        private void OpenDrumPresetMenu()
+        {
+            ShowDrumPresetMenu("DRUM DESIGN PRESETS", container =>
+            {
+                var factory = Txt("FACTORY / TUNED FOR SELECTED KIT", 10, Muted);
+                factory.style.marginBottom = 5;
+                container.Add(factory);
+                AddDrumPresetOptions(container, ZPunkDrumDesignPresets.Names,
+                    index => ApplyDrumPreset(ZPunkDrumDesignPresets.CreateFactory(index, SelectedDrumKitId())));
+
+                var user = Txt("YOUR SAVED DESIGNS", 10, Muted);
+                user.style.marginTop = 5;
+                user.style.marginBottom = 5;
+                container.Add(user);
+                var labels = new string[ZPunkDrumDesignPresets.UserSlotCount];
+                for (int slot = 0; slot < labels.Length; ++slot)
+                    labels[slot] = ZPunkDrumDesignPresets.LoadUser(slot) != null
+                        ? ZPunkDrumDesignPresets.UserLabel(slot) : "EMPTY " + (slot + 1);
+                AddDrumPresetOptions(container, labels, slot =>
+                {
+                    var saved = ZPunkDrumDesignPresets.LoadUser(slot);
+                    if (saved != null) ApplyDrumPreset(saved);
+                });
+            });
+        }
+
+        private void OpenSaveDrumPresetMenu()
+        {
+            ShowDrumPresetMenu("SAVE CURRENT DRUM DESIGN", container =>
+            {
+                var hint = Txt("CHOOSE ONE OF FOUR DEVICE PRESET SLOTS", 11, Muted);
+                hint.style.marginBottom = 9;
+                container.Add(hint);
+                var labels = new string[ZPunkDrumDesignPresets.UserSlotCount];
+                for (int slot = 0; slot < labels.Length; ++slot)
+                    labels[slot] = (ZPunkDrumDesignPresets.LoadUser(slot) == null ? "SAVE " : "REPLACE ") +
+                        ZPunkDrumDesignPresets.UserLabel(slot);
+                AddDrumPresetOptions(container, labels, slot =>
+                {
+                    if (ZPunkDrumDesignPresets.LoadUser(slot) != null)
+                        ConfirmReplaceDrumPreset(slot);
+                    else SaveDrumPresetSlot(slot);
+                });
+            }, 230f);
+        }
+
+        private void ConfirmReplaceDrumPreset(int slot)
+        {
+            ShowDrumPresetMenu("REPLACE " + ZPunkDrumDesignPresets.UserLabel(slot) + "?", container =>
+            {
+                var warning = Txt("THIS WILL REPLACE THE SAVED DESIGN IN THIS SLOT.", 12, Ink);
+                warning.style.whiteSpace = WhiteSpace.Normal;
+                warning.style.marginBottom = 10;
+                container.Add(warning);
+                AddDrumPresetOptions(container, new[] { "BACK", "REPLACE" },
+                    option => { if (option == 0) OpenSaveDrumPresetMenu(); else SaveDrumPresetSlot(slot); });
+            }, 195f);
+        }
+
+        private void SaveDrumPresetSlot(int slot)
+        {
+            if (!ZPunkDrumDesignPresets.SaveUser(slot, CurrentDrumShapes()))
+            {
+                ShowDrumPresetMenu("COULD NOT SAVE PRESET", container =>
+                {
+                    container.Add(Txt("CHECK DEVICE STORAGE AND TRY AGAIN.", 12, Ink));
+                }, 185f);
+                return;
+            }
+            CloseDrumPresetMenu();
+            RefreshDrumPresetLabel();
         }
 
         private sealed class DrumKnobBinding
@@ -929,6 +1192,9 @@ namespace ZPunk.DAW
             FindDrumEngine();
             drumEngine?.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
             AuditionDrumDesigner();
+            // Moving any manual knob makes this a custom design, without
+            // forcing a re-layout while the user's pointer owns the knob.
+            if (drumPresetButton != null) drumPresetButton.text = "CUSTOM  ▾";
         }
 
         private void ResetDrumShape()
@@ -941,6 +1207,7 @@ namespace ZPunk.DAW
         private void RefreshDrumDesigner()
         {
             if (drumDesignerPage == null || song == null) return;
+            RefreshDrumPresetLabel();
             drumDesignerLaneLabel.text = DrumDesignerNames[drumDesignerLane] + "  /  SHAPE";
             for (int i = 0; i < 8; ++i)
             {
@@ -998,6 +1265,7 @@ namespace ZPunk.DAW
         private void ShowDrumDesigner(bool show)
         {
             showingDrumDesigner = show;
+            if (!show) CloseDrumPresetMenu();
             if (drumDesignerPage == null) return;
             drumDesignerPage.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
             if (show) RefreshDrumDesigner();
@@ -2243,7 +2511,8 @@ namespace ZPunk.DAW
             }
             foreach (var child in root.Children())
             {
-                if (child == generatorPanel || child == drumDesignerPage || child == chordMenuOverlay)
+                if (child == generatorPanel || child == drumDesignerPage ||
+                    child == chordMenuOverlay || child == drumPresetOverlay)
                     child.style.display = DisplayStyle.None;
                 else if (child == samplerPage)
                     child.style.display = value ? DisplayStyle.Flex : DisplayStyle.None;
