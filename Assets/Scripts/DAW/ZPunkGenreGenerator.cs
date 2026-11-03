@@ -23,6 +23,94 @@ namespace ZPunk.DAW
         private static readonly int[] Major = { 0, 2, 4, 5, 7, 9, 11 };
         private static readonly int[] Minor = { 0, 2, 3, 5, 7, 8, 10 };
 
+        // 2.3.x generator refinement: all 19 styles have an explicit musical identity.
+        // These limits shape MIDI composition only. No audio, patches, kit levels or
+        // transport/tick code is changed. Profiles are intentionally conservative:
+        // a good motif repeated musically is preferable to a busier random phrase.
+        private struct StyleDna
+        {
+            public readonly int BassNotes, SynthNotes, BassHold, SynthHold;
+            public readonly int PadVoices, MotifWeight;
+            public StyleDna(int bassNotes, int synthNotes, int bassHold, int synthHold,
+                            int padVoices, int motifWeight)
+            {
+                BassNotes = bassNotes; SynthNotes = synthNotes;
+                BassHold = bassHold; SynthHold = synthHold;
+                PadVoices = padVoices; MotifWeight = motifWeight;
+            }
+        }
+
+        private static readonly StyleDna[][] StyleDnaProfiles = {
+            // BOOM BAP: classic pocket / dusty restraint / rhythmic displacement.
+            new[] { new StyleDna(4, 4, 0, 0, 3, 2), new StyleDna(3, 3, 2, 1, 3, 3),
+                    new StyleDna(5, 5, 0, 0, 3, 2) },
+            // HOUSE: bounce / long-form warmth / chopped jackin / bold 90s hooks.
+            new[] { new StyleDna(5, 4, 0, 0, 4, 2), new StyleDna(3, 3, 2, 2, 4, 3),
+                    new StyleDna(7, 4, -1, 0, 3, 2), new StyleDna(6, 6, 0, 0, 4, 2) },
+            // TECHNO: existing independent composers retain their sixteenth grids.
+            new[] { new StyleDna(12, 10, 0, 0, 2, 3), new StyleDna(4, 3, 0, 0, 2, 3),
+                    new StyleDna(9, 7, 0, 0, 2, 3) },
+            // BREAKS: room beneath the break, especially in Jungle / Half-Time.
+            new[] { new StyleDna(4, 4, 2, 0, 3, 2), new StyleDna(3, 4, 3, 0, 3, 3),
+                    new StyleDna(3, 2, 3, 1, 2, 3) },
+            // FUNK: disco octave motion / pocket answers / electro syncopation.
+            new[] { new StyleDna(5, 4, 0, 0, 4, 2), new StyleDna(4, 3, 1, 0, 3, 3),
+                    new StyleDna(6, 6, 0, 0, 3, 2) },
+            // FRENCH HOUSE: looping filtered hooks / disco / two-bar touch phrases.
+            new[] { new StyleDna(5, 3, 0, 0, 3, 3), new StyleDna(6, 5, 0, 0, 4, 2),
+                    new StyleDna(6, 5, 0, 0, 4, 3) }
+        };
+
+        private static StyleDna Dna(int g, int s) { return StyleDnaProfiles[g][s]; }
+
+        // Pick a balanced subset of the original genre's phrase, not the first N
+        // hits: that preserves rhythmic gaps and ensures long notes have room.
+        private static int[] LimitPhraseNotes(int[] steps, int limit)
+        {
+            if (steps.Length <= limit || limit <= 0) return steps;
+            if (limit == 1) return new[] { steps[0] };
+            var result = new int[limit];
+            for (int i = 0; i < limit; i++)
+                result[i] = steps[(i * (steps.Length - 1) + (limit - 1) / 2) / (limit - 1)];
+            return result;
+        }
+
+        // A / A' / B / A'': stable first-bar fingerprint, small reply, variation
+        // in the third bar, and reprise.  A separate chord plan transposes motifs
+        // as harmonic roots change.  The same principle applies at 1-4 bar lengths.
+        private static int[] MotifRhythm(int[][] grids, int g, int s, int bar, int bars,
+                                         int rhythm, int character, int tempoBand, bool bass)
+        {
+            int variant = Mod(rhythm + (bar == 2 ? 1 : 0), grids.Length);
+            int[] steps = ShapeRhythm(grids[variant], g, s, bar, bars,
+                                      tempoBand, bass, character);
+            var notes = new List<int>(steps);
+            if (bar == 1 && notes.Count >= 4 && (character & 1) == 1)
+            {
+                // A tiny answering pickup, not another completely unrelated bar.
+                int idx = notes.Count - 2;
+                int reply = notes[idx] + ((character % 3 == 0) ? -1 : 1);
+                if (reply > 0 && reply < 16 && !notes.Contains(reply) &&
+                    !notes.Contains(reply - 1) && !notes.Contains(reply + 1))
+                    notes[idx] = reply;
+            }
+            notes.Sort();
+            StyleDna dna = Dna(g, s);
+            return LimitPhraseNotes(notes.ToArray(), bass ? dna.BassNotes : dna.SynthNotes);
+        }
+
+        // Pads should be a harmonic bed rather than a second full chord-stab track.
+        // Use the existing chord tones and voicing search, trimming only density.
+        private static int[] ShapePadVoicing(int[] voicing, int g, int s)
+        {
+            int limit = Dna(g, s).PadVoices;
+            if (voicing.Length <= limit) return voicing;
+            var shaped = new int[limit];
+            for (int i = 0; i < limit; i++)
+                shaped[i] = voicing[i * (voicing.Length - 1) / (limit - 1)];
+            return shaped;
+        }
+
         public static string Label(int genre, int style, int key, bool minor, bool synthChords = false)
         {
             genre = Clamp(genre, 0, Genres.Length - 1);
@@ -123,6 +211,10 @@ namespace ZPunk.DAW
                         harmony[bar], progressionChoice, bar, progressionBarOffset);
                 List<NoteEvent> bestNotes = null;
                 double bestScore = double.MinValue;
+                // Shared rhythmic fingerprint is independent of instrument kind;
+                // tracks generated in any order can complement each other when
+                // they use the same variation, key, genre and style.
+                int groove = Mod(variation * 13 + genre * 7 + style * 5, 4);
                 // All candidates are deterministic and editable. Score BEFORE
                 // humanization; expressive jitter should not dictate composition.
                 const int CandidateCount = 12;
@@ -132,11 +224,11 @@ namespace ZPunk.DAW
                     var candidateRng = new Random(CandidateSeed(seed, candidate, harmony, bars));
                     GenerateMidiCandidate(clip, kind, genre, style, bars, key, minor,
                                           harmony, chordPlan, synthChords, harmonyVoices,
-                                          tempoBand, candidateRng);
+                                          tempoBand, groove, candidateRng);
                     double score = ScoreCandidate(clip, kind, genre, style, minor, key,
                                                   harmony, chordPlan,
                                                   synthChords && kind == TrackKind.Synth,
-                                                  harmonyVoices, tempoBand);
+                                                  harmonyVoices, tempoBand, groove);
                     if (bestNotes == null || score > bestScore)
                     {
                         bestScore = score;
@@ -905,11 +997,15 @@ namespace ZPunk.DAW
                                                   int bars, int key, bool minor,
                                                   int[] harmony, ZPunkChordLibrary.Chord[] chordPlan,
                                                   bool synthChords, int[][] harmonyVoices,
-                                                  int tempoBand, Random r)
+                                                  int tempoBand, int groove, Random r)
         {
             int motif = r.Next(0, 16);
             int rhythm = r.Next(0, 4);
             int character = r.Next(0, 5);
+            // Preserve Techno's proven independent dedicated sequencers.
+            if (g != 2)
+                rhythm = kind == TrackKind.Bass ? groove :
+                         kind == TrackKind.Synth ? Mod(groove + 2, 4) : groove;
             int[] previousVoicing = null;
             int previousMelodyPitch = 68 + Mod(key, 5);
             // Techno gets independent per-style composers. In particular, don't
@@ -938,14 +1034,15 @@ namespace ZPunk.DAW
                     if (pads && bar > 0 && bar % 2 == 1 && harmony[bar - 1] == degree &&
                         SameChord(chordPlan[bar - 1], chord) && ShouldHoldPad(g, s, character))
                         continue;
-                    int[] voicing = ComposeVoicing(chord, key, pads, character,
-                                                  previousVoicing);
+                    int[] fullVoicing = ComposeVoicing(chord, key, pads, character,
+                                                      previousVoicing);
+                    int[] voicing = pads ? ShapePadVoicing(fullVoicing, g, s) : fullVoicing;
                     bool sustainedAcrossNext = bar + 1 < bars &&
                         SameChord(chord, chordPlan[bar + 1]);
                     ComposeChordRhythm(clip, g, s, bar, bars, degree, harmony, pads,
                                        voicing, rhythm, character, tempoBand, r,
                                        sustainedAcrossNext);
-                    previousVoicing = voicing;
+                    previousVoicing = fullVoicing;
                 }
                 else
                     ComposeMelody(clip, g, s, bar, bars, key, minor, degree, motif, rhythm,
@@ -1011,8 +1108,10 @@ namespace ZPunk.DAW
                 : new[] { new[] { 0, 5, 10, 14 }, new[] { 0, 3, 8, 13 }, new[] { 0, 6, 11, 14 }, new[] { 0, 7, 10, 15 } };
             if (g == 1)
             {
-                if (s == 1) return new[] { new[] { 0, 6, 12 }, new[] { 0, 7, 14 }, new[] { 0, 5, 11 }, new[] { 0, 8, 14 } };
-                if (s == 2) return new[] { new[] { 0, 2, 6, 9, 14 }, new[] { 0, 3, 7, 10, 15 }, new[] { 0, 2, 5, 10, 13 }, new[] { 0, 3, 6, 11, 14 } };
+                if (s == 1) return new[] { new[] { 2, 10, 14 }, new[] { 2, 8, 14 },
+                    new[] { 2, 10 }, new[] { 3, 10, 14 } };
+                if (s == 2) return new[] { new[] { 3, 6, 11, 14 }, new[] { 2, 8, 12, 15 },
+                    new[] { 3, 7, 11, 15 }, new[] { 2, 6, 9, 14 } };
                 if (s == 3) return new[] { new[] { 0, 3, 4, 7, 10, 14 }, new[] { 0, 2, 4, 8, 11, 14 }, new[] { 0, 3, 6, 8, 12, 15 }, new[] { 0, 4, 6, 10, 12, 14 } };
                 return new[] { new[] { 0, 2, 6, 10, 14 }, new[] { 0, 3, 6, 11, 14 }, new[] { 0, 2, 7, 10, 15 }, new[] { 0, 4, 6, 10, 14 } };
             }
@@ -1027,19 +1126,51 @@ namespace ZPunk.DAW
                 ? new[] { new[] { 0, 3, 6, 9, 12, 15 }, new[] { 0, 2, 5, 8, 11, 14 }, new[] { 0, 3, 7, 10, 13 }, new[] { 0, 2, 6, 9, 13, 15 } }
                 : new[] { new[] { 0, 3, 7, 10, 14 }, new[] { 0, 2, 7, 11, 14 }, new[] { 0, 5, 8, 11, 15 }, new[] { 0, 3, 6, 10, 13 } };
             if (g == 4) return s == 1
-                ? new[] { new[] { 0, 7, 10, 14 }, new[] { 0, 5, 11 }, new[] { 0, 3, 10, 15 }, new[] { 0, 7, 12 } }
+                // Short clav-style answers between the main bass attacks.
+                ? new[] { new[] { 5, 12 }, new[] { 4, 11 },
+                          new[] { 5, 9, 13 }, new[] { 4, 12, 15 } }
                 : s == 2
                 ? new[] { new[] { 0, 2, 5, 7, 10, 13 }, new[] { 0, 3, 6, 9, 12, 15 }, new[] { 0, 2, 6, 10, 14 }, new[] { 0, 3, 7, 11, 15 } }
                 : new[] { new[] { 0, 3, 6, 10, 14 }, new[] { 0, 2, 7, 10, 13 }, new[] { 0, 3, 8, 11, 14 }, new[] { 0, 5, 7, 10, 15 } };
             return s == 0
-                ? new[] { new[] { 0, 3, 6, 10, 14 }, new[] { 0, 2, 6, 11, 14 }, new[] { 0, 3, 8, 10, 15 }, new[] { 0, 5, 7, 11, 14 } }
+                // Filtered chops, different accents from the root/octave bass.
+                ? new[] { new[] { 2, 7, 10, 14 }, new[] { 2, 6, 10 },
+                          new[] { 3, 7, 11, 14 }, new[] { 2, 10, 14 } }
                 : s == 1
                 ? new[] { new[] { 0, 2, 6, 10, 14 }, new[] { 0, 4, 7, 10, 13 }, new[] { 0, 3, 6, 9, 14 }, new[] { 0, 2, 7, 11, 15 } }
                 : new[] { new[] { 0, 3, 5, 10, 13, 15 }, new[] { 0, 2, 6, 9, 12, 14 }, new[] { 0, 3, 7, 10, 14 }, new[] { 0, 5, 8, 11, 15 } };
         }
 
-        private static int[][] MelodicContours(int g)
+        private static int[][] MelodicContours(int g, int s)
         {
+            // Short motifs are purposeful. Different rhythmic identities below
+            // stop 'Deep' and 'Jackin', or 'Filter' and 'Touch', sharing a lead.
+            if (g == 0 && s == 1) return new[] { new[] { 0, 1, 0, -1, 0 },
+                new[] { 0, -1, 1, 0 }, new[] { 0, 2, 1, 0 } };
+            if (g == 0 && s == 2) return new[] { new[] { 0, 3, 0, -1, 2 },
+                new[] { 0, 2, -1, 3, 0 }, new[] { 0, -1, 2, 0 } };
+            if (g == 1 && s == 1) return new[] { new[] { 0, 1, 2, 1, 0 },
+                new[] { 0, 2, 1, 0 }, new[] { 0, 1, 0, -1 } };
+            if (g == 1 && s == 2) return new[] { new[] { 0, 2, 0, -1, 0 },
+                new[] { 0, 3, 1, 0 }, new[] { 0, -1, 2, 0 } };
+            if (g == 1 && s == 3) return new[] { new[] { 0, 2, 4, 2, 0, 3 },
+                new[] { 0, 4, 3, 2, 0 }, new[] { 0, 2, 5, 4, 2, 0 } };
+            if (g == 3 && s == 0) return new[] { new[] { 0, 1, 0, -1 },
+                new[] { 0, 2, 0, 1 }, new[] { 0, -1, 1, 0 } };
+            if (g == 3 && s == 1) return new[] { new[] { 0, 2, 1, 0 },
+                new[] { 0, 3, 0, -1 }, new[] { 0, 1, 3, 0 } };
+            if (g == 3 && s == 2) return new[] { new[] { 0, 0, -1, 0 },
+                new[] { 0, 2, 0 }, new[] { 0, -1, 0 } };
+            if (g == 4 && s == 1) return new[] { new[] { 0, 0, 1, 0 },
+                new[] { 0, -1, 0, 1 }, new[] { 0, 1, 0 } };
+            if (g == 4 && s == 2) return new[] { new[] { 0, 4, 2, 0, 3 },
+                new[] { 0, 2, 4, 0 }, new[] { 0, 4, 0, 2 } };
+            if (g == 5 && s == 0) return new[] { new[] { 0, 0, 2, 0 },
+                new[] { 0, 2, 0, 0 }, new[] { 0, 0, 1, 0 } };
+            if (g == 5 && s == 1) return new[] { new[] { 0, 2, 4, 2, 0 },
+                new[] { 0, 4, 2, 3, 0 }, new[] { 0, 2, 3, 4, 0 } };
+            if (g == 5 && s == 2) return new[] { new[] { 0, 4, 2, 1, 0 },
+                new[] { 0, 2, 4, 2, 0 }, new[] { 0, 4, 3, 2, 0 } };
             if (g == 0) return new[] { new[] { 0, 2, 3, 2, 0, -1 }, new[] { 2, 1, 0, -2, 0, 1 },
                 new[] { 0, -1, 2, 1, -2, 0 }, new[] { 0, 2, 4, 3, 2, 0 } };
             if (g == 1) return new[] { new[] { 0, 2, 4, 2, 1, 0 }, new[] { 4, 3, 2, 0, 2, 1 },
@@ -1079,9 +1210,9 @@ namespace ZPunk.DAW
         {
             int[][] grids = MelodyRhythms(g, s);
             // A-A'-B-A'' form in four bars; call/reply on short phrases.
-            int variant = Mod(rhythm + (bar == 1 ? 1 : bar == 2 ? 2 : 0), grids.Length);
-            int[] steps = ShapeRhythm(grids[variant], g, s, bar, bars, tempoBand, false, character);
-            int[][] contours = MelodicContours(g);
+            int[] steps = MotifRhythm(grids, g, s, bar, bars, rhythm, character,
+                                      tempoBand, false);
+            int[][] contours = MelodicContours(g, s);
             int[] shape = contours[Mod(motif / 4 + s, contours.Length)];
             // Previous note carries across bars, avoiding arbitrary octave resets.
             for (int i = 0; i < steps.Length; i++)
@@ -1089,14 +1220,13 @@ namespace ZPunk.DAW
                 int step = steps[i];
                 if (bar == 3 && i == steps.Length - 1 && step == 15 && character % 2 == 0) step = 14;
                 // A phrase answers rather than copying its call note-for-note.
-                int idx = Mod(i + (bar % 2 == 1 ? 2 : 0) + (bar == 2 ? 1 : 0) + motif % 3, shape.Length);
+                int idx = Mod(i + (bar == 2 ? 1 : 0) + motif % 3, shape.Length);
                 int offset = shape[idx];
                 if (i == 0) offset = (motif % 2 == 0 ? 0 : 2);
                 // Third bar develops the established motif rather than replaying it verbatim.
                 if (bar == 2 && i > 0 && i < steps.Length - 1 && (i + character) % 3 == 0)
                     offset += (motif % 2 == 0 ? 1 : -1);
-                if (i == steps.Length - 1) offset = bar == bars - 1 ? 0 :
-                    (bar % 2 == 1 ? 2 : 4);
+                if (i == steps.Length - 1) offset = (bar == 2 ? 2 : 0);
                 int pitch = Pitch(60, key, degree + offset, minor);
                 pitch = FoldPitch(pitch, previous, g == 2 ? 55 : 60, g == 2 ? 79 : 83);
                 // Chord-tone targets are deliberate; passing notes remain free between them.
@@ -1115,7 +1245,7 @@ namespace ZPunk.DAW
                              g == 3 ? (s == 1 ? 1 + r.Next(2) : 1 + r.Next(3)) :
                              g == 5 ? (s == 0 ? 2 + r.Next(2) : 1 + r.Next(3)) : 1 + r.Next(2);
                 if (i == steps.Length - 1 && bar == bars - 1 && g != 2) length = Math.Max(length, 2);
-                length = ShapeLength(length, g, s, tempoBand);
+                length = ShapeLength(length + Dna(g, s).SynthHold, g, s, tempoBand);
                 length = Math.Max(1, Math.Min(length, Math.Max(1, gap)));
                 int vel = i == 0 ? 107 : i == steps.Length - 1 ? 97 :
                     step % 4 == 0 ? 98 : 78 + character * 3;
@@ -1142,10 +1272,13 @@ namespace ZPunk.DAW
                 ? new[] { new[] { 0, 1, 3, 6, 7, 9, 11, 14, 15 }, new[] { 0, 2, 3, 5, 8, 10, 13, 15 }, new[] { 0, 3, 4, 7, 9, 11, 14 }, new[] { 0, 1, 4, 6, 9, 10, 13, 15 } }
                 : new[] { new[] { 0, 2, 3, 5, 6, 8, 10, 11, 13, 15 }, new[] { 0, 1, 3, 4, 7, 8, 10, 11, 14 }, new[] { 0, 3, 4, 6, 7, 9, 12, 14, 15 }, new[] { 0, 2, 4, 5, 8, 9, 11, 13, 15 } };
             if (g == 3) return s == 2
-                ? new[] { new[] { 0, 7, 10, 14 }, new[] { 0, 6, 11 }, new[] { 0, 8, 13 }, new[] { 0, 5, 10, 15 } }
+                ? new[] { new[] { 0, 8, 13 }, new[] { 0, 7, 12 },
+                          new[] { 0, 10 }, new[] { 0, 8, 14 } }
                 : s == 1
-                ? new[] { new[] { 0, 3, 6, 9, 11, 14 }, new[] { 0, 2, 5, 8, 12, 15 }, new[] { 0, 3, 7, 9, 12, 14 }, new[] { 0, 2, 6, 9, 13, 15 } }
-                : new[] { new[] { 0, 3, 7, 10, 14 }, new[] { 0, 2, 6, 10, 13 }, new[] { 0, 5, 7, 11, 14 }, new[] { 0, 3, 8, 10, 15 } };
+                ? new[] { new[] { 0, 6, 12 }, new[] { 0, 7, 13 },
+                          new[] { 0, 8, 14 }, new[] { 0, 5, 11 } }
+                : new[] { new[] { 0, 7, 12 }, new[] { 0, 6, 11, 14 },
+                          new[] { 0, 8, 13 }, new[] { 0, 5, 10 } };
             if (g == 4) return s == 1
                 ? new[] { new[] { 0, 3, 7, 10, 14 }, new[] { 0, 6, 10, 15 }, new[] { 0, 3, 8, 11 }, new[] { 0, 5, 10, 13 } }
                 : s == 2
@@ -1173,12 +1306,12 @@ namespace ZPunk.DAW
             int seventh = chord.ToneNearest(10, 10);
             int[][] grids = BassRhythms(g, s);
             // A / answer / development / reprise, retaining the original motifs.
-            int variant = Mod(rhythm + (bar == 1 ? 1 : bar == 2 ? 2 : 0), grids.Length);
-            int[] steps = ShapeRhythm(grids[variant], g, s, bar, bars, tempoBand, true, character);
+            int[] steps = MotifRhythm(grids, g, s, bar, bars, rhythm, character,
+                                      tempoBand, true);
             for (int i = 0; i < steps.Length; i++)
             {
                 int step = steps[i];
-                int role = Mod(i + motif + (bar % 2 == 1 ? 2 : 0), 7);
+                int role = Mod(i + motif + (bar == 2 ? 1 : 0), 7);
                 int pitch = root;
                 if (i > 0)
                 {
@@ -1193,15 +1326,23 @@ namespace ZPunk.DAW
                         pitch = role == 2 ? root + 12 : role == 4 ? root + fifth :
                                 role == 6 && s == 2 ? root + third : root;
                     else if (g == 3)
-                        pitch = role == 1 || role == 5 ? root + 12 :
-                                role == 3 ? root + fifth : root;
+                        // A fast break needs space for sub-bass; not a rival
+                        // sixteenth-note melody underneath every snare roll.
+                        pitch = s == 2 ? (i == steps.Length - 1 && motif % 3 == 0 ?
+                                root + fifth : root) :
+                                s == 1 ? (i == steps.Length - 1 && motif % 3 == 1 ?
+                                root + 12 : root) :
+                                role == 1 || role == 5 ? root + 12 : root;
                     else if (g == 5) // Disco octaves and concise French-touch hooks.
                         pitch = role == 1 || role == 4 ? root + 12 :
                                 (role == 3 && s != 0) ? root + fifth : root;
-                    else
-                        pitch = role == 1 || role == 4 ? root + 12 :
-                                role == 2 || role == 5 ? root + fifth :
-                                (role == 6 && s == 2) ? root + third : root;
+                    else // HOUSE, with distinct Deep / Jackin / 90s vocabularies.
+                        pitch = s == 1 ? (role == 4 && i == steps.Length - 1 ?
+                                root + fifth : root) :
+                                s == 2 ? (role == 1 || role == 4 ? root + 12 :
+                                role == 6 ? root + third : root) :
+                                role == 1 || role == 4 ? root + 12 :
+                                role == 2 || role == 5 ? root + fifth : root;
                     if (g == 4 && role == 6 && (bar % 2 == 1)) pitch = root + seventh - 12;
                 }
                 // One deliberately placed pickup, not a random chromatic run.
@@ -1217,8 +1358,15 @@ namespace ZPunk.DAW
                              g == 3 && s == 2 ? 4 :
                              g == 4 ? 1 + ((i + character) % 3) :
                              g == 5 ? (s == 0 ? 2 : 1 + ((i + character) % 2)) : 1 + (step % 3);
+                // Sustain style distinguishes sub-oriented Breaks and warm Deep
+                // House from short, percussive Jackin or Disco bass notes.
+                length += Dna(g, s).BassHold;
+                if (g == 3 && s == 1) length = Math.Max(length, 5);
+                if (g == 3 && s == 2) length = Math.Max(length, 6);
                 length = ShapeLength(length, g, s, tempoBand);
-                length = Math.Max(1, Math.Min(length, Math.Max(1, gap)));
+                // Leave a release gap on the longer subs where possible.
+                int maximum = (g == 3 && gap > 2) ? gap - 1 : gap;
+                length = Math.Max(1, Math.Min(length, Math.Max(1, maximum)));
                 int vel = i == 0 ? 112 : step % 4 == 0 ? 101 :
                           step % 2 == 1 ? 87 : 95;
                 AddMidi(c, bar, step, length, pitch, vel, r);
@@ -1334,15 +1482,17 @@ namespace ZPunk.DAW
                 (choice % 2 == 0 ? new[] { 0, 9 } : new[] { 0, 6, 12 });
             if (g == 1)
             {
-                if (s == 1) return choice % 2 == 0 ? new[] { 0, 12 } : new[] { 0, 10 };
-                if (s == 3) return bar % 2 == 0 ? new[] { 0, 6, 10, 14 } : new[] { 0, 4, 7, 11, 14 };
-                return choice % 2 == 0 ? new[] { 2, 6, 10, 14 } : new[] { 2, 7, 10, 14 };
+                if (s == 1) return choice % 2 == 0 ? new[] { 2, 10 } : new[] { 2, 12 };
+                if (s == 2) return choice % 2 == 0 ? new[] { 2, 7, 10, 14 } : new[] { 3, 6, 11, 14 };
+                if (s == 3) return bar % 2 == 0 ? new[] { 0, 6, 10, 14 } : new[] { 2, 6, 11, 14 };
+                return choice % 2 == 0 ? new[] { 2, 6, 10, 14 } : new[] { 2, 10, 14 };
             }
             if (g == 2) return s == 1 ? new[] { 0, 12 } :
                 choice % 2 == 0 ? new[] { 2, 6, 10, 14 } : new[] { 0, 7, 11, 14 };
             if (g == 3) return s == 2 ? new[] { 0, 8 } :
+                s == 1 ? (choice % 2 == 0 ? new[] { 2, 10 } : new[] { 3, 11 }) :
                 choice % 2 == 0 ? new[] { 0, 7, 11 } : new[] { 0, 3, 9, 14 };
-            if (g == 4) return s == 1 ? new[] { 0, 7, 11 } :
+            if (g == 4) return s == 1 ? new[] { 3, 11 } :
                 choice % 2 == 0 ? new[] { 0, 6, 10, 14 } : new[] { 0, 3, 7, 11, 14 };
             if (s == 0) return choice % 2 == 0 ? new[] { 2, 6, 10, 14 } : new[] { 2, 10, 14 };
             if (s == 1) return choice % 2 == 0 ? new[] { 2, 6, 10, 14 } : new[] { 0, 6, 11, 14 };
@@ -1372,8 +1522,12 @@ namespace ZPunk.DAW
                 else duration = g == 1 && s == 1 ? 6 :
                     g == 0 && s == 1 ? 5 : g == 3 && s == 2 ? 6 :
                     g == 2 && s == 1 ? 7 : 1 + r.Next(2);
-                if (!pads) duration = Math.Min(16 - step,
-                    ShapeLength(duration, g, s, tempoBand));
+                if (!pads)
+                {
+                    duration = ShapeLength(duration + Dna(g, s).SynthHold, g, s, tempoBand);
+                    int untilNext = hit + 1 < hits.Length ? hits[hit + 1] - step : 16 - step;
+                    duration = Math.Min(duration, Math.Max(1, untilNext));
+                }
                 duration = Math.Max(1, duration);
                 int vel = pads ? 66 : g == 1 && s == 3 ? 103 : g == 4 ? 94 : 84;
                 for (int i = 0; i < notes.Length; i++)
@@ -1402,7 +1556,8 @@ namespace ZPunk.DAW
         private static double ScoreCandidate(ClipContentData c, TrackKind kind, int g, int s,
                                               bool minor, int key, int[] harmony,
                                               ZPunkChordLibrary.Chord[] chordPlan, bool chords,
-                                              int[][] externalVoices, int tempoBand)
+                                              int[][] externalVoices, int tempoBand,
+                                              int groove)
         {
             if (c.notes.Count == 0) return double.MinValue;
             bool harmonic = kind == TrackKind.Pads || chords;
@@ -1448,16 +1603,32 @@ namespace ZPunk.DAW
                     last = n.pitch;
                 }
             }
-            foreach (int count in barNotes) if (count == 0) score -= 18;
+            foreach (int count in barNotes)
+                if (count == 0)
+                    score -= kind == TrackKind.Pads &&
+                             ((g == 2 && (s == 1 || s == 2)) ||
+                              (g == 3 && s == 2) || (g == 4 && s == 1)) ? 2 : 18;
             int target = TargetAttacksPerBar(kind, g, s, chords, tempoBand);
             double eventsPerBar = starts.Count / (double)harmony.Length;
             score -= Math.Abs(eventsPerBar - target) * (kind == TrackKind.Pads ? 1.5 : 3.5);
             if (!harmonic)
             {
                 double allowed = g == 2 ? (s == 1 ? .94 : s == 2 ? .80 : .76) : .43;
+                if (kind == TrackKind.Bass &&
+                    ((g == 3 && s >= 1) || (g == 1 && s == 1) ||
+                     (g == 5 && s == 0) || (g == 4 && s == 1)))
+                    allowed = .90; // sub-bass and filtered loops need tonic repetition.
+                if (kind == TrackKind.Synth &&
+                    ((g == 5 && s == 0) || (g == 4 && s == 1)))
+                    allowed = .66; // hook repetition is intentional in these styles.
                 score -= Math.Max(0, repeatCount - sorted.Count * allowed) * 4;
                 score -= jumps * (g == 3 ? 1.5 : 3);
-                if (pitches.Count <= 2 && g != 2 && sorted.Count > 5) score -= 9;
+                // Repeated low notes are a feature of dubby sub-bass, filtered
+                // loops and tight funk pockets, not an automatic defect.
+                bool loopVamp = (g == 3 && kind == TrackKind.Bass) ||
+                                (g == 5 && s == 0) ||
+                                (g == 4 && s == 1) || (g == 1 && s == 1);
+                if (pitches.Count <= 2 && g != 2 && sorted.Count > 5 && !loopVamp) score -= 9;
             }
             // Real pitch movement between the chord tones and steady rhythmic
             // spacing both matter, but a groove may still be intentionally repetitive.
@@ -1487,7 +1658,93 @@ namespace ZPunk.DAW
             }
             if (harmony.Length == 4 && !harmonic)
                 score += ScoreFourBarPhrase(starts, sixteenth);
+            score += ScoreStyleDna(sorted, kind, g, s, harmony, chordPlan, chords,
+                                   sixteenth, groove);
             if (kind == TrackKind.Bass && sorted[0].startTick == 0) score += 1;
+            return score;
+        }
+
+        private static double ScoreStyleDna(List<NoteEvent> sorted, TrackKind kind,
+                                            int g, int s, int[] harmony,
+                                            ZPunkChordLibrary.Chord[] chords,
+                                            bool synthChords, long sixteenth,
+                                            int groove)
+        {
+            StyleDna dna = Dna(g, s);
+            if (kind == TrackKind.Pads) return 0; // harmony has its own voicing test
+            // Group each bar's distinct pitches by their actual grid attack, not
+            // velocity/humanization. Multiple chord voices count as one onset.
+            var signatures = new List<int>[harmony.Length];
+            var seen = new HashSet<long>();
+            double articulation = 0;
+            int count = 0;
+            foreach (var n in sorted)
+            {
+                int bar = Clamp((int)(n.startTick / SongData.TicksPerBar4), 0,
+                                harmony.Length - 1);
+                int step = (int)((n.startTick / sixteenth) % 16);
+                if (signatures[bar] == null) signatures[bar] = new List<int>();
+                int root = chords[bar].RootSemitones;
+                // Relative pitch class makes the comparison independent of key
+                // and independent of the selected progression's transpositions.
+                int signature = step * 16 + Mod(n.pitch - root, 12);
+                if (!synthChords && kind != TrackKind.Pads)
+                {
+                    signatures[bar].Add(signature);
+                    if (kind == TrackKind.Bass && (g == 3 || (g == 1 && s == 1)))
+                        articulation += n.durationTicks >= sixteenth * 3 ? .4 : -.4;
+                    if (kind == TrackKind.Bass && ((g == 1 && s == 2) ||
+                        (g == 4 && s == 2)))
+                        articulation += n.durationTicks <= sixteenth * 2 ? .2 : -.3;
+                    count++;
+                }
+                else if (seen.Add(n.startTick)) signatures[bar].Add(step * 16);
+            }
+            double score = count > 0 ? Math.Max(-4.0, Math.Min(4.0, articulation)) : 0;
+            // Softly prefer rhythmic answers to the BASS fingerprint, without
+            // banning intentional unisons or changing any existing drum events.
+            if (kind == TrackKind.Synth && g != 2 &&
+                ((g == 1 && s == 2) || (g == 4 && s == 1) ||
+                 (g == 5 && s == 0)))
+            {
+                int[][] bassGrids = BassRhythms(g, s);
+                int[] bassAnchor = bassGrids[Mod(groove, bassGrids.Length)];
+                int matches = 0, attacks = 0;
+                var uniqueSteps = new HashSet<int>();
+                foreach (var note in sorted)
+                {
+                    int step = (int)((note.startTick / sixteenth) % 16);
+                    int bar = (int)(note.startTick / SongData.TicksPerBar4);
+                    if (!uniqueSteps.Add(bar * 16 + step)) continue;
+                    attacks++;
+                    foreach (int anchor in bassAnchor)
+                        if (step == anchor) { matches++; break; }
+                }
+                if (attacks > 0) score -= 2.5 * matches / attacks;
+            }
+            if (signatures.Length > 1 && signatures[0] != null)
+            {
+                // The reprise is more important for hypnotic and loop-driven
+                // styles, but a fully static four-bar copy gets no extra reward.
+                int bar = signatures.Length - 1;
+                if (signatures[bar] != null)
+                {
+                    int shared = 0;
+                    foreach (int identity in signatures[bar])
+                        if (signatures[0].Contains(identity)) shared++;
+                    double overlap = shared / (double)Math.Max(1, Math.Max(
+                        signatures[0].Count, signatures[bar].Count));
+                    score += overlap * (2.0 + dna.MotifWeight);
+                }
+                if (signatures.Length >= 3 && signatures[2] != null)
+                {
+                    int newNotes = 0;
+                    foreach (int identity in signatures[2])
+                        if (!signatures[0].Contains(identity)) newNotes++;
+                    // One or two fresh third-bar events creates development.
+                    score += Math.Min(2, newNotes) * .35;
+                }
+            }
             return score;
         }
 
@@ -1502,10 +1759,12 @@ namespace ZPunk.DAW
             int count = g == 0 ? (s == 1 ? 3 : s == 2 ? 5 : 4) :
                         g == 1 ? (s == 1 ? 4 : s == 2 ? 7 : s == 3 ? 6 : 5) :
                         g == 2 ? (s == 1 ? 4 : s == 2 ? 8 : 9) :
-                        g == 3 ? (s == 1 ? 6 : s == 2 ? 3 : 5) :
+                        g == 3 ? (s == 1 ? 3 : s == 2 ? 2 : 3) :
                         g == 4 ? (s == 1 ? 4 : s == 2 ? 6 : 5) :
                                  (s == 0 ? 5 : s == 1 ? 6 : 6);
             if (kind == TrackKind.Synth && g != 2) count = Math.Max(2, count - 1);
+            count = Math.Min(count, kind == TrackKind.Synth ? Dna(g, s).SynthNotes :
+                             Dna(g, s).BassNotes);
             bool spare = (g == 0 && s == 1) || (g == 1 && s == 1) ||
                          (g == 2 && s == 1) || (g == 3 && s == 2) ||
                          (g == 4 && s == 1);
