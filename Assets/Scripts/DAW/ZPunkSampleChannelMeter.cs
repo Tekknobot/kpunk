@@ -66,16 +66,31 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         float alpha = 1f - (float)Math.Exp(-2.0 * Math.PI * cutoff / sampleRate);
         float boost = Math.Max(0f, (localTone - .5f) * .7f);
         float compressedRelease = (float)Math.Exp(-1.0 / (Math.Max(8000, sampleRate) * .06));
+        // DECAY is a sample-length control, not a continuously falling volume
+        // envelope. Preserve the original attack and body, then fade just the
+        // end of the requested portion. At 100% the signal is fully untouched.
+        // Calculate the boundary once per callback (no audio-thread allocation).
+        bool shortenHit = localDecay < .9999f;
+        double endFrame = seconds * sampleRate * localDecay;
+        double fadeFrames = shortenHit ? Math.Min(
+            sampleRate * .008, // At most an 8 ms click-free tail.
+            Math.Min(endFrame * .12, Math.Max(sampleRate * .0015,
+                seconds * sampleRate * (1.0 - localDecay) * 1.5))) : 0.0;
+        fadeFrames = Math.Max(1.0, fadeFrames);
         for (int frame = 0; frame < data.Length / channels; ++frame)
         {
-            // No shortening at DECAY 100%; shorter settings taper to zero with
-            // a squared, click-free envelope rather than stopping AudioSource.
             float env = 1f;
-            if (localDecay < .999f)
+            if (shortenHit)
             {
-                double t = samplePosition / Math.Max(.015, seconds * localDecay * sampleRate);
-                if (t >= 1.0) env = 0f;
-                else { float remain = (float)(1.0 - t); env = remain * remain; }
+                double remaining = endFrame - samplePosition;
+                if (remaining <= 0.0) env = 0f;
+                else if (remaining < fadeFrames)
+                {
+                    // Smoothstep reaches zero without the audible click of an
+                    // abrupt cut; samples before the tail keep their full level.
+                    float t = (float)(remaining / fadeFrames);
+                    env = t * t * (3f - 2f * t);
+                }
             }
             samplePosition++;
             for (int channel = 0; channel < channels; ++channel)

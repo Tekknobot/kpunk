@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -696,29 +696,44 @@ namespace ZPunk.DAW
             presetRow.Add(savePreset);
             drumDesignerPage.Add(presetRow);
 
+            // Explicitly arrange the eight drum sounds in two rows of four.
+            // Using dedicated rows avoids flex-wrap rounding placing only three
+            // buttons on a row on narrow phone displays.
             var pads = new VisualElement();
-            pads.style.flexDirection = FlexDirection.Row;
-            pads.style.flexWrap = Wrap.Wrap;
+            pads.style.flexDirection = FlexDirection.Column;
             pads.style.width = Length.Percent(100);
-            for (int i = 0; i < DrumDesignerNames.Length; ++i)
+            pads.style.flexShrink = 0;
+            for (int rowIndex = 0; rowIndex < 2; ++rowIndex)
             {
-                int lane = i;
-                var button = Btn(DrumDesignerNames[i], () =>
+                var padRow = new VisualElement();
+                padRow.style.flexDirection = FlexDirection.Row;
+                padRow.style.width = Length.Percent(100);
+                padRow.style.height = 40;
+                padRow.style.flexShrink = 0;
+                for (int column = 0; column < 4; ++column)
                 {
-                    drumDesignerLane = lane;
-                    RefreshDrumDesigner();
-                    AuditionDrumDesigner();
-                }, 0);
-                button.style.width = Length.Percent(24.5f);
-                button.style.minWidth = 0;
-                button.style.height = 38;
-                button.style.marginRight = 1;
-                button.style.marginBottom = 2;
-                button.style.paddingLeft = 1;
-                button.style.paddingRight = 1;
-                button.style.fontSize = 11;
-                button.name = "ZPunkDrumDesignLane" + i;
-                pads.Add(button);
+                    int lane = rowIndex * 4 + column;
+                    var button = Btn(DrumDesignerNames[lane], () =>
+                    {
+                        drumDesignerLane = lane;
+                        RefreshDrumDesigner();
+                        AuditionDrumDesigner();
+                    }, 0);
+                    button.style.flexGrow = 1;
+                    button.style.flexShrink = 1;
+                    button.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                    button.style.minWidth = 0;
+                    button.style.height = 38;
+                    button.style.marginRight = column == 3 ? 0 : 2;
+                    button.style.marginBottom = 2;
+                    button.style.paddingLeft = 1;
+                    button.style.paddingRight = 1;
+                    button.style.fontSize = 11;
+                    button.style.unityTextAlign = TextAnchor.MiddleCenter;
+                    button.name = "ZPunkDrumDesignLane" + lane;
+                    padRow.Add(button);
+                }
+                pads.Add(padRow);
             }
             drumDesignerPage.Add(pads);
 
@@ -1153,8 +1168,15 @@ namespace ZPunk.DAW
 
         private void AuditionDrumDesigner()
         {
+            // Shape edits and preset changes still apply live, but must never
+            // create an extra drum hit while either sequencer is running.
+            if (songTransport == null)
+                songTransport = FindObjectOfType<ZPunkSongTransport>();
+            if (songTransport != null && songTransport.IsPlaying) return;
+
             FindDrumEngine();
-            drumEngine?.PreviewDAWDrum(drumDesignerLane);
+            if (drumEngine == null || drumEngine.IsPlaying) return;
+            drumEngine.PreviewDAWDrum(drumDesignerLane);
         }
 
         private bool CanWriteDrumShape()

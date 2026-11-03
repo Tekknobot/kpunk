@@ -6,11 +6,12 @@ namespace ZPunk.DAW
 {
     /// <summary>
     /// Factory Drum Designer presets for the 27 bundled DrumKit assets.
-    /// Factory values use exactly the detents of the existing UI. Small, bounded
-    /// per-kit corrections were derived offline from the supplied WAV files:
-    /// onset RMS, spectral centroid, 90 percent energy decay, and headroom.
-    /// This adds no sample-analysis cost to a running phone and changes no DSP.
-    /// The neutral preset is a strict bypass of all seven per-lane shaping values.
+    /// Factory voicings deliberately use distinct pitch, brightness, drive and
+    /// punch profiles. Modest per-kit tone/drive corrections come from the
+    /// supplied samples, with a minimum tone floor for short bright percussion.
+    /// Factory presets never set DECAY or TRIM; those controls stay exactly as the
+    /// user left them, even when selecting NEUTRAL or changing the active kit.
+    /// The shared drum DSP, mixer levels and master processing are not changed.
     /// GLUE is deliberately never modified (it processes the full master mix).
     /// </summary>
     public static class ZPunkDrumDesignPresets
@@ -23,101 +24,103 @@ namespace ZPunk.DAW
         public const int UserSlotCount = 4;
         private const string UserBankKey = "zpunk.drumDesigner.userPresets.v1";
 
-        // Tune (semitones), Tone (0..20), Decay (0..24), Pan (-10..10),
-        // Trim (dB), Drive (0..20), Punch (0..20). Slot 0 is neutral.
+        // Only these five parameters are factory-controlled. DECAY and TRIM
+        // are never changed, including when NEUTRAL is selected.
+        // Tune (semitones), Tone/Drive/Punch (0..20), Pan (-10..10).
         private struct LaneSpec
         {
-            public readonly int tune, tone, decay, pan, trim, drive, punch;
-            public LaneSpec(int tune, int tone, int decay, int pan, int trim, int drive, int punch)
+            public readonly int tune, tone, pan, drive, punch;
+            public LaneSpec(int tune, int tone, int pan, int drive, int punch)
             {
-                this.tune = tune; this.tone = tone; this.decay = decay;
-                this.pan = pan; this.trim = trim; this.drive = drive; this.punch = punch;
+                this.tune = tune; this.tone = tone; this.pan = pan;
+                this.drive = drive; this.punch = punch;
             }
         }
         private static readonly LaneSpec[][] Factory = {
-            null,
-            // TIGHT CLUB
+            null, // NEUTRAL
+            // TIGHT CLUB — Up-pitched, sharp attacks and crisp tops; little saturation.
             new[] {
-                new LaneSpec(0, 10, 18, 0, 0, 3, 5), // Kick
-                new LaneSpec(0, 12, 17, 0, 0, 2, 4), // Snare
-                new LaneSpec(0, 11, 16, 0, 0, 2, 3), // Clap
-                new LaneSpec(0, 12, 14, -1, 0, 1, 1), // Closed
-                new LaneSpec(0, 11, 15, 2, -1, 1, 1), // Open
-                new LaneSpec(0, 11, 18, -2, -2, 1, 1), // Ride
-                new LaneSpec(0, 10, 14, 1, 0, 2, 2), // Rim
-                new LaneSpec(0, 10, 18, 2, -2, 1, 1), // Crash
+                new LaneSpec(2, 15, 0, 1, 13), // Kick
+                new LaneSpec(2, 16, 0, 1, 12), // Snare
+                new LaneSpec(1, 16, 0, 1, 10), // Clap
+                new LaneSpec(2, 18, -2, 0, 6), // Closed
+                new LaneSpec(1, 17, 2, 0, 5), // Open
+                new LaneSpec(1, 17, -3, 0, 5), // Ride
+                new LaneSpec(2, 17, 3, 1, 10), // Rim
+                new LaneSpec(1, 17, 3, 0, 4), // Crash
             },
-            // DEEP HOUSE
+            // DEEP HOUSE — Rounded, low-pitched foundation and gentle, open high percussion.
             new[] {
-                new LaneSpec(-1, 8, 23, 0, 0, 2, 2), // Kick
-                new LaneSpec(0, 8, 22, 0, -1, 1, 1), // Snare
-                new LaneSpec(0, 9, 20, 0, -1, 1, 1), // Clap
-                new LaneSpec(0, 10, 18, -2, -1, 0, 1), // Closed
-                new LaneSpec(0, 10, 20, 2, -1, 0, 0), // Open
-                new LaneSpec(0, 10, 22, -2, -2, 0, 0), // Ride
-                new LaneSpec(0, 9, 21, 2, -1, 0, 0), // Rim
-                new LaneSpec(0, 9, 23, 1, -2, 0, 0), // Crash
+                new LaneSpec(-2, 7, 0, 2, 2), // Kick
+                new LaneSpec(-1, 9, 0, 1, 1), // Snare
+                new LaneSpec(-1, 9, 0, 1, 1), // Clap
+                new LaneSpec(0, 11, -3, 0, 0), // Closed
+                new LaneSpec(-1, 11, 3, 0, 0), // Open
+                new LaneSpec(-1, 10, -4, 0, 0), // Ride
+                new LaneSpec(-1, 9, 3, 1, 0), // Rim
+                new LaneSpec(-1, 10, 4, 0, 0), // Crash
             },
-            // HARD TECHNO
+            // HARD TECHNO — Bright attack, strong transient control and assertive saturation.
             new[] {
-                new LaneSpec(-1, 10, 20, 0, 0, 9, 10), // Kick
-                new LaneSpec(0, 12, 16, 0, -1, 6, 7), // Snare
-                new LaneSpec(0, 11, 17, 0, -1, 5, 5), // Clap
-                new LaneSpec(0, 13, 14, -1, -2, 2, 2), // Closed
-                new LaneSpec(0, 12, 14, 1, -2, 3, 2), // Open
-                new LaneSpec(0, 12, 18, -2, -3, 3, 2), // Ride
-                new LaneSpec(0, 11, 15, 2, -1, 5, 6), // Rim
-                new LaneSpec(0, 10, 19, 2, -3, 3, 2), // Crash
+                new LaneSpec(-1, 14, 0, 6, 14), // Kick
+                new LaneSpec(2, 17, 0, 5, 12), // Snare
+                new LaneSpec(1, 16, 0, 4, 11), // Clap
+                new LaneSpec(1, 18, -3, 2, 4), // Closed
+                new LaneSpec(1, 17, 3, 2, 4), // Open
+                new LaneSpec(1, 17, -4, 2, 4), // Ride
+                new LaneSpec(2, 17, 4, 5, 9), // Rim
+                new LaneSpec(0, 17, 4, 2, 4), // Crash
             },
-            // INDUSTRIAL
+            // INDUSTRIAL — Down-pitched metallic percussion, grit and contrasting upper harmonics.
             new[] {
-                new LaneSpec(-2, 8, 20, 0, -1, 11, 11), // Kick
-                new LaneSpec(-1, 9, 15, 0, -1, 10, 8), // Snare
-                new LaneSpec(-1, 8, 14, 0, -1, 10, 6), // Clap
-                new LaneSpec(-1, 9, 12, -2, -2, 5, 3), // Closed
-                new LaneSpec(-1, 8, 14, 2, -2, 6, 4), // Open
-                new LaneSpec(0, 8, 17, -3, -3, 7, 3), // Ride
-                new LaneSpec(-1, 9, 12, 2, -1, 10, 6), // Rim
-                new LaneSpec(-1, 7, 17, 3, -3, 8, 4), // Crash
+                new LaneSpec(-3, 9, 0, 7, 12), // Kick
+                new LaneSpec(-3, 11, 0, 7, 11), // Snare
+                new LaneSpec(-2, 10, 0, 7, 10), // Clap
+                new LaneSpec(-2, 14, -4, 5, 5), // Closed
+                new LaneSpec(-3, 13, 4, 5, 5), // Open
+                new LaneSpec(-2, 12, -5, 5, 5), // Ride
+                new LaneSpec(-3, 11, 5, 7, 9), // Rim
+                new LaneSpec(-2, 12, 4, 5, 5), // Crash
             },
-            // WARM ANALOG
+            // WARM ANALOG — Soft top end, moderate warmth and almost no transient compression.
             new[] {
-                new LaneSpec(-1, 8, 22, 0, 0, 4, 2), // Kick
-                new LaneSpec(0, 8, 20, 0, 0, 3, 2), // Snare
-                new LaneSpec(0, 9, 20, 0, -1, 3, 2), // Clap
-                new LaneSpec(-1, 8, 20, -1, 0, 2, 1), // Closed
-                new LaneSpec(-1, 8, 21, 1, -1, 2, 1), // Open
-                new LaneSpec(0, 8, 23, -2, -2, 2, 1), // Ride
-                new LaneSpec(0, 8, 18, 2, -1, 3, 2), // Rim
-                new LaneSpec(0, 8, 22, 1, -3, 2, 1), // Crash
+                new LaneSpec(1, 7, 0, 2, 1), // Kick
+                new LaneSpec(1, 8, 0, 2, 1), // Snare
+                new LaneSpec(1, 9, 0, 2, 1), // Clap
+                new LaneSpec(-1, 9, -2, 1, 0), // Closed
+                new LaneSpec(-1, 9, 2, 1, 0), // Open
+                new LaneSpec(0, 9, -3, 1, 0), // Ride
+                new LaneSpec(0, 9, 3, 2, 1), // Rim
+                new LaneSpec(0, 9, 3, 1, 0), // Crash
             },
-            // CRUNCHY BREAKS
+            // CRUNCHY BREAKS — Up-pitched snares and rim, brisk upper mids and gritty backbeat.
             new[] {
-                new LaneSpec(0, 10, 19, 0, -1, 7, 6), // Kick
-                new LaneSpec(0, 11, 15, 0, -1, 9, 8), // Snare
-                new LaneSpec(0, 11, 15, 0, -1, 7, 5), // Clap
-                new LaneSpec(0, 11, 18, -2, -1, 5, 3), // Closed
-                new LaneSpec(0, 10, 17, 2, -1, 5, 3), // Open
-                new LaneSpec(0, 11, 20, -2, -2, 5, 3), // Ride
-                new LaneSpec(0, 11, 16, 3, -1, 7, 4), // Rim
-                new LaneSpec(0, 10, 19, 3, -3, 4, 2), // Crash
+                new LaneSpec(3, 13, 0, 6, 8), // Kick
+                new LaneSpec(3, 15, 0, 7, 11), // Snare
+                new LaneSpec(2, 15, 0, 6, 9), // Clap
+                new LaneSpec(2, 16, -4, 4, 3), // Closed
+                new LaneSpec(2, 14, 4, 4, 3), // Open
+                new LaneSpec(1, 15, -5, 4, 4), // Ride
+                new LaneSpec(3, 16, 5, 6, 8), // Rim
+                new LaneSpec(1, 14, 5, 4, 3), // Crash
             },
-            // DARK & HEAVY
+            // DARK & HEAVY — Deep pitch, dark tone, compressed punch; cymbals remain audible.
             new[] {
-                new LaneSpec(-2, 7, 23, 0, 0, 7, 7), // Kick
-                new LaneSpec(-1, 7, 18, 0, 0, 6, 6), // Snare
-                new LaneSpec(0, 7, 18, 0, -1, 5, 5), // Clap
-                new LaneSpec(0, 8, 16, -1, -2, 3, 2), // Closed
-                new LaneSpec(-1, 7, 17, 2, -2, 4, 2), // Open
-                new LaneSpec(-1, 7, 20, -2, -3, 4, 2), // Ride
-                new LaneSpec(-1, 7, 15, 2, -1, 5, 4), // Rim
-                new LaneSpec(-1, 7, 20, 2, -4, 4, 2), // Crash
+                new LaneSpec(-4, 5, 0, 4, 13), // Kick
+                new LaneSpec(-3, 7, 0, 3, 10), // Snare
+                new LaneSpec(-3, 8, 0, 3, 9), // Clap
+                new LaneSpec(-2, 8, -3, 1, 4), // Closed
+                new LaneSpec(-2, 8, 3, 2, 4), // Open
+                new LaneSpec(-2, 8, -4, 2, 4), // Ride
+                new LaneSpec(-3, 7, 4, 3, 8), // Rim
+                new LaneSpec(-2, 8, 4, 2, 4), // Crash
             },
         };
 
         // Each kit matches the serialised ScriptableObject name Kit_01..Kit_27.
-        // Corrections per lane: tone knob steps, decay knob steps, trim dB,
-        // and drive knob steps. They do not change pitch or spatial position.
+        // Four legacy calibration slots per lane: tone, decay, trim and drive.
+        // DECAY and TRIM slots are intentionally ignored by factory presets.
+        // Neither sample gain nor the shared decay DSP is changed.
         private static readonly sbyte[][] KitAdjustments = {
             // HMA 707: kick/snare/clap/closed/open/ride/rim/crash, 4 calibration steps each
             new sbyte[] { 1, 0, -1, -1, 0, 0, -1, -1, -1, 0, 0, -1, 0, 1, -1, -1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, -1, 0 },
@@ -201,27 +204,53 @@ namespace ZPunk.DAW
             {
                 if (index == 0) { result.Add(new DrumShapeData()); continue; }
                 LaneSpec s = Factory[index][lane];
-                int tone = s.tone, decay = s.decay, trim = s.trim, drive = s.drive;
+                int tone = s.tone, drive = s.drive;
                 if (kitIndex >= 0)
                 {
                     var correction = KitAdjustments[kitIndex];
                     int pos = lane * 4;
                     tone += correction[pos];
-                    decay += correction[pos + 1];
-                    trim += correction[pos + 2];
                     drive += correction[pos + 3];
                 }
+                // Bright and very short percussion still needs enough bandwidth
+                // to remain audible. This caps darkening, not the source gain.
+                int minTone = lane == 0 ? 4 : (lane <= 2 || lane == 6 ? 6 : 8);
                 result.Add(new DrumShapeData {
                     tune = s.tune,
-                    tone = Mathf.Clamp(tone, 0, 20) / 20f,
-                    decay = .04f + .96f * Mathf.Clamp(decay, 0, 24) / 24f,
+                    tone = Mathf.Clamp(tone, minTone, 20) / 20f,
+                    // Neutral placeholders. UI merges the current lane's values
+                    // before applying any factory style, including NEUTRAL.
+                    decay = 1f,
                     pan = s.pan / 10f,
-                    trim = Mathf.Clamp(trim, -12, 12),
+                    trim = 0f,
                     drive = Mathf.Clamp(drive, 0, 20) / 20f,
                     punch = Mathf.Clamp(s.punch, 0, 20) / 20f
                 });
             }
             return result;
+        }
+
+        // Applying a factory style changes only sound character. It must never
+        // shorten a drum hit or overwrite its independently chosen trim level.
+        public static List<DrumShapeData> PreserveDecayAndTrim(
+            List<DrumShapeData> factory, List<DrumShapeData> current)
+        {
+            var result = Clone(factory);
+            for (int lane = 0; lane < 8; ++lane)
+            {
+                var existing = current != null && lane < current.Count ? current[lane] : null;
+                if (existing == null) continue;
+                result[lane].decay = existing.decay;
+                result[lane].trim = existing.trim;
+            }
+            return result;
+        }
+
+        // Factory identification ignores DECAY/TRIM because factory presets do
+        // not own either control. User presets still use exact Matches().
+        public static bool MatchesFactory(List<DrumShapeData> current, List<DrumShapeData> factory)
+        {
+            return factory != null && Matches(current, PreserveDecayAndTrim(factory, current));
         }
 
         public static List<DrumShapeData> Clone(List<DrumShapeData> shapes)
