@@ -56,6 +56,49 @@ public class KMusicDrumSequencer : MonoBehaviour
     // Club low-end: isolated rumble voices cannot steal or delay the dry kick.
     // Defaults off for every older project. Rumble follows the kick bus fader/mute.
     public float DawKickRumble { get; set; }
+    // Echo uses genuine, BPM-scheduled repeat voices instead of a native
+    // AudioEchoFilter attached to a one-shot source. Some Unity settings
+    // virtualize effect tails once short clips stop; scheduled hits keep the
+    // repeats audible with both very short Resources and long Audio kits.
+    private float _drumFxBpm = 120f;
+
+    public void SetDrumFxTempo(float bpm)
+    {
+        _drumFxBpm = Mathf.Clamp(bpm, 1f, 400f);
+    }
+
+    private double DrumFxTailSeconds(DrumShapeData shape)
+    {
+        if (shape == null || shape.characterAmount <= .001f) return 0.0;
+        // The ROOM filter already reserves a natural reverb tail. ECHO's
+        // repeats occupy separate scheduled voices, so they must not reserve
+        // fake tails on the dry hit itself.
+        if (shape.characterFx == 3) return .18 + .32 * Mathf.Clamp01(shape.characterAmount);
+        return 0.0;
+    }
+
+    private bool DrumEchoActive(DrumShapeData shape)
+    {
+        return shape != null && shape.characterFx == 5 && shape.characterAmount > .001f;
+    }
+
+    private void ScheduleDrumEchoRepeats(int drumId, double dspTime, float velocity)
+    {
+        var shape = _dawDrumShapes[drumId - 1];
+        if (!DrumEchoActive(shape)) return;
+        float amount = Mathf.Clamp01(shape.characterAmount);
+        double eighth = 30.0 / Math.Max(1.0, _drumFxBpm);
+        // Two repeats at 1/8 and 1/4-note offsets, musically useful for
+        // house/techno. Each repeat is weaker; the original dry level stays
+        // intact. Repeats never regenerate further echoes or kick rumble.
+        float firstLevel = amount * .55f;
+        float secondLevel = amount * amount * .27f;
+        if (firstLevel >= .025f)
+            ScheduleSingleDrum(drumId, dspTime + eighth, velocity * firstLevel, true);
+        if (secondLevel >= .025f)
+            ScheduleSingleDrum(drumId, dspTime + eighth * 2.0, velocity * secondLevel, true);
+    }
+
     private readonly List<AudioSource> _rumbleVoices = new List<AudioSource>();
     private AudioClip _rumbleSourceKick, _rumbleClip;
     private const int MaxRumbleVoices = 20;
@@ -181,6 +224,7 @@ public class KMusicDrumSequencer : MonoBehaviour
         IList<SongEventPlanner.Event> sampleEvents = null, float playbackBpm = 120f,
         long loopStartTick = 0, long loopEndTick = 0, float lookaheadSeconds = 0.35f)
     {
+        SetDrumFxTempo(playbackBpm);
         if (routeDrumsToMixer)
         {
             for (int lane = 1; lane <= 8; lane++)
@@ -202,14 +246,17 @@ public class KMusicDrumSequencer : MonoBehaviour
                 double ticksPerSecond = SongData.TicksPerQuarter *
                     Math.Max(1f, playbackBpm) / 60.0;
                 double occupiedTicks = (clip.length / Math.Max(0.1f, pitch) +
+                    DrumFxTailSeconds(shape) +
                     Math.Max(0.18f, lookaheadSeconds) + 0.06) * ticksPerSecond;
                 int concurrent = MaxEventsInWindow(hits, occupiedTicks);
                 if (loopEndTick > loopStartTick)
                     concurrent = Math.Max(concurrent,
                         MaxLoopEventsInWindow(hits, loopStartTick, loopEndTick, occupiedTicks));
-                // Two spare voices cover buffer boundaries, hit-time rounding
-                // and occasional edits without needing allocations during PLAY.
-                int warm = Mathf.Clamp(concurrent + 2,
+                // Echo has two independently scheduled one-shots per hit.
+                // Warm the extra voices before PLAY; never allocate them in
+                // the sample scheduler's high-frequency lookahead loop.
+                int multiplier = DrumEchoActive(shape) ? 3 : 1;
+                int warm = Mathf.Clamp((concurrent + 1) * multiplier + 2,
                     Math.Max(1, drumVoicesPerLane), MaxDrumVoicesPerLane);
                 // Do not reconfigure a sounding voice while prewarming during
                 // a live edit. Only create additional idle sources when needed.
@@ -495,6 +542,13 @@ public class KMusicDrumSequencer : MonoBehaviour
 
     private bool ScheduleDrum(int drumId, double dspTime, float velocityScale = 1f)
     {
+        bool scheduled = ScheduleSingleDrum(drumId, dspTime, velocityScale, false);
+        if (scheduled) ScheduleDrumEchoRepeats(drumId, dspTime, velocityScale);
+        return scheduled;
+    }
+
+    private bool ScheduleSingleDrum(int drumId, double dspTime, float velocityScale, bool echoRepeat)
+    {
         if (!_clipByDrumId.TryGetValue(drumId, out var clip) || clip == null)
             return false;
 
@@ -516,10 +570,8 @@ public class KMusicDrumSequencer : MonoBehaviour
         _dawDrumVoiceStartsAt[src] = dspTime;
         double drySeconds = Math.Max(.01, clip.length / Mathf.Max(.1f, nominalPitch));
         var shape = _dawDrumShapes[drumId - 1];
-        double roomTail = shape != null && shape.characterFx == 3
-            ? .18 + .32 * Mathf.Clamp01(shape.characterAmount) : 0.0;
-        _dawDrumVoiceBusyUntil[src] = dspTime + drySeconds + roomTail;
-        if (drumId == 1 && DawKickRumble > .001f)
+        _dawDrumVoiceBusyUntil[src] = dspTime + drySeconds + DrumFxTailSeconds(shape);
+        if (!echoRepeat && drumId == 1 && DawKickRumble > .001f)
             ScheduleRumble(clip, dspTime, velocityScale);
         return true;
     }
@@ -808,9 +860,11 @@ public class KMusicDrumSequencer : MonoBehaviour
         _dawDrumVoiceStartsAt[src] = now;
         double drySeconds = Math.Max(.01, clip.length / Mathf.Max(.1f, nominalPitch));
         var shape = _dawDrumShapes[drumId - 1];
-        double roomTail = shape != null && shape.characterFx == 3
-            ? .18 + .32 * Mathf.Clamp01(shape.characterAmount) : 0.0;
-        _dawDrumVoiceBusyUntil[src] = now + drySeconds + roomTail;
+        _dawDrumVoiceBusyUntil[src] = now + drySeconds + DrumFxTailSeconds(shape);
+        // The Drum Designer calls this only when BOTH transports are stopped.
+        // Preview ECHO with the same two real repeats as arranged playback.
+        ScheduleDrumEchoRepeats(drumId, now,
+            GetDrumInputGain(drumId) * Mathf.Clamp01(velocityScale));
     }
 
     [SerializeField] private UIDocument uiDocument;
@@ -2810,6 +2864,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         if (_playing) return;
 
         _playBpm = GetBpm();
+        SetDrumFxTempo(_playBpm);
         _stepDur = 60.0 / Math.Max(1.0, _playBpm) / 4.0; // 16th
         _nextStepNumber = 0;
         _stepIndex = 0; // ✅ reset so audio + visuals start on step 0
@@ -2889,6 +2944,7 @@ if (!KMusicChopState.TryLoadApplied(out var resPath, out var s01, out var e01))
         if (!_playing || _sampler == null) return;
 
         float bpm = GetBpm();
+        SetDrumFxTempo(bpm);
         if (_clock != null) _clock.bpm = bpm;
 
         // ✅ realtime BPM: recompute step duration from current bpm

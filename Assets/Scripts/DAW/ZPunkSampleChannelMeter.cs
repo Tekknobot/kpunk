@@ -21,6 +21,14 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
     // Per-hit bitcrush state, owned by this AudioSource's audio callback.
     private int crushCounter;
     private float crushLeft, crushRight;
+    // Ring-modulator state: oscillator step is precomputed per PCM callback,
+    // so METAL performs no trigonometry or allocations inside the frame loop.
+    private float ringSin, ringCos = 1f;
+    // GATE creates a few sharp, finite early reflections, without a shared FX
+    // bus or touching the kit/sample gain. Allocated only when a lane uses it.
+    private float[] gateDelayLeft, gateDelayRight;
+    private int gateDelayIndex;
+    private const int GateDelaySamples = 8192;
     private volatile float hitSeconds = 0.25f;
     private int sampleRate = 48000;
     private double samplePosition;
@@ -43,7 +51,12 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         drive = Mathf.Clamp01(shape.drive);
         punch = Mathf.Clamp01(shape.punch);
         characterAmount = Mathf.Clamp01(shape.characterAmount);
-        characterFx = Mathf.Clamp(shape.characterFx, 0, 3);
+        characterFx = Mathf.Clamp(shape.characterFx, 0, 6);
+        if (characterFx == 6 && gateDelayLeft == null)
+        {
+            gateDelayLeft = new float[GateDelaySamples];
+            gateDelayRight = new float[GateDelaySamples];
+        }
     }
 
     public void PrepareHit(float durationSeconds)
@@ -56,6 +69,14 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         filterL = filterR = compressorEnvelope = 0f;
         crushCounter = 0;
         crushLeft = crushRight = 0f;
+        ringSin = 0f; ringCos = 1f;
+        gateDelayIndex = 0;
+        // Reset old reflections on reuse; never let one hit leak into the next.
+        if (gateDelayLeft != null)
+        {
+            Array.Clear(gateDelayLeft, 0, gateDelayLeft.Length);
+            Array.Clear(gateDelayRight, 0, gateDelayRight.Length);
+        }
     }
 
     private void OnAudioFilterRead(float[] data, int channels)
@@ -73,6 +94,26 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         float crushSteps = crush ? (float)Math.Pow(2.0,
             15 - (int)Math.Round(characterAmount * 10f)) : 32768f;
         float seconds = hitSeconds;
+        bool metal = characterFx == 4 && characterAmount > .001f;
+        float metalWet = metal ? characterAmount * .90f : 0f;
+        float metalNorm = metal ? (float)Math.Min(1.20,
+            1.0 / Math.Sqrt((1.0 - metalWet) * (1.0 - metalWet) + metalWet * metalWet)) : 1f;
+        double ringFrequency = 85.0 + 1100.0 * characterAmount * characterAmount;
+        double omega = 2.0 * Math.PI * ringFrequency / Math.Max(8000, sampleRate);
+        float ringStepSin = metal ? (float)Math.Sin(omega) : 0f;
+        float ringStepCos = metal ? (float)Math.Cos(omega) : 1f;
+        bool gated = characterFx == 6 && characterAmount > .001f && gateDelayLeft != null;
+        // Three short reflections for gated-room percussion. All wet-only:
+        // the dry hit (and its DECAY/TRIM) is never shortened or attenuated.
+        // Scale reflections for short one-shots so even tiny Resources hats
+        // receive an audible early-reflection character.
+        int gateTap1 = Math.Max(1, (int)(sampleRate * Math.Min(.009, seconds * .12)));
+        int gateTap2 = Math.Max(2, (int)(sampleRate * Math.Min(.020, seconds * .25)));
+        int gateTap3 = Math.Max(3, (int)(sampleRate * Math.Min(.036, seconds * .42)));
+        int gateLength = Math.Max(1, (int)(sampleRate *
+            Math.Min(seconds * .85, .055f + .11f * characterAmount)));
+        int gateFade = Math.Max(1, Math.Min((int)(sampleRate * .012f), gateLength / 4));
+        float gateWet = gated ? characterAmount * .52f : 0f;
         float max = 0f;
         // At 50% tone the legacy signal is unchanged. The single-pole section
         // below is deliberately subtle and uses a separate history per channel.
@@ -108,6 +149,16 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
                     env = t * t * (3f - 2f * t);
                 }
             }
+            float carrier = ringSin;
+            if (metal)
+            {
+                float nextSin = ringSin * ringStepCos + ringCos * ringStepSin;
+                ringCos = ringCos * ringStepCos - ringSin * ringStepSin;
+                ringSin = nextSin;
+            }
+            float gateEnvelope = gated ? (samplePosition < gateLength - gateFade ? 1f :
+                samplePosition >= gateLength ? 0f :
+                (float)((gateLength - samplePosition) / gateFade)) : 0f;
             samplePosition++;
             bool crushCapture = crush && crushCounter <= 0;
             if (crushCapture) crushCounter = crushStride;
@@ -150,11 +201,25 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
                     float heldSample = channel == 0 ? crushLeft : crushRight;
                     x += (heldSample - x) * crushWet;
                 }
+                if (metal)
+                    x = x * ((1f - metalWet) + (1.41421356f * carrier) * metalWet) * metalNorm;
+                if (gated && channel < 2)
+                {
+                    float[] delays = channel == 0 ? gateDelayLeft : gateDelayRight;
+                    // Buffer size is a power of two; no modulo allocation.
+                    int mask = GateDelaySamples - 1;
+                    float reflect = delays[(gateDelayIndex - gateTap1) & mask] * .53f +
+                        delays[(gateDelayIndex - gateTap2) & mask] * .34f +
+                        delays[(gateDelayIndex - gateTap3) & mask] * .21f;
+                    delays[gateDelayIndex] = x;
+                    x += reflect * gateWet * gateEnvelope;
+                }
                 data[i] = x;
                 float abs = Math.Abs(x);
                 if (abs > max) max = abs;
             }
             if (crush) --crushCounter;
+            if (gated) gateDelayIndex = (gateDelayIndex + 1) & (GateDelaySamples - 1);
         }
         peak = max;
     }

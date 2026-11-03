@@ -125,7 +125,7 @@ namespace ZPunk.DAW
         public float drive;        // 0..1, neutral at 0
         public float punch;        // 0..1, mild per-hit compression
         // 2.3.6: Optional one-at-a-time CHARACTER effect. Old songs load OFF.
-        public int characterFx;     // 0=OFF, 1=CRUSH, 2=PITCH, 3=ROOM
+        public int characterFx;     // 0=OFF, 1=CRUSH, 2=PITCH, 3=ROOM, 4=METAL, 5=ECHO, 6=GATE
         public float characterAmount; // 0..1, effect depth; 0 is a strict bypass
     }
 

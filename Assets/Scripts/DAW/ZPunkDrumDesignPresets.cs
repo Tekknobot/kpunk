@@ -239,12 +239,12 @@ namespace ZPunk.DAW
             switch (style)
             {
                 case 1: return lane == 1 || lane == 2 ? 3 : 0; // tight club snare/clap ambience
-                case 2: return lane == 0 ? 2 : (lane == 2 || lane == 6 ? 3 : 0);
-                case 3: return lane == 0 ? 2 : (lane == 1 || lane == 6 ? 1 : 0);
-                case 4: return lane == 0 ? 2 : (lane == 1 || lane == 2 || lane == 6 ? 1 : 0);
+                case 2: return lane == 0 ? 2 : (lane == 6 ? 5 : (lane == 2 ? 3 : 0));
+                case 3: return lane == 0 ? 2 : (lane == 1 ? 6 : (lane == 6 ? 4 : 0));
+                case 4: return lane == 0 ? 2 : (lane == 1 ? 6 : (lane == 2 ? 1 : (lane == 6 ? 4 : 0)));
                 case 5: return lane == 3 || lane == 4 ? 1 : (lane == 2 ? 3 : 0);
-                case 6: return lane == 1 || lane == 2 || lane == 3 || lane == 6 ? 1 : 0;
-                case 7: return lane == 0 ? 2 : (lane == 1 || lane == 6 ? 3 : 0);
+                case 6: return lane == 1 || lane == 3 ? 1 : (lane == 2 ? 6 : (lane == 6 ? 4 : 0));
+                case 7: return lane == 0 ? 2 : (lane == 1 ? 6 : (lane == 6 ? 5 : 0));
                 default: return 0;
             }
         }

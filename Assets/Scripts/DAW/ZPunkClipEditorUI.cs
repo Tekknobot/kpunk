@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -105,7 +105,7 @@ namespace ZPunk.DAW
         private int drumDesignerLane;
         private Button drumCharacterButton, drumCharacterMinus, drumCharacterPlus;
         private Label drumCharacterAmountLabel;
-        private static readonly string[] DrumCharacterNames = { "OFF", "CRUSH", "PITCH", "ROOM" };
+        private static readonly string[] DrumCharacterNames = { "OFF", "CRUSH", "PITCH", "ROOM", "METAL", "ECHO", "GATE" };
         private bool showingDrumDesigner;
         private static readonly string[] DrumDesignerNames = { "KICK", "SNARE", "CLAP", "CLOSED", "OPEN", "RIDE", "RIM", "CRASH" };
         private ScrollView trackScroller;
@@ -753,7 +753,7 @@ namespace ZPunk.DAW
             shaping.style.flexShrink = 0;
             drumDesignerPage.Add(shaping);
 
-            // Single CHARACTER effect per drum; a compact row keeps the fixed,
+            // Seven choices including OFF; a compact row keeps the fixed,
             // non-scrolling phone layout and the existing 4x2 knob grid.
             var characterRow = new VisualElement { name = "ZPunkDrumCharacterRow" };
             characterRow.style.flexDirection = FlexDirection.Row;
@@ -945,7 +945,11 @@ namespace ZPunk.DAW
             // An independent new list prevents modifying a saved user preset.
             song.tracks[0].instrument.drumDesign = ZPunkDrumDesignPresets.Clone(shapes);
             FindDrumEngine();
-            drumEngine?.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
+            if (drumEngine != null)
+            {
+                drumEngine.SetDrumFxTempo(song.bpm);
+                drumEngine.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
+            }
             CloseDrumPresetMenu();
             RefreshDrumDesigner();
             AuditionDrumDesigner();
@@ -1244,7 +1248,11 @@ namespace ZPunk.DAW
             if (shape == null) return;
             update(shape);
             FindDrumEngine();
-            drumEngine?.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
+            if (drumEngine != null)
+            {
+                drumEngine.SetDrumFxTempo(song.bpm);
+                drumEngine.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
+            }
             AuditionDrumDesigner();
             // Moving any manual knob makes this a custom design, without
             // forcing a re-layout while the user's pointer owns the knob.
@@ -1271,7 +1279,7 @@ namespace ZPunk.DAW
                     });
                     RefreshDrumDesigner();
                 });
-            }, 220f);
+            }, 420f);
         }
 
         private void StepDrumCharacter(int direction)
@@ -2819,8 +2827,11 @@ namespace ZPunk.DAW
             EnsureChopsEditable();
             FindDrumEngine();
             if (drumEngine != null && song.tracks[0] != null)
+            {
+                drumEngine.SetDrumFxTempo(song.bpm);
                 drumEngine.ApplyDAWDrumDesign(song.tracks[0].instrument != null ?
                     song.tracks[0].instrument.drumDesign : null);
+            }
             ZPunkMasterAudioTap.ApplySongSettings(song);
             Redraw(false);
             FocusPatternNotes();
