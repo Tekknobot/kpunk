@@ -38,6 +38,10 @@ public sealed class KMusicProjectManager : MonoBehaviour
     private Label _modalTitle;
     private VisualElement _projectNotice;
     private readonly Dictionary<int, string> _cachedProjectNames = new();
+    // One expanded row keeps the project browser compact on portrait phones.
+    private int _expandedProjectSlot = -1;
+    private int _renameProjectSlot = -1;
+    private int _confirmDeleteSlot = -1;
 
     // Runtime refs
     private KMusicApp _app;
@@ -222,7 +226,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
         row.style.marginBottom = 8;
         row.style.minHeight = 40;
 
-        var saveBtn = new Button(() => { SaveProject(CurrentSlot); HideModal(); }) { text = "SAVE CURRENT" };
+        var saveBtn = new Button(() =>
+        {
+            if (TrySaveProject(CurrentSlot)) HideModal();
+            else ShowProjectNotice("Project could not be saved. Your workspace remains open.");
+        }) { text = "SAVE CURRENT" };
         saveBtn.AddToClassList("km-project-toolbar-btn");
         ZPunkOverlaySkin.Button(saveBtn, true);
         saveBtn.style.flexGrow = 1;
@@ -615,7 +623,11 @@ public sealed class KMusicProjectManager : MonoBehaviour
     {
         if (_modal == null || _modalList == null) return;
         ApplyProjectSafeArea();
+        _expandedProjectSlot = CurrentSlot;
+        _renameProjectSlot = -1;
+        _confirmDeleteSlot = -1;
         BuildProjectList();
+        _modalList.scrollOffset = Vector2.zero;
         _modal.style.display = DisplayStyle.Flex;
     }
 
@@ -643,8 +655,44 @@ public sealed class KMusicProjectManager : MonoBehaviour
             _modal.style.display = DisplayStyle.None;
     }
 
+    private void ToggleProjectDetails(int slot)
+    {
+        _expandedProjectSlot = _expandedProjectSlot == slot ? -1 : slot;
+        _renameProjectSlot = -1;
+        _confirmDeleteSlot = -1;
+        RebuildProjectListKeepingScroll();
+    }
+
+    // Rebuilding only happens after deliberate actions, not while the user scrolls.
+    private void RebuildProjectListKeepingScroll()
+    {
+        if (_modalList == null) return;
+        float oldY = _modalList.scrollOffset.y;
+        BuildProjectList();
+        _modalList.schedule.Execute(() =>
+        {
+            if (_modalList != null && _modalList.panel != null)
+                _modalList.scrollOffset = new Vector2(0f, oldY);
+        }).ExecuteLater(0);
+    }
+
+    private static Button ProjectAction(string label, Action onClick, bool primary = false, bool danger = false)
+    {
+        var button = new Button(onClick) { text = label };
+        ZPunkOverlaySkin.Button(button, primary, danger);
+        button.style.flexGrow = 1;
+        button.style.flexShrink = 1;
+        button.style.minWidth = 0;
+        button.style.height = 42;
+        button.style.minHeight = 42;
+        button.style.fontSize = 11;
+        button.style.marginRight = 5;
+        return button;
+    }
+
     private void BuildProjectList()
     {
+        if (_modalList == null) return;
         _modalList.Clear();
 
         var existing = new SortedSet<int>();
@@ -652,8 +700,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         {
             if (Directory.Exists(ProjectsDir))
             {
-                // Show slots with only a recovery artifact, too. Otherwise a
-                // crash during fallback commit could hide a valid project.
+                // Include recovery artifacts: a failed save must not hide a project.
                 foreach (var f in Directory.GetFiles(ProjectsDir, "project_*.json*"))
                 {
                     var name = Path.GetFileName(f);
@@ -669,6 +716,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         }
         catch { }
 
+        // Keep nearby empty slots visible so CREATE still works as before.
         for (int i = -2; i <= 6; i++)
             existing.Add(Mathf.Clamp(CurrentSlot + i, 0, 999));
 
@@ -680,192 +728,265 @@ public sealed class KMusicProjectManager : MonoBehaviour
                 TryReadNativeProject(path + ".rollback", out _) ||
                 TryReadNativeProject(path + ".bak", out _) ||
                 TryReadNativeProject(path + ".writing", out _);
-
-            var row = new VisualElement();
-            row.AddToClassList("km-project-row");
-            if (slot == CurrentSlot)
-                row.AddToClassList("km-project-row--current");
+            bool isCurrent = slot == CurrentSlot;
+            bool expanded = _expandedProjectSlot == slot;
+            var row = new VisualElement { name = "ZPunkProjectRow" + slot.ToString("000") };
             row.style.flexDirection = FlexDirection.Column;
             row.style.width = Length.Percent(100);
             row.style.minWidth = 0;
             row.style.flexShrink = 0;
-            row.style.marginBottom = 8;
-            row.style.paddingLeft = 11;
-            row.style.paddingRight = 11;
-            row.style.paddingTop = 12;
-            row.style.paddingBottom = 11;
-            row.style.borderLeftWidth = slot == CurrentSlot ? 3 : 1;
-            row.style.borderLeftColor = slot == CurrentSlot ? ZPunkOverlaySkin.Accent : ZPunkOverlaySkin.Line;
+            row.style.marginBottom = 6;
+            row.style.paddingLeft = 8;
+            row.style.paddingRight = 8;
+            row.style.paddingTop = 3;
+            row.style.paddingBottom = expanded ? 10 : 3;
+            row.style.borderLeftWidth = isCurrent ? 3 : 1;
+            row.style.borderRightWidth = 1;
+            row.style.borderTopWidth = 1;
+            row.style.borderBottomWidth = 1;
+            var edge = isCurrent ? ZPunkOverlaySkin.Accent : ZPunkOverlaySkin.Line;
+            row.style.borderLeftColor = edge;
+            row.style.borderRightColor = ZPunkOverlaySkin.Line;
+            row.style.borderTopColor = ZPunkOverlaySkin.Line;
+            row.style.borderBottomColor = ZPunkOverlaySkin.Line;
             row.style.borderTopLeftRadius = 7;
             row.style.borderTopRightRadius = 7;
             row.style.borderBottomLeftRadius = 7;
             row.style.borderBottomRightRadius = 7;
-            row.style.backgroundColor = slot == CurrentSlot ?
-                new Color(.105f,.212f,.225f,1f) : ZPunkOverlaySkin.Panel;
+            row.style.backgroundColor = isCurrent
+                ? new Color(.094f, .196f, .211f, 1f) : ZPunkOverlaySkin.Panel;
 
-            var headerRow = new VisualElement();
-            headerRow.AddToClassList("km-project-row-header");
-            headerRow.style.flexDirection = FlexDirection.Row;
-            headerRow.style.justifyContent = Justify.SpaceBetween;
-            headerRow.style.alignItems = Align.Center;
-            headerRow.style.minWidth = 0;
-            row.Add(headerRow);
+            // One large touch target opens the row; no permanent action buttons.
+            var header = new Button(() => ToggleProjectDetails(slot)) { text = string.Empty };
+            header.name = "ProjectRowToggle" + slot.ToString("000");
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.alignItems = Align.Center;
+            header.style.width = Length.Percent(100);
+            header.style.height = 53;
+            header.style.minHeight = 53;
+            header.style.paddingLeft = 3;
+            header.style.paddingRight = 1;
+            header.style.paddingTop = 0;
+            header.style.paddingBottom = 0;
+            header.style.marginLeft = 0;
+            header.style.marginRight = 0;
+            header.style.backgroundColor = Color.clear;
+            header.style.borderTopWidth = 0;
+            header.style.borderBottomWidth = 0;
+            header.style.borderLeftWidth = 0;
+            header.style.borderRightWidth = 0;
 
-            var slotLabel = new Label(GetProjectDisplayName(slot));
-            slotLabel.AddToClassList("km-project-slot");
-            slotLabel.style.fontSize=15;
-            slotLabel.style.flexGrow = 1;
-            slotLabel.style.minWidth = 0;
-            slotLabel.style.whiteSpace = WhiteSpace.Normal;
-            slotLabel.style.color=new Color(.92f,.97f,.99f);
-            slotLabel.style.unityFontStyleAndWeight=FontStyle.Bold;
-            headerRow.Add(slotLabel);
-            var state = new Label(slot == CurrentSlot ? "CURRENT" : !has ? "EMPTY" : !compatible ? "LEGACY" : "SAVED");
-            state.style.fontSize = 10;
-            state.style.color = slot == CurrentSlot ? ZPunkOverlaySkin.Accent : ZPunkOverlaySkin.Muted;
-            state.style.marginLeft = 8;
+            var number = new Label(slot.ToString("000"));
+            number.style.width = 37;
+            number.style.minWidth = 37;
+            number.style.marginRight = 9;
+            number.style.unityTextAlign = TextAnchor.MiddleCenter;
+            number.style.fontSize = 11;
+            number.style.color = isCurrent ? ZPunkOverlaySkin.Accent : ZPunkOverlaySkin.Muted;
+            number.style.backgroundColor = new Color(.065f, .105f, .151f, 1f);
+            number.style.borderTopLeftRadius = 5;
+            number.style.borderTopRightRadius = 5;
+            number.style.borderBottomLeftRadius = 5;
+            number.style.borderBottomRightRadius = 5;
+            number.style.height = 34;
+            header.Add(number);
+
+            var titles = new VisualElement();
+            titles.style.flexDirection = FlexDirection.Column;
+            titles.style.flexGrow = 1;
+            titles.style.flexShrink = 1;
+            titles.style.minWidth = 0;
+            var name = new Label(GetProjectDisplayName(slot));
+            name.style.fontSize = 13;
+            name.style.unityFontStyleAndWeight = FontStyle.Bold;
+            name.style.color = ZPunkOverlaySkin.Ink;
+            name.style.whiteSpace = WhiteSpace.NoWrap;
+            name.style.textOverflow = TextOverflow.Ellipsis;
+            name.style.overflow = Overflow.Hidden;
+            name.style.minWidth = 0;
+            titles.Add(name);
+            var description = new Label(isCurrent ? "ACTIVE PROJECT" : !has ? "EMPTY SLOT" :
+                !compatible ? "OLDER PROJECT" : "SAVED PROJECT");
+            description.style.fontSize = 9;
+            description.style.marginTop = 2;
+            description.style.color = ZPunkOverlaySkin.Muted;
+            description.style.whiteSpace = WhiteSpace.NoWrap;
+            titles.Add(description);
+            header.Add(titles);
+
+            string status = isCurrent ? "CURRENT" : !has ? "EMPTY" : !compatible ? "LEGACY" : "SAVED";
+            var state = new Label(status);
+            state.style.fontSize = 9;
+            state.style.marginLeft = 5;
+            state.style.marginRight = 4;
+            state.style.color = isCurrent ? ZPunkOverlaySkin.Accent : ZPunkOverlaySkin.Muted;
             state.style.flexShrink = 0;
-            headerRow.Add(state);
+            header.Add(state);
+            var arrow = new Label(expanded ? "▴" : "▾");
+            arrow.style.fontSize = 19;
+            arrow.style.width = 24;
+            arrow.style.minWidth = 24;
+            arrow.style.unityTextAlign = TextAnchor.MiddleCenter;
+            arrow.style.color = ZPunkOverlaySkin.Muted;
+            header.Add(arrow);
+            row.Add(header);
 
-            string desc;
-            if (!has)
-                desc = $"Project {slot:000} - Empty slot ready for a new project.";
-            else if (!compatible)
-                desc = $"Project {slot:000} - Older/incompatible file, preserved. Load starts a fresh workspace.";
-            else if (slot == CurrentSlot)
-                desc = $"Project {slot:000} - Current project. You can rename, save, or delete it.";
-            else
-                desc = $"Project {slot:000} - Ready to load or delete.";
-
-            var label = new Label(desc);
-            label.AddToClassList("km-project-name");
-            label.style.fontSize=12;
-            label.style.marginTop=4;
-            label.style.color=ZPunkOverlaySkin.Muted;
-            label.style.whiteSpace=WhiteSpace.Normal;
-            row.Add(label);
-
-            var btnRow = new VisualElement();
-            btnRow.AddToClassList("km-project-actions");
-            btnRow.style.flexDirection = FlexDirection.Row;
-            btnRow.style.marginTop = 7;
-            btnRow.style.flexWrap=Wrap.NoWrap;
-            btnRow.style.minWidth=0;
-            btnRow.style.width=Length.Percent(100);
-            if (has)
+            if (expanded)
             {
-                if (slot == CurrentSlot)
+                var detail = new VisualElement();
+                detail.style.width = Length.Percent(100);
+                detail.style.minWidth = 0;
+                detail.style.paddingTop = 9;
+                detail.style.paddingLeft = 3;
+                detail.style.paddingRight = 3;
+                detail.style.borderTopWidth = 1;
+                detail.style.borderTopColor = ZPunkOverlaySkin.Line;
+
+                string note = isCurrent && !has ? "Save this workspace to create its project file."
+                    : isCurrent ? "Save your current edits, rename this project, or delete it."
+                    : !has ? "Create a new project in this empty slot."
+                    : !compatible ? "Older format. The original file will be preserved if it cannot be loaded."
+                    : "LOAD saves your current project before switching.";
+                var hint = new Label(note);
+                hint.style.fontSize = 11;
+                hint.style.color = ZPunkOverlaySkin.Muted;
+                hint.style.whiteSpace = WhiteSpace.Normal;
+                hint.style.marginBottom = 9;
+                detail.Add(hint);
+
+                if (_confirmDeleteSlot == slot && has)
+                {
+                    var warning = new Label("DELETE THIS PROJECT? This cannot be undone.");
+                    warning.style.fontSize = 11;
+                    warning.style.color = new Color(1f, .7f, .69f);
+                    warning.style.whiteSpace = WhiteSpace.Normal;
+                    warning.style.marginBottom = 8;
+                    detail.Add(warning);
+                    var confirmRow = new VisualElement();
+                    confirmRow.style.flexDirection = FlexDirection.Row;
+                    confirmRow.style.width = Length.Percent(100);
+                    confirmRow.Add(ProjectAction("CANCEL", () =>
+                    {
+                        _confirmDeleteSlot = -1;
+                        RebuildProjectListKeepingScroll();
+                    }));
+                    confirmRow.Add(ProjectAction("DELETE NOW", () =>
+                    {
+                        _confirmDeleteSlot = -1;
+                        _renameProjectSlot = -1;
+                        DeleteProject(slot, closeModal: false);
+                    }, danger: true));
+                    detail.Add(confirmRow);
+                }
+                else if (_renameProjectSlot == slot && has && compatible)
                 {
                     var renameRow = new VisualElement();
-                    renameRow.AddToClassList("km-project-rename-row");
                     renameRow.style.flexDirection = FlexDirection.Row;
                     renameRow.style.alignItems = Align.Center;
-                    renameRow.style.justifyContent = Justify.FlexStart;
                     renameRow.style.width = Length.Percent(100);
-                    renameRow.style.minWidth=0;
-                    renameRow.style.overflow=Overflow.Hidden;
-                    renameRow.style.marginTop = 10;
-
-                    var renameField = new TextField();
-                    renameField.value = GetProjectDisplayName(slot);
-                    renameField.label = string.Empty;
-                    renameField.AddToClassList("km-project-rename-field");
-                    renameField.style.flexGrow = 1;
-                    renameField.style.minWidth = 0;
-                    renameField.style.marginRight = 6;
-                    // Dark, legible input styling also applies to the inner Unity text field.
-                    ZPunkOverlaySkin.TextInput(renameField);
-                    renameRow.Add(renameField);
-
-                    var btnRename = new Button(() =>
+                    renameRow.style.minWidth = 0;
+                    var field = new TextField { value = GetProjectDisplayName(slot) };
+                    field.label = string.Empty;
+                    field.style.flexGrow = 1;
+                    field.style.flexShrink = 1;
+                    field.style.minWidth = 0;
+                    field.style.marginRight = 5;
+                    ZPunkOverlaySkin.TextInput(field);
+                    renameRow.Add(field);
+                    var saveName = ProjectAction("RENAME", () =>
                     {
-                        if (RenameProject(slot, renameField.value))
-                            BuildProjectList();
-                    })
-                    { text = "RENAME" };
-                    btnRename.AddToClassList("km-pillbtn");
-                    btnRename.AddToClassList("km-project-action-btn");
-                    btnRename.AddToClassList("km-project-rename-btn");
-                    ZPunkOverlaySkin.Button(btnRename);
-                    btnRename.style.flexShrink = 0;
-                    btnRename.style.minWidth = 82;
-                    btnRename.style.width = 82;
-                    renameRow.Add(btnRename);
-
-                    row.Add(renameRow);
+                        if (RenameProject(slot, field.value))
+                        {
+                            _renameProjectSlot = -1;
+                            RebuildProjectListKeepingScroll();
+                        }
+                        else
+                            ShowProjectNotice("Project name could not be saved. No changes were made.");
+                    }, primary: true);
+                    saveName.style.flexGrow = 0;
+                    saveName.style.width = 85;
+                    saveName.style.minWidth = 85;
+                    renameRow.Add(saveName);
+                    detail.Add(renameRow);
+                    var cancel = ProjectAction("CANCEL RENAME", () =>
+                    {
+                        _renameProjectSlot = -1;
+                        RebuildProjectListKeepingScroll();
+                    });
+                    cancel.style.marginTop = 6;
+                    detail.Add(cancel);
                 }
-
-                var btnLoad = new Button(() =>
+                else
                 {
-                    SaveProject(CurrentSlot);
-                    SwitchToSlot(slot);
-                    LoadProject(slot);
-                    HideModal();
-                })
-                { text = "LOAD" };
-                btnLoad.AddToClassList("km-pillbtn");
-                btnLoad.AddToClassList("km-project-action-btn");
-                ZPunkOverlaySkin.Button(btnLoad, true, false);
-                btnLoad.style.flexGrow = 1;
-                btnLoad.style.minWidth = 0;
-                btnLoad.style.flexShrink = 1;
-                btnLoad.style.marginRight = 6;
-                btnRow.Add(btnLoad);
+                    var actions = new VisualElement();
+                    actions.style.flexDirection = FlexDirection.Row;
+                    actions.style.width = Length.Percent(100);
+                    actions.style.minWidth = 0;
 
-                var btnNoSave = new Button(() =>
-                {
-                    SwitchToSlot(slot);
-                    LoadProject(slot);
-                    HideModal();
-                })
-                { text = "OPEN DIRECT" };
-                btnNoSave.AddToClassList("km-pillbtn");
-                btnNoSave.AddToClassList("km-project-action-btn");
-                btnNoSave.AddToClassList("km-project-action-btn--secondary");
-                ZPunkOverlaySkin.Button(btnNoSave, false, false);
-                btnNoSave.style.flexGrow = 1;
-                btnNoSave.style.minWidth = 0;
-                btnNoSave.style.flexShrink = 1;
-                btnNoSave.style.marginRight = 6;
-                btnRow.Add(btnNoSave);
+                    if (isCurrent)
+                    {
+                        actions.Add(ProjectAction("SAVE", () =>
+                        {
+                            if (!TrySaveProject(CurrentSlot))
+                                ShowProjectNotice("Project could not be saved. Your workspace remains open.");
+                            else
+                                RebuildProjectListKeepingScroll();
+                        }, primary: true));
+                    }
+                    else if (!has)
+                    {
+                        actions.Add(ProjectAction("CREATE", () =>
+                        {
+                            if (SlotHasSavedData(slot))
+                            {
+                                ShowProjectNotice("This slot is no longer empty. Nothing was overwritten.");
+                                RebuildProjectListKeepingScroll();
+                                return;
+                            }
+                            if (!TrySaveProject(CurrentSlot))
+                            {
+                                ShowProjectNotice("Could not save the current project, so the slot was not changed.");
+                                return;
+                            }
+                            SwitchToSlot(slot);
+                            ResetToBlank();
+                            if (!TrySaveProject(slot))
+                                ShowProjectNotice("New project could not be saved. Check storage before continuing.");
+                            else
+                                HideModal();
+                        }, primary: true));
+                    }
+                    else
+                    {
+                        actions.Add(ProjectAction("LOAD", () =>
+                        {
+                            if (!TrySaveProject(CurrentSlot))
+                            {
+                                ShowProjectNotice("Could not save the current project, so no project was loaded.");
+                                return;
+                            }
+                            SwitchToSlot(slot);
+                            LoadProject(slot);
+                            HideModal();
+                        }, primary: true));
+                    }
 
-                var btnDelete = new Button(() =>
-                {
-                    DeleteProject(slot);
-                })
-                { text = "DELETE" };
-                btnDelete.AddToClassList("km-pillbtn");
-                btnDelete.AddToClassList("km-pillbtn--danger");
-                btnDelete.AddToClassList("km-project-action-btn");
-                ZPunkOverlaySkin.Button(btnDelete, false, true);
-                btnDelete.style.flexGrow = 1;
-                btnDelete.style.minWidth = 0;
-                btnDelete.style.flexShrink = 1;
-                btnDelete.style.marginRight = 0;
-                btnRow.Add(btnDelete);
+                    if (has && compatible)
+                        actions.Add(ProjectAction("RENAME", () =>
+                        {
+                            _renameProjectSlot = slot;
+                            RebuildProjectListKeepingScroll();
+                        }));
+                    if (has)
+                        actions.Add(ProjectAction("DELETE", () =>
+                        {
+                            _confirmDeleteSlot = slot;
+                            RebuildProjectListKeepingScroll();
+                        }, danger: true));
+                    detail.Add(actions);
+                }
+                row.Add(detail);
             }
-            else
-            {
-                var btnCreate = new Button(() =>
-                {
-                    SaveProject(CurrentSlot);
-                    SwitchToSlot(slot);
-                    ResetToBlank();
-                    SaveProject(slot);
-                    HideModal();
-                })
-                { text = "CREATE" };
-                btnCreate.AddToClassList("km-pillbtn");
-                btnCreate.AddToClassList("km-project-action-btn");
-                ZPunkOverlaySkin.Button(btnCreate, true, false);
-                btnCreate.style.flexGrow = 1;
-                btnCreate.style.minWidth = 0;
-                btnCreate.style.flexShrink = 1;
-                btnCreate.style.marginRight = 0;
-                btnRow.Add(btnCreate);
-            }
-
-            row.Add(btnRow);
             _modalList.Add(row);
         }
     }
