@@ -7,8 +7,8 @@ using KMusic;
 namespace ZPunk.DAW
 {
     /// <summary>
-    /// Touch-friendly vertical mixer banks. A held fader captures its pointer,
-    /// and the vertical page is pinned for the duration of the adjustment.
+    /// Touch-friendly vertical mixer banks. Only the visible fader handle
+    /// captures dragging; swipes over the rail and empty cells scroll normally.
     /// </summary>
     public sealed class ZPunkMixerUI : MonoBehaviour
     {
@@ -46,7 +46,7 @@ namespace ZPunk.DAW
         private int displayedSlot = -1;
         private const float RailTop = 14f;
         private const float RailHeight = 220f;
-        private const float HandleHeight = 24f;
+        private const float HandleHeight = 32f;
         private readonly Dictionary<int, Tuple<Button, Button>> drumButtons = new Dictionary<int, Tuple<Button, Button>>();
         private readonly List<MeterBinding> liveMeters = new List<MeterBinding>();
         private float nextMeterUpdate;
@@ -275,7 +275,8 @@ namespace ZPunk.DAW
             if (activePointer != pointerId) return;
             activeFader = null;
             activePointer = -1;
-            scrollLockUntil = Time.unscaledTime + .25f;
+            // Briefly suppress residual ScrollView movement, but let the next swipe scroll.
+            scrollLockUntil = Time.unscaledTime + .08f;
             RestoreScroll();
         }
         private FaderGesture FindFader(VisualElement target)
@@ -369,7 +370,9 @@ namespace ZPunk.DAW
             hit.style.height = 255;
             hit.style.position = Position.Relative;
             hit.style.flexShrink = 0;
-            hit.pickingMode = PickingMode.Position;
+            // This container only positions the graphics. It must NOT catch touches:
+            // a swipe on the rail or the surrounding fader area should scroll MIX.
+            hit.pickingMode = PickingMode.Ignore;
             cell.Add(hit);
 
             var rail = new VisualElement();
@@ -395,12 +398,13 @@ namespace ZPunk.DAW
 
             var thumb = new VisualElement();
             thumb.style.position = Position.Absolute;
-            thumb.style.left = new Length(32, LengthUnit.Percent);
-            thumb.style.width = new Length(65, LengthUnit.Percent);
+            // A slightly larger grip makes handle-only dragging practical on phones.
+            thumb.style.left = new Length(20, LengthUnit.Percent);
+            thumb.style.width = new Length(80, LengthUnit.Percent);
             thumb.style.height = HandleHeight;
             thumb.style.backgroundColor = Ink;
             Round(thumb, 6);
-            thumb.pickingMode = PickingMode.Ignore;
+            thumb.pickingMode = PickingMode.Position;
             hit.Add(thumb);
             var notch = new VisualElement();
             notch.style.position = Position.Absolute;
@@ -441,16 +445,16 @@ namespace ZPunk.DAW
                 show(1f - (y - RailTop) / RailHeight);
                 publish(false);
             };
-            faderTargets[hit] = new FaderGesture
+            // Only the handle is registered as a fader gesture target. The rail,
+            // meters, fader cell, and empty space remain ScrollView swipe areas.
+            faderTargets[thumb] = new FaderGesture
             {
                 begin = position =>
                 {
+                    // Preserve the exact grab point to avoid jumping the level.
                     float fingerY = hit.WorldToLocal(position).y;
                     float handleY = RailTop + RailHeight * (1f - value);
-                    // Grabbing the handle keeps its distance to your finger.
-                    // Tapping the empty rail jumps straight to that level.
-                    grabOffset = Mathf.Abs(fingerY - handleY) <= 20f ? fingerY - handleY : 0f;
-                    if (Mathf.Abs(fingerY - handleY) > 20f) setByFinger(position);
+                    grabOffset = fingerY - handleY;
                 },
                 move = position => setByFinger(position),
                 end = position => { setByFinger(position); publish(true); },
@@ -785,7 +789,7 @@ namespace ZPunk.DAW
                 drumButtons[lane] = Tuple.Create(solo, mute);
                 drumGrid.Add(fader);
             }
-            var note = Text("Drag faders up or down. Tap M to mute, S to solo.", 10, Dim);
+            var note = Text("Drag handles to adjust. Swipe between handles to scroll. Tap M to mute, S to solo.", 10, Dim);
             note.style.whiteSpace = WhiteSpace.Normal;
             note.style.marginBottom = 14;
             lanes.Add(note);
