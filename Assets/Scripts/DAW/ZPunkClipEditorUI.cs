@@ -1279,7 +1279,7 @@ namespace ZPunk.DAW
                     });
                     RefreshDrumDesigner();
                 });
-            }, 420f);
+            }, 320f);
         }
 
         private void StepDrumCharacter(int direction)
