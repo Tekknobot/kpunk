@@ -16,6 +16,11 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
     private volatile float decay = 1f;
     private volatile float drive;
     private volatile float punch;
+    private volatile int characterFx;
+    private volatile float characterAmount;
+    // Per-hit bitcrush state, owned by this AudioSource's audio callback.
+    private int crushCounter;
+    private float crushLeft, crushRight;
     private volatile float hitSeconds = 0.25f;
     private int sampleRate = 48000;
     private double samplePosition;
@@ -29,6 +34,7 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         if (shape == null)
         {
             trimGain = 1f; tone = .5f; decay = 1f; drive = 0f; punch = 0f;
+            characterFx = 0; characterAmount = 0f;
             return;
         }
         trimGain = Mathf.Pow(10f, Mathf.Clamp(shape.trim, -12f, 12f) / 20f);
@@ -36,6 +42,8 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         decay = Mathf.Clamp(shape.decay, 0.04f, 1f);
         drive = Mathf.Clamp01(shape.drive);
         punch = Mathf.Clamp01(shape.punch);
+        characterAmount = Mathf.Clamp01(shape.characterAmount);
+        characterFx = Mathf.Clamp(shape.characterFx, 0, 3);
     }
 
     public void PrepareHit(float durationSeconds)
@@ -46,6 +54,8 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         sampleRate = Mathf.Max(8000, AudioSettings.outputSampleRate);
         samplePosition = 0;
         filterL = filterR = compressorEnvelope = 0f;
+        crushCounter = 0;
+        crushLeft = crushRight = 0f;
     }
 
     private void OnAudioFilterRead(float[] data, int channels)
@@ -56,6 +66,12 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         float localDecay = decay;
         float localDrive = drive;
         float localPunch = punch;
+        bool crush = characterFx == 1 && characterAmount > .001f;
+        float crushWet = crush ? characterAmount * .88f : 0f;
+        int crushStride = crush ? 1 + (int)Math.Round(characterAmount * 22f) : 1;
+        // A sample-and-hold / bit-reduction stage. No changes to source gain.
+        float crushSteps = crush ? (float)Math.Pow(2.0,
+            15 - (int)Math.Round(characterAmount * 10f)) : 32768f;
         float seconds = hitSeconds;
         float max = 0f;
         // At 50% tone the legacy signal is unchanged. The single-pole section
@@ -93,6 +109,8 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
                 }
             }
             samplePosition++;
+            bool crushCapture = crush && crushCounter <= 0;
+            if (crushCapture) crushCounter = crushStride;
             for (int channel = 0; channel < channels; ++channel)
             {
                 int i = frame * channels + channel;
@@ -121,10 +139,22 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
                         x *= target;
                     }
                 }
+                if (crush)
+                {
+                    if (crushCapture)
+                    {
+                        float held = (float)Math.Round(x * crushSteps) / crushSteps;
+                        if (channel == 0) crushLeft = held;
+                        else crushRight = held;
+                    }
+                    float heldSample = channel == 0 ? crushLeft : crushRight;
+                    x += (heldSample - x) * crushWet;
+                }
                 data[i] = x;
                 float abs = Math.Abs(x);
                 if (abs > max) max = abs;
             }
+            if (crush) --crushCounter;
         }
         peak = max;
     }

@@ -76,10 +76,40 @@ public class KMusicDrumSequencer : MonoBehaviour
     {
         if (src == null || drumId < 1 || drumId > 8) return;
         var shape = _dawDrumShapes[drumId - 1];
-        src.pitch = shape == null ? 1f : Mathf.Pow(2f, Mathf.Clamp(shape.tune, -12f, 12f) / 12f);
+        float basePitch = shape == null ? 1f : Mathf.Pow(2f, Mathf.Clamp(shape.tune, -12f, 12f) / 12f);
+        // Pitch sweeps operate only on this voice and are driven by DSP time;
+        // do not restart a running sweep when a knob/preset changes.
+        var pitchFx = src.GetComponent<ZPunkDrumPitchEnvelope>();
+        if (pitchFx == null) pitchFx = src.gameObject.AddComponent<ZPunkDrumPitchEnvelope>();
+        pitchFx.Configure(basePitch, shape != null && shape.characterFx == 2
+            ? Mathf.Clamp01(shape.characterAmount) : 0f);
         src.panStereo = shape == null ? 0f : Mathf.Clamp(shape.pan, -1f, 1f);
         var meter = src.GetComponent<ZPunkSampleChannelMeter>();
         if (meter != null) meter.SetDrumShape(shape);
+        // Native, per-voice short room. OFF is a true bypass, no additional
+        // audio routing or modifications to master/mixer/trim/decay.
+        float room = shape != null && shape.characterFx == 3 ? Mathf.Clamp01(shape.characterAmount) : 0f;
+        var reverb = src.GetComponent<AudioReverbFilter>();
+        if (room > .001f && reverb == null) reverb = src.gameObject.AddComponent<AudioReverbFilter>();
+        if (reverb != null)
+        {
+            reverb.enabled = room > .001f;
+            if (reverb.enabled)
+            {
+                reverb.reverbPreset = AudioReverbPreset.User;
+                reverb.dryLevel = 0f; // preserve original sample level
+                reverb.room = -650;
+                reverb.roomHF = -1350;
+                reverb.decayTime = .18f + room * .32f;
+                reverb.decayHFRatio = .55f;
+                reverb.reflectionsLevel = -2400f + room * 1450f;
+                reverb.reflectionsDelay = .009f;
+                reverb.reverbLevel = -2500f + room * 1750f;
+                reverb.reverbDelay = .012f;
+                reverb.diffusion = 75f;
+                reverb.density = 65f;
+            }
+        }
     }
 
     public void PreviewDAWDrum(int lane)
@@ -476,10 +506,19 @@ public class KMusicDrumSequencer : MonoBehaviour
         src.Stop();
         src.volume = Mathf.Clamp01(velocityScale);
         var meter = src.GetComponent<ZPunkSampleChannelMeter>();
-        if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, src.pitch));
+        var scheduledShape = _dawDrumShapes[drumId - 1];
+        float nominalPitch = scheduledShape == null ? 1f : Mathf.Pow(2f,
+            Mathf.Clamp(scheduledShape.tune, -12f, 12f) / 12f);
+        if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, nominalPitch));
+        var pitchEnvelope = src.GetComponent<ZPunkDrumPitchEnvelope>();
+        if (pitchEnvelope != null) pitchEnvelope.Arm(dspTime);
         src.PlayScheduled(dspTime);
         _dawDrumVoiceStartsAt[src] = dspTime;
-        _dawDrumVoiceBusyUntil[src] = dspTime + Math.Max(0.01, clip.length / Mathf.Max(.1f, src.pitch));
+        double drySeconds = Math.Max(.01, clip.length / Mathf.Max(.1f, nominalPitch));
+        var shape = _dawDrumShapes[drumId - 1];
+        double roomTail = shape != null && shape.characterFx == 3
+            ? .18 + .32 * Mathf.Clamp01(shape.characterAmount) : 0.0;
+        _dawDrumVoiceBusyUntil[src] = dspTime + drySeconds + roomTail;
         if (drumId == 1 && DawKickRumble > .001f)
             ScheduleRumble(clip, dspTime, velocityScale);
         return true;
@@ -759,10 +798,19 @@ public class KMusicDrumSequencer : MonoBehaviour
         src.Stop();
         src.volume = GetDrumInputGain(drumId);
         var meter = src.GetComponent<ZPunkSampleChannelMeter>();
-        if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, src.pitch));
+        var scheduledShape = _dawDrumShapes[drumId - 1];
+        float nominalPitch = scheduledShape == null ? 1f : Mathf.Pow(2f,
+            Mathf.Clamp(scheduledShape.tune, -12f, 12f) / 12f);
+        if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, nominalPitch));
+        var pitchEnvelope = src.GetComponent<ZPunkDrumPitchEnvelope>();
+        if (pitchEnvelope != null) pitchEnvelope.Arm(now);
         src.PlayOneShot(clip, Mathf.Clamp01(velocityScale));
         _dawDrumVoiceStartsAt[src] = now;
-        _dawDrumVoiceBusyUntil[src] = now + Math.Max(0.01, clip.length / Mathf.Max(.1f, src.pitch));
+        double drySeconds = Math.Max(.01, clip.length / Mathf.Max(.1f, nominalPitch));
+        var shape = _dawDrumShapes[drumId - 1];
+        double roomTail = shape != null && shape.characterFx == 3
+            ? .18 + .32 * Mathf.Clamp01(shape.characterAmount) : 0.0;
+        _dawDrumVoiceBusyUntil[src] = now + drySeconds + roomTail;
     }
 
     [SerializeField] private UIDocument uiDocument;

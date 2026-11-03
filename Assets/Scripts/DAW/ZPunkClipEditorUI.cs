@@ -103,6 +103,9 @@ namespace ZPunk.DAW
         private Button drumPresetButton;
         private Label drumDesignerLaneLabel;
         private int drumDesignerLane;
+        private Button drumCharacterButton, drumCharacterMinus, drumCharacterPlus;
+        private Label drumCharacterAmountLabel;
+        private static readonly string[] DrumCharacterNames = { "OFF", "CRUSH", "PITCH", "ROOM" };
         private bool showingDrumDesigner;
         private static readonly string[] DrumDesignerNames = { "KICK", "SNARE", "CLAP", "CLOSED", "OPEN", "RIDE", "RIM", "CRASH" };
         private ScrollView trackScroller;
@@ -750,6 +753,34 @@ namespace ZPunk.DAW
             shaping.style.flexShrink = 0;
             drumDesignerPage.Add(shaping);
 
+            // Single CHARACTER effect per drum; a compact row keeps the fixed,
+            // non-scrolling phone layout and the existing 4x2 knob grid.
+            var characterRow = new VisualElement { name = "ZPunkDrumCharacterRow" };
+            characterRow.style.flexDirection = FlexDirection.Row;
+            characterRow.style.alignItems = Align.Center;
+            characterRow.style.height = 36;
+            characterRow.style.flexShrink = 0;
+            characterRow.style.marginTop = 2;
+            characterRow.Add(Txt("FX", 11, Accent));
+            drumCharacterButton = Btn("OFF  ▾", OpenDrumCharacterMenu, 91);
+            drumCharacterButton.style.height = 32;
+            drumCharacterButton.style.marginLeft = 5;
+            drumCharacterButton.style.marginRight = 6;
+            characterRow.Add(drumCharacterButton);
+            characterRow.Add(Txt("AMT", 11, Muted));
+            drumCharacterMinus = Btn("−", () => StepDrumCharacter(-1), 34);
+            drumCharacterMinus.style.height = 32;
+            drumCharacterMinus.style.marginLeft = 3;
+            characterRow.Add(drumCharacterMinus);
+            drumCharacterAmountLabel = Txt("0%", 11, Ink);
+            drumCharacterAmountLabel.style.width = 38;
+            drumCharacterAmountLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+            characterRow.Add(drumCharacterAmountLabel);
+            drumCharacterPlus = Btn("+", () => StepDrumCharacter(1), 34);
+            drumCharacterPlus.style.height = 32;
+            characterRow.Add(drumCharacterPlus);
+            drumDesignerPage.Add(characterRow);
+
             var hint = Txt("TAP LEFT/RIGHT: -/+  •  DRAG VERTICALLY: STEPS  •  GLUE: MASTER", 10, Muted);
             hint.style.whiteSpace = WhiteSpace.Normal;
             hint.style.unityTextAlign = TextAnchor.MiddleCenter;
@@ -893,7 +924,7 @@ namespace ZPunk.DAW
             string kitId = SelectedDrumKitId();
             for (int i = 0; i < ZPunkDrumDesignPresets.Names.Length; ++i)
             {
-                if (!ZPunkDrumDesignPresets.Matches(shapes,
+                if (!ZPunkDrumDesignPresets.MatchesFactory(shapes,
                     ZPunkDrumDesignPresets.CreateFactory(i, kitId))) continue;
                 drumPresetButton.text = ZPunkDrumDesignPresets.Names[i] + "  ▾";
                 return;
@@ -928,7 +959,8 @@ namespace ZPunk.DAW
                 factory.style.marginBottom = 5;
                 container.Add(factory);
                 AddDrumPresetOptions(container, ZPunkDrumDesignPresets.Names,
-                    index => ApplyDrumPreset(ZPunkDrumDesignPresets.CreateFactory(index, SelectedDrumKitId())));
+                    index => ApplyDrumPreset(ZPunkDrumDesignPresets.PreserveDecayAndTrim(
+                        ZPunkDrumDesignPresets.CreateFactory(index, SelectedDrumKitId()), CurrentDrumShapes())));
 
                 var user = Txt("YOUR SAVED DESIGNS", 10, Muted);
                 user.style.marginTop = 5;
@@ -1219,10 +1251,56 @@ namespace ZPunk.DAW
             if (drumPresetButton != null) drumPresetButton.text = "CUSTOM  ▾";
         }
 
+        private void OpenDrumCharacterMenu()
+        {
+            ShowDrumPresetMenu("DRUM CHARACTER FX", container =>
+            {
+                var note = Txt("ONE EFFECT PER DRUM / 0% IS OFF", 10, Muted);
+                note.style.marginBottom = 9;
+                container.Add(note);
+                AddDrumPresetOptions(container, DrumCharacterNames, index =>
+                {
+                    CloseDrumPresetMenu();
+                    SetDrumShape(shape =>
+                    {
+                        shape.characterFx = index;
+                        // First selection should be immediately audible. Preserve
+                        // the user's depth if they temporarily switch effects.
+                        if (index != 0 && shape.characterAmount < .01f)
+                            shape.characterAmount = .5f;
+                    });
+                    RefreshDrumDesigner();
+                });
+            }, 220f);
+        }
+
+        private void StepDrumCharacter(int direction)
+        {
+            var current = GetDrumShape(drumDesignerLane, false);
+            if (current == null || current.characterFx == 0) return;
+            SetDrumShape(shape => shape.characterAmount = Mathf.Clamp01(
+                Mathf.Round(shape.characterAmount * 10f + direction) / 10f));
+            RefreshDrumCharacterRow();
+        }
+
+        private void RefreshDrumCharacterRow()
+        {
+            var shape = GetDrumShape(drumDesignerLane, false) ?? new DrumShapeData();
+            int effect = Mathf.Clamp(shape.characterFx, 0, DrumCharacterNames.Length - 1);
+            bool enabled = effect != 0;
+            if (drumCharacterButton != null) drumCharacterButton.text = DrumCharacterNames[effect] + "  ▾";
+            if (drumCharacterAmountLabel != null)
+                drumCharacterAmountLabel.text = enabled
+                    ? Mathf.RoundToInt(shape.characterAmount * 100f) + "%" : "—";
+            drumCharacterMinus?.SetEnabled(enabled);
+            drumCharacterPlus?.SetEnabled(enabled);
+        }
+
         private void ResetDrumShape()
         {
             SetDrumShape(shape => { shape.tune = 0; shape.tone = .5f; shape.decay = 1f;
-                shape.pan = 0; shape.trim = 0; shape.drive = 0; shape.punch = 0; });
+                shape.pan = 0; shape.trim = 0; shape.drive = 0; shape.punch = 0;
+                shape.characterFx = 0; shape.characterAmount = 0f; });
             RefreshDrumDesigner();
         }
 
@@ -1230,6 +1308,7 @@ namespace ZPunk.DAW
         {
             if (drumDesignerPage == null || song == null) return;
             RefreshDrumPresetLabel();
+            RefreshDrumCharacterRow();
             drumDesignerLaneLabel.text = DrumDesignerNames[drumDesignerLane] + "  /  SHAPE";
             for (int i = 0; i < 8; ++i)
             {

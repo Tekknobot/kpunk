@@ -224,10 +224,44 @@ namespace ZPunk.DAW
                     pan = s.pan / 10f,
                     trim = 0f,
                     drive = Mathf.Clamp(drive, 0, 20) / 20f,
-                    punch = Mathf.Clamp(s.punch, 0, 20) / 20f
+                    punch = Mathf.Clamp(s.punch, 0, 20) / 20f,
+                    characterFx = FactoryEffect(index, lane),
+                    characterAmount = FactoryAmount(index, lane)
                 });
             }
             return result;
+        }
+
+        // Each drum can have only one character effect, even in factory kits.
+        // DECAY and TRIM are never adjusted by these assignments.
+        private static int FactoryEffect(int style, int lane)
+        {
+            switch (style)
+            {
+                case 1: return lane == 1 || lane == 2 ? 3 : 0; // tight club snare/clap ambience
+                case 2: return lane == 0 ? 2 : (lane == 2 || lane == 6 ? 3 : 0);
+                case 3: return lane == 0 ? 2 : (lane == 1 || lane == 6 ? 1 : 0);
+                case 4: return lane == 0 ? 2 : (lane == 1 || lane == 2 || lane == 6 ? 1 : 0);
+                case 5: return lane == 3 || lane == 4 ? 1 : (lane == 2 ? 3 : 0);
+                case 6: return lane == 1 || lane == 2 || lane == 3 || lane == 6 ? 1 : 0;
+                case 7: return lane == 0 ? 2 : (lane == 1 || lane == 6 ? 3 : 0);
+                default: return 0;
+            }
+        }
+        private static float FactoryAmount(int style, int lane)
+        {
+            if (FactoryEffect(style, lane) == 0) return 0f;
+            switch (style)
+            {
+                case 1: return .34f;
+                case 2: return lane == 0 ? .36f : .40f;
+                case 3: return lane == 0 ? .65f : .42f;
+                case 4: return lane == 0 ? .55f : .72f;
+                case 5: return .25f;
+                case 6: return .62f;
+                case 7: return lane == 0 ? .65f : .58f;
+                default: return 0f;
+            }
         }
 
         // Applying a factory style changes only sound character. It must never
@@ -261,7 +295,8 @@ namespace ZPunk.DAW
                 var s = shapes != null && i < shapes.Count ? shapes[i] : null;
                 copy.Add(s == null ? new DrumShapeData() : new DrumShapeData {
                     tune = s.tune, tone = s.tone, decay = s.decay,
-                    pan = s.pan, trim = s.trim, drive = s.drive, punch = s.punch
+                    pan = s.pan, trim = s.trim, drive = s.drive, punch = s.punch,
+                    characterFx = s.characterFx, characterAmount = s.characterAmount
                 });
             }
             return copy;
@@ -283,7 +318,9 @@ namespace ZPunk.DAW
                     Mathf.Abs(a.pan - b.pan) > epsilon ||
                     Mathf.Abs(a.trim - b.trim) > epsilon ||
                     Mathf.Abs(a.drive - b.drive) > epsilon ||
-                    Mathf.Abs(a.punch - b.punch) > epsilon)
+                    Mathf.Abs(a.punch - b.punch) > epsilon ||
+                    a.characterFx != b.characterFx ||
+                    Mathf.Abs(a.characterAmount - b.characterAmount) > epsilon)
                     return false;
             }
             return true;
