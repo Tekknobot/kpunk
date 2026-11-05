@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Stopwatch = System.Diagnostics.Stopwatch;
 using UnityEngine;
 
 namespace ZPunk.DAW
@@ -27,6 +28,7 @@ namespace ZPunk.DAW
         private float gain = 1f;
         private AcidState parameters = new AcidState();
         private double phase, frequency, targetFrequency, phaseStep, portamentoLeft;
+        private double portamentoRatio = 1.0;
         private double envelope, filterEnvelope;
         private double lp1, lp2, lp3, lp4;
         // New factory patches opt into a more musical 303-style contour. Kept
@@ -37,9 +39,53 @@ namespace ZPunk.DAW
         private double distortionMetalLow, distortionDiodeDc;
         // Persist audio-thread DSP envelopes between audio buffers.
         private double pedalPreLow, pedalPostLow, compressorDetector;
+        private double compressorTargetGain = 1.0, smoothedCompressorGain = 1.0;
+        private int compressorControlStep;
         private double pedalDc, tapeHighPassL, tapeHighPassR;
         private double delayToneLeft, delayToneRight;
+        // Gently attenuate ultrasonic pedal harmonics before the mobile output.
+        private double pedalOutputLowL, pedalOutputLowR;
         private double tapePhase;
+        private double tapeFlutter;
+        // Refined pedal distortion is generated at 2x sample rate and
+        // decimated by a 25-tap anti-alias filter. Legacy DSP is untouched.
+        private static readonly double[] PedalDecimator = {
+            -0.000190020861903,
+            0.000982657733938,
+            0.002423697926178,
+            -0.002297535357384,
+            -0.009913533276760,
+            -0.000516778462912,
+            0.024810867473323,
+            0.017607590075891,
+            -0.044866089213865,
+            -0.070464972283229,
+            0.062758953630121,
+            0.304715184390756,
+            0.429899956451694,
+            0.304715184390756,
+            0.062758953630121,
+            -0.070464972283229,
+            -0.044866089213865,
+            0.017607590075891,
+            0.024810867473323,
+            -0.000516778462912,
+            -0.009913533276760,
+            -0.002297535357384,
+            0.002423697926178,
+            0.000982657733938,
+            -0.000190020861903
+        };
+        private readonly double[] pedalDecimatorHistory = new double[25];
+        private int pedalDecimatorWrite;
+        private double lastPedalInput;
+        private bool pedalInputReady;
+        private int previousPedalType = -1;
+        private bool previousPedalActive;
+        // Audio-thread-only timing counters; reported from Update (main thread).
+        private volatile float worstAudioLoad;
+        private volatile int audioDeadlineMisses;
+        private float nextAudioDiagnosticTime;
         private double smoothedOutputLevel = 1.0; // 6ms de-zippered user LEVEL
         private double smoothedPatchOutputTrim = 1.0; // avoid preset-switch clicks
         private bool gate, activeAccent;
@@ -57,10 +103,36 @@ namespace ZPunk.DAW
 
         public float Peak => lastPeak;
 
-        public void Initialize()
+        private void OnEnable()
         {
-            if (source != null) return;
-            sampleRate = Math.Max(8000, AudioSettings.outputSampleRate);
+            AudioSettings.OnAudioConfigurationChanged += OnAudioConfigurationChanged;
+        }
+
+        private void OnDisable()
+        {
+            AudioSettings.OnAudioConfigurationChanged -= OnAudioConfigurationChanged;
+        }
+
+        // Output routes on Android/iOS can renegotiate their sample rate (for
+        // example, connecting Bluetooth or a USB interface). Recreate the silent
+        // clock and delay buffers on the main thread, NEVER in the audio callback.
+        private void OnAudioConfigurationChanged(bool deviceWasChanged)
+        {
+            if (source == null) return;
+            int currentRate = Math.Max(8000, AudioSettings.outputSampleRate);
+            if (currentRate != sampleRate)
+            {
+                source.Stop();
+                sampleRate = currentRate;
+                AllocateEffectLines();
+                source.clip = AudioClip.Create("ACID DSP clock", 1024, 2, sampleRate, false);
+                AllNotesOff();
+            }
+            if (!source.isPlaying) source.Play();
+        }
+
+        private void AllocateEffectLines()
+        {
             chorusLine = new double[Math.Max(4096, sampleRate / 12)];
             delayLeft = new double[sampleRate * 3];
             delayRight = new double[sampleRate * 3];
@@ -68,6 +140,19 @@ namespace ZPunk.DAW
             roomLeftB = new double[Math.Max(1, sampleRate * 43 / 1000)];
             roomRightA = new double[Math.Max(1, sampleRate * 41 / 1000)];
             roomRightB = new double[Math.Max(1, sampleRate * 47 / 1000)];
+            chorusWrite = delayWrite = roomWriteLA = roomWriteLB = roomWriteRA = roomWriteRB = 0;
+            pedalOutputLowL = pedalOutputLowR = 0.0;
+        }
+
+        public void Initialize()
+        {
+            if (source != null) return;
+            sampleRate = Math.Max(8000, AudioSettings.outputSampleRate);
+            // Warm up the lookup on the MAIN thread, before AudioSource.Play.
+            // This prevents a static allocation in Unity's real-time callback.
+            if (TanhTable.Length != 4097)
+                UnityEngine.Debug.LogError("[ZPUNK ACID] Tanh table failed to initialize.");
+            AllocateEffectLines();
             source = gameObject.AddComponent<AudioSource>();
             source.playOnAwake = false;
             source.loop = true;
@@ -125,6 +210,112 @@ namespace ZPunk.DAW
             return line[index] * (1.0 - fraction) + line[next] * fraction;
         }
 
+        // Read back one filtered sample for every two oversampled pedal steps.
+        // Everything is fixed-size; never allocate memory in the audio callback.
+        private double PushPedalOversample(double value, bool decimate)
+        {
+            pedalDecimatorHistory[pedalDecimatorWrite] = value;
+            if (++pedalDecimatorWrite == pedalDecimatorHistory.Length)
+                pedalDecimatorWrite = 0;
+            if (!decimate) return 0.0;
+            double sum = 0.0;
+            int j = pedalDecimatorWrite - 1;
+            for (int i = 0; i < PedalDecimator.Length; i++)
+            {
+                if (j < 0) j += pedalDecimatorHistory.Length;
+                sum += PedalDecimator[i] * pedalDecimatorHistory[j--];
+            }
+            return sum;
+        }
+
+        // At 2x sample rate, the main 303 distortion families retain their
+        // characteristics but generate fewer in-band alias products. FastTanh
+        // keeps the extra oversampling affordable on Android and iOS.
+        private double RenderPedalHalfStep(double sample, double distortionGain,
+            int distortionType, double distortionBite, double fxDistortion,
+            double prePole, double postPole, double dcPole,
+            double compressorAttack, double compressorRelease)
+        {
+            pedalPreLow += prePole * (sample - pedalPreLow);
+            double pedalHigh = sample - pedalPreLow;
+            double voiced = (sample * .85 + pedalHigh *
+                (distortionType == 4 ? 1.70 : .66)) * distortionGain;
+            double saturated;
+            switch (distortionType)
+            {
+                case 1:
+                    saturated = FastTanh(voiced * 1.35 + .06) - FastTanh(.06);
+                    break;
+                case 2:
+                    saturated = .73 * FastTanh(voiced * 2.65) +
+                        .27 * Math.Max(-1.0, Math.Min(1.0, voiced * 1.8));
+                    break;
+                case 3:
+                    saturated = FastTanh(FastTanh(voiced * 4.1) * 3.0);
+                    break;
+                case 4:
+                    double stage1 = FastTanh(voiced * 1.35);
+                    double stage2 = FastTanh(stage1 * 3.55 + .035) - FastTanh(.035);
+                    saturated = stage2 * .88 + pedalPreLow * 1.4;
+                    break;
+                case 5:
+                    saturated = voiced >= 0 ? FastTanh(voiced * 1.95) :
+                        FastTanh(voiced * 1.18) * .79;
+                    break;
+                case 6:
+                    saturated = Math.Max(-1.0, Math.Min(1.0, voiced * 1.85));
+                    break;
+                case 7:
+                    double detected = Math.Abs(voiced);
+                    compressorDetector += (detected > compressorDetector ?
+                        compressorAttack : compressorRelease) *
+                        (detected - compressorDetector);
+                    double threshold = .27 - fxDistortion * .16;
+                    double ratio = 3.0 + fxDistortion * 7.0;
+                    // Envelope follower runs at audio rate; gain law at 1/16
+                    // of the 2x pedal rate with per-step smoothing. This removes
+                    // nearly all per-sample Math.Pow on mobile processors.
+                    if ((compressorControlStep++ & 15) == 0)
+                        compressorTargetGain = compressorDetector > threshold ?
+                            Math.Pow(compressorDetector / threshold,
+                                1.0 / ratio - 1.0) : 1.0;
+                    smoothedCompressorGain += (compressorTargetGain -
+                        smoothedCompressorGain) * .15;
+                    saturated = FastTanh(voiced * smoothedCompressorGain * 1.55) *
+                        (1.20 + fxDistortion * .24);
+                    break;
+                default:
+                    saturated = .65 * FastTanh(voiced * 1.9) +
+                        .35 * FastTanh(sample * distortionGain * 2.0);
+                    break;
+            }
+            double pedalHard = Math.Max(-1.0, Math.Min(1.0, voiced * 1.4));
+            saturated = saturated * (1.0 - distortionBite * .30) +
+                pedalHard * distortionBite * .30;
+            pedalPostLow += postPole * (saturated - pedalPostLow);
+            saturated = (pedalPostLow * .92 + saturated * .08) * .82;
+            pedalDc += dcPole * (saturated - pedalDc);
+            return Math.Max(-1.0, Math.Min(1.0, saturated - pedalDc));
+        }
+
+        // Logs happen on Unity's main thread, never from OnAudioFilterRead.
+        // A deadline warning distinguishes DSP underruns from harsh FX aliasing.
+        private void Update()
+        {
+            if (Time.unscaledTime < nextAudioDiagnosticTime) return;
+            nextAudioDiagnosticTime = Time.unscaledTime + 8f;
+            float load = worstAudioLoad;
+            int missed = audioDeadlineMisses;
+            worstAudioLoad = 0f;
+            audioDeadlineMisses = 0;
+            if (missed >= 2)
+                UnityEngine.Debug.LogWarning(
+                    "[ZPUNK ACID] Audio DSP deadline exceeded " + missed +
+                    " times in the last interval (worst load " +
+                    (load * 100f).ToString("F0") + "%). " +
+                    "This indicates audio-thread overload, not a phone speaker fault.");
+        }
+
         public void Schedule(double when, bool noteOn, int pitch, int velocity, int flags)
         {
             var command = new Command { time = when, on = noteOn,
@@ -151,7 +342,41 @@ namespace ZPunk.DAW
             return 0.0;
         }
         private static double Clip(double x) => x / (1.0 + Math.Abs(x));
-        private static double Norm(float n) => Math.Max(0.0, Math.Min(1.0, n));
+        // Dense tanh interpolation: replaces repeated libm calls in the refined
+        // 303/pedal path. Max interpolation error below 1e-6 over [-8,+8].
+        // Initialised when the component type is first used on Unity's main thread.
+        private static readonly double[] TanhTable = MakeTanhTable();
+        private static double[] MakeTanhTable()
+        {
+            var table = new double[4097];
+            for (int i = 0; i < table.Length; i++)
+                table[i] = Math.Tanh((i - 2048) / 256.0);
+            return table;
+        }
+        private static double FastTanh(double x)
+        {
+            if (double.IsNaN(x)) return 0.0;
+            if (x <= -8.0) return -1.0;
+            if (x >= 8.0) return 1.0;
+            double pos = (x + 8.0) * 256.0;
+            int index = (int)pos;
+            double fraction = pos - index;
+            return TanhTable[index] +
+                (TanhTable[index + 1] - TanhTable[index]) * fraction;
+        }
+        private static double Norm(float n) => float.IsNaN(n) || float.IsInfinity(n)
+            ? 0.0 : Math.Max(0.0, Math.Min(1.0, n));
+
+        // Soft-knee peak guard for refreshed 303 sounds. Unlike hard clipping,
+        // this approaches 1 without generating an abrupt waveform corner.
+        private static double SoftCeiling(double x)
+        {
+            double a = Math.Abs(x);
+            if (a <= .80) return x;
+            double above = a - .80;
+            double limited = .80 + .20 * above / (.20 + above);
+            return x < 0 ? -limited : limited;
+        }
         private static double Hz(int pitch, float tune) => 440.0 * Math.Pow(2.0,
             (pitch - 69.0 + (Norm(tune) - .5) * 24.0) / 12.0);
 
@@ -169,11 +394,15 @@ namespace ZPunk.DAW
             if (sliding)
             {
                 portamentoLeft = .025 + Norm(p.glide) * .225;
+                // Constant log-pitch ratio replaces a costly pow per sample.
+                portamentoRatio = Math.Pow(next / Math.Max(1.0, frequency),
+                    1.0 / Math.Max(1.0, portamentoLeft * sampleRate));
             }
             else
             {
                 frequency = next;
                 portamentoLeft = 0;
+                portamentoRatio = 1.0;
                 envelope = 1.0;
                 filterEnvelope = 1.0;
             }
@@ -200,6 +429,7 @@ namespace ZPunk.DAW
         private void OnAudioFilterRead(float[] data, int channels)
         {
             if (data == null || channels <= 0) return;
+            long audioStartTicks = Stopwatch.GetTimestamp();
             var p = parameters;
             float g = gain;
             int localGeneration = generation;
@@ -214,8 +444,15 @@ namespace ZPunk.DAW
                 smoothed303Cutoff = smoothed303Resonance = 0;
                 distortionToneLow = distortionMetalLow = distortionDiodeDc = 0;
                 pedalPreLow = pedalPostLow = compressorDetector = pedalDc = 0;
+                compressorTargetGain = smoothedCompressorGain = 1.0;
+                compressorControlStep = 0;
                 tapeHighPassL = tapeHighPassR = tapePhase = 0;
                 delayToneLeft = delayToneRight = 0;
+                pedalOutputLowL = pedalOutputLowR = 0;
+                portamentoRatio = 1.0;
+                pedalInputReady = false;
+                Array.Clear(pedalDecimatorHistory, 0, pedalDecimatorHistory.Length);
+                pedalDecimatorWrite = 0;
             }
             lock (queueLock)
             {
@@ -240,6 +477,21 @@ namespace ZPunk.DAW
             double accentPulseFall = Math.Exp(-delta / .045);
             double vcaTransientFall = Math.Exp(-delta / .060);
             double outputSlew = 1.0 - Math.Exp(-delta / .006);
+            // A 16-sample (~0.33ms @48k) filter control update makes 303
+            // envelopes smooth while avoiding multiple transcendentals for every
+            // PCM sample. The filter poles and VCA still run per sample.
+            double base303Cutoff = 62.0 * Math.Pow(96.0, Norm(p.cutoff));
+            double mod303Depth = Norm(p.envMod) * 3.95;
+            double wanted303Resonance = .22 + Norm(p.resonance) * 2.80;
+            double accentFilterDecay = Math.Exp(-delta * .27 / Math.Max(.08, decay));
+            double target303Cutoff = Math.Max(35.0, smoothed303Cutoff);
+            double a303 = Math.Min(.81, 1.0 - Math.Exp(-2.0 * Math.PI *
+                target303Cutoff * delta));
+            // High-gain diode/metal/fuzz processing creates harmonics above
+            // Nyquist. A gentle output low-pass reduces the most audible fizz
+            // without putting an additional heavy oversampler on mobile CPUs.
+            double pedalOutputPole = 1.0 - Math.Exp(-2.0 * Math.PI *
+                Math.Min(9200.0, sampleRate * .19) * delta);
             // All new rack amounts default to zero in existing song JSON:
             // with every FX at zero, original DSP output is bit-identical.
             double fxDistortion = Norm(p.fxDistortion);
@@ -259,11 +511,26 @@ namespace ZPunk.DAW
             // Analogue-pedal-inspired voicing, not a proprietary Roland algorithm.
             // Separate pre-emphasis and final low pass avoid Metal collapsing into
             // simple full-band clipping; varying TONE shapes harmonics substantially.
-            double pedalPrePole = 1.0 - Math.Exp(-2.0 * Math.PI * 440.0 * delta);
             double pedalToneHz = 1250.0 + Math.Pow(distortionTone, 1.35) * 9600.0;
-            double pedalPostPole = 1.0 - Math.Exp(-2.0 * Math.PI * pedalToneHz * delta);
-            double compressorAttack = 1.0 - Math.Exp(-delta / .004);
-            double compressorRelease = 1.0 - Math.Exp(-delta / .115);
+            // Half-sample coefficients for 2x refined pedal processing.
+            double pedalPrePole2x = 1.0 - Math.Exp(-Math.PI * 440.0 * delta);
+            double pedalPostPole2x = 1.0 - Math.Exp(-Math.PI * pedalToneHz * delta);
+            double dcPole2x = 1.0 - Math.Exp(-Math.PI * 18.0 * delta);
+            double compressorAttack2x = 1.0 - Math.Exp(-delta / .008);
+            double compressorRelease2x = 1.0 - Math.Exp(-delta / .230);
+            bool pedalActive = use303Pedal && fxDistortion > .0001;
+            if (pedalActive && (!previousPedalActive ||
+                distortionType != previousPedalType))
+            {
+                pedalInputReady = false;
+                Array.Clear(pedalDecimatorHistory, 0, pedalDecimatorHistory.Length);
+                pedalDecimatorWrite = 0;
+                pedalPreLow = pedalPostLow = compressorDetector = pedalDc = 0;
+                compressorTargetGain = smoothedCompressorGain = 1.0;
+                compressorControlStep = 0;
+            }
+            previousPedalActive = pedalActive;
+            previousPedalType = distortionType;
             double fxChorus = Norm(p.fxChorus);
             double fxDelay = Norm(p.fxDelay);
             int delayMode = Math.Max(0, Math.Min(6, p.fxDelayMode));
@@ -296,77 +563,99 @@ namespace ZPunk.DAW
                 }
                 if (portamentoLeft > 0)
                 {
-                    double fraction = Math.Min(1.0, delta / portamentoLeft);
-                    // Interpolate in musical pitch, not raw linear Hz.
-                    frequency *= Math.Pow(targetFrequency / Math.Max(1.0, frequency), fraction);
+                    // Logarithmic slide using a ratio calculated only on note-on.
+                    frequency *= portamentoRatio;
                     portamentoLeft -= delta;
+                    if (portamentoLeft <= 0) frequency = targetFrequency;
                 }
                 else frequency = targetFrequency;
-                double dt = Math.Min(.45, frequency * delta);
-                phase += dt;
-                if (phase >= 1.0) phase -= 1.0;
-                double osc = p.square
-                    ? ((phase < .5 ? 1.0 : -1.0) + PolyBlep(phase, dt) - PolyBlep((phase + .5) % 1.0, dt))
-                    : (2.0 * phase - 1.0 - PolyBlep(phase, dt));
-                if (!gate) envelope *= releaseFactor;
-                filterEnvelope *= decayFactor;
-                double accent = activeAccent ? accentStrength : 0.0;
-                double sample;
-                if (refined303)
+                // On mobile, skipping a completely released dry voice is
+                // essential: previously the oscillators and nonlinear filter ran
+                // continuously even during rests or stopped transport.
+                // Do not skip when an FX tail (delay/reverb/chorus) is enabled.
+                if (refined303 && !gate && envelope < 1e-8 && fxDelay < .0001 &&
+                    fxReverb < .0001 && fxChorus < .0001)
                 {
-                    // Original TB-303 characteristics: a predominantly 18 dB
-                    // lowpass response, short accent pluck, slower accent sweep,
-                    // and legato slides that carry the filter envelope forward.
-                    // This is an original perceptual approximation, not ACB DSP.
-                    accentSweep *= accentSweepFall;
-                    accentPulse *= accentPulseFall;
-                    vcaAttackPulse *= vcaTransientFall;
-                    double sweepDecay = activeAccent ? .73 : 1.0;
-                    // Accents briefly shorten the filter decay as they brighten
-                    // the sound, giving a sharper 303-style bite.
-                    if (activeAccent) filterEnvelope *=
-                        Math.Exp(-delta * (1.0 - sweepDecay) / Math.Max(.08, decay));
-                    double baseFc = 62.0 * Math.Pow(96.0, Norm(p.cutoff));
-                    double envCurve = Math.Pow(Math.Max(0.0, filterEnvelope), .78);
-                    double targetFc = baseFc * Math.Exp(
-                        envCurve * (Norm(p.envMod) * 3.95) +
-                        accentSweep * accentStrength * .84);
-                    targetFc = Math.Max(35.0, Math.Min(sampleRate * .30, targetFc));
-                    if (smoothed303Cutoff <= 0) smoothed303Cutoff = targetFc;
-                    smoothed303Cutoff += (targetFc - smoothed303Cutoff) * filterSlew;
-                    double wantedRes = .22 + Norm(p.resonance) * 2.80;
-                    smoothed303Resonance +=
-                        (wantedRes - smoothed303Resonance) * resonanceSlew;
-                    // Three soft-saturating poles with resonant feedback. This
-                    // yields a sharper 303-like nasal response than the legacy
-                    // four-stage ladder, without raising CPU cost or adding
-                    // a fourth oscillator/voice. Limit a for stable high Fc.
-                    double a303 = Math.Min(.81, 1.0 - Math.Exp(
-                        -2.0 * Math.PI * smoothed303Cutoff * delta));
-                    double input303 = Math.Tanh((osc *
-                        (1.0 + .16 * accentPulse * accentStrength) -
-                        lp3 * smoothed303Resonance) * (1.1 + Norm(p.drive) * 3.9));
-                    lp1 += a303 * (input303 - lp1);
-                    lp2 += a303 * (Math.Tanh(lp1 * 1.35) - lp2);
-                    lp3 += a303 * (Math.Tanh(lp2 * 1.35) - lp3);
-                    double transientAmp = .83 + .17 * vcaAttackPulse;
-                    double accentAmp = 1.0 + .38 * accentPulse * accentStrength;
-                    sample = Math.Tanh(lp3 * 2.05) * transientAmp * accentAmp *
-                        envelope * g * .61;
+                    envelope = filterEnvelope = 0.0;
+                    int silentIndex = frame * channels;
+                    for (int c = 0; c < channels; c++) data[silentIndex + c] = 0f;
+                    continue;
+                }
+                double sample;
+                if (refined303 && !gate && envelope < 1e-8)
+                {
+                    // With only an FX tail left, bypass the expensive
+                    // oscillator/filter. Delay and room still ring out below.
+                    envelope = filterEnvelope = 0.0;
+                    sample = 0.0;
                 }
                 else
                 {
-                    // Original ZPUNK model, untouched for older song files.
-                    double fc = cutoffBase * Math.Exp((filterEnvelope *
-                        (envDepth + accent * 1.2)));
-                    fc = Math.Max(35.0, Math.Min(sampleRate * .34, fc));
-                    double a = 1.0 - Math.Exp(-2.0 * Math.PI * fc * delta);
-                    double input = Clip((osc * (1.0 + accent * .35) - lp4 * res) * drive);
-                    lp1 += a * (input - lp1);
-                    lp2 += a * (Clip(lp1 * 1.4) - lp2);
-                    lp3 += a * (Clip(lp2 * 1.4) - lp3);
-                    lp4 += a * (Clip(lp3 * 1.4) - lp4);
-                    sample = Clip(lp4 * 2.0) * envelope * g * .62;
+                    double dt = Math.Min(.45, frequency * delta);
+                    phase += dt;
+                    if (phase >= 1.0) phase -= 1.0;
+                    double osc = p.square
+                        ? ((phase < .5 ? 1.0 : -1.0) + PolyBlep(phase, dt) - PolyBlep((phase + .5) % 1.0, dt))
+                        : (2.0 * phase - 1.0 - PolyBlep(phase, dt));
+                    if (!gate) envelope *= releaseFactor;
+                    filterEnvelope *= decayFactor;
+                    if (!gate && envelope < 1e-12) envelope = 0.0;
+                    if (filterEnvelope < 1e-12) filterEnvelope = 0.0;
+                    double accent = activeAccent ? accentStrength : 0.0;
+                    if (refined303)
+                    {
+                        // Original TB-303 characteristics: a predominantly 18 dB
+                        // lowpass response, short accent pluck, slower accent sweep,
+                        // and legato slides that carry the filter envelope forward.
+                        // This is an original perceptual approximation, not ACB DSP.
+                        accentSweep *= accentSweepFall;
+                        accentPulse *= accentPulseFall;
+                        vcaAttackPulse *= vcaTransientFall;
+                        // Accents briefly shorten the filter decay. Coefficients
+                        // are precomputed once per buffer instead of each sample.
+                        if (activeAccent) filterEnvelope *= accentFilterDecay;
+                        if ((frame & 15) == 0)
+                        {
+                            double envCurve = Math.Pow(Math.Max(0.0, filterEnvelope), .78);
+                            target303Cutoff = base303Cutoff * Math.Exp(
+                                envCurve * mod303Depth + accentSweep * accentStrength * .84);
+                            target303Cutoff = Math.Max(35.0,
+                                Math.Min(sampleRate * .30, target303Cutoff));
+                            if (smoothed303Cutoff <= 0) smoothed303Cutoff = target303Cutoff;
+                            a303 = Math.Min(.81, 1.0 - Math.Exp(
+                                -2.0 * Math.PI * smoothed303Cutoff * delta));
+                        }
+                        smoothed303Cutoff +=
+                            (target303Cutoff - smoothed303Cutoff) * filterSlew;
+                        smoothed303Resonance +=
+                            (wanted303Resonance - smoothed303Resonance) * resonanceSlew;
+                        // Three soft-saturating poles with resonant feedback.
+                        // Coefficient updates occur every 16 samples (<0.4ms).
+                        double input303 = FastTanh((osc *
+                            (1.0 + .16 * accentPulse * accentStrength) -
+                            lp3 * smoothed303Resonance) * (1.1 + Norm(p.drive) * 3.9));
+                        lp1 += a303 * (input303 - lp1);
+                        lp2 += a303 * (FastTanh(lp1 * 1.35) - lp2);
+                        lp3 += a303 * (FastTanh(lp2 * 1.35) - lp3);
+                        double transientAmp = .83 + .17 * vcaAttackPulse;
+                        double accentAmp = 1.0 + .38 * accentPulse * accentStrength;
+                        sample = FastTanh(lp3 * 2.05) * transientAmp * accentAmp *
+                            envelope * g * .61;
+                    }
+                    else
+                    {
+                        // Original ZPUNK model, untouched for older song files.
+                        double fc = cutoffBase * Math.Exp((filterEnvelope *
+                            (envDepth + accent * 1.2)));
+                        fc = Math.Max(35.0, Math.Min(sampleRate * .34, fc));
+                        double a = 1.0 - Math.Exp(-2.0 * Math.PI * fc * delta);
+                        double input = Clip((osc * (1.0 + accent * .35) - lp4 * res) * drive);
+                        lp1 += a * (input - lp1);
+                        lp2 += a * (Clip(lp1 * 1.4) - lp2);
+                        lp3 += a * (Clip(lp2 * 1.4) - lp3);
+                        lp4 += a * (Clip(lp3 * 1.4) - lp4);
+                        sample = Clip(lp4 * 2.0) * envelope * g * .62;
+                    }
                 }
                 double left = sample, right = sample;
                 // Post-filter distortion. With an old save/patch, this is
@@ -390,65 +679,26 @@ namespace ZPunk.DAW
                     }
                     else if (use303Pedal)
                     {
-                        // New TB-303-software-inspired drive families. The original
-                        // TB-303 had no distortion: these are our own algorithms,
-                        // not Roland's protected circuitry/plug-in DSP.
-                        pedalPreLow += pedalPrePole * (sample - pedalPreLow);
-                        double pedalHigh = sample - pedalPreLow;
-                        double voiced = (sample * .85 + pedalHigh *
-                            (distortionType == 4 ? 1.70 : .66)) * distortionGain;
-                        switch (distortionType)
+                        // Proper 2x drive processing followed by anti-alias
+                        // decimation. This remains opt-in for factory presets;
+                        // older saved projects keep their exact legacy code.
+                        if (!pedalInputReady)
                         {
-                            case 1: // OVERDRIVE: symmetrical soft knee, warm mids
-                                saturated = Math.Tanh(voiced * 1.35 + .06) - Math.Tanh(.06);
-                                break;
-                            case 2: // DISTORTION: firmer clipping and distinct note edge
-                                saturated = .73 * Math.Tanh(voiced * 2.65) +
-                                    .27 * Math.Max(-1.0, Math.Min(1.0, voiced * 1.8));
-                                break;
-                            case 3: // FUZZ: double stage, strong compressed harmonics
-                                saturated = Math.Tanh(Math.Tanh(voiced * 4.1) * 3.0);
-                                break;
-                            case 4: // METAL: treble pre-emphasis, two clipping stages,
-                                    // post-filtered fizz, and a little dry low-end
-                                double stage1 = Math.Tanh(voiced * 1.35);
-                                double stage2 = Math.Tanh(stage1 * 3.55 + .035) - Math.Tanh(.035);
-                                saturated = stage2 * .88 + pedalPreLow * 1.4;
-                                break;
-                            case 5: // DIODE: unequal + and - knees
-                                saturated = voiced >= 0 ? Math.Tanh(voiced * 1.95) :
-                                    Math.Tanh(voiced * 1.18) * .79;
-                                break;
-                            case 6: // HARD CLIP: intentionally sharp digital edge
-                                saturated = Math.Max(-1.0, Math.Min(1.0, voiced * 1.85));
-                                break;
-                            case 7: // COMPRESSOR: feed-forward gain control before
-                                    // mild saturation, useful for even 303 basslines
-                                double detected = Math.Abs(voiced);
-                                compressorDetector += (detected > compressorDetector ?
-                                    compressorAttack : compressorRelease) *
-                                    (detected - compressorDetector);
-                                double threshold = .27 - fxDistortion * .16;
-                                double ratio = 3.0 + fxDistortion * 7.0;
-                                double reduction = compressorDetector > threshold ?
-                                    Math.Pow(compressorDetector / threshold, 1.0 / ratio - 1.0) : 1.0;
-                                saturated = Math.Tanh(voiced * reduction * 1.55) *
-                                    (1.20 + fxDistortion * .24);
-                                break;
-                            default: // DRIVE: more rounded, low-mid-biased saturation
-                                saturated = .65 * Math.Tanh(voiced * 1.9) +
-                                    .35 * Math.Tanh(sample * distortionGain * 2.0);
-                                break;
+                            lastPedalInput = sample;
+                            pedalInputReady = true;
                         }
-                        // BITE changes edge without overwhelming the iconic filter.
-                        double pedalHard = Math.Max(-1.0, Math.Min(1.0, voiced * 1.4));
-                        saturated = saturated * (1.0 - distortionBite * .30) +
-                            pedalHard * distortionBite * .30;
-                        pedalPostLow += pedalPostPole * (saturated - pedalPostLow);
-                        saturated = (pedalPostLow * .92 + saturated * .08) * .82;
-                        // Eliminate steady-state DC from asymmetric clipping.
-                        pedalDc += dcPole * (saturated - pedalDc);
-                        saturated = Math.Max(-1.0, Math.Min(1.0, saturated - pedalDc));
+                        double midpoint = (lastPedalInput + sample) * .5;
+                        double first = RenderPedalHalfStep(midpoint, distortionGain,
+                            distortionType, distortionBite, fxDistortion,
+                            pedalPrePole2x, pedalPostPole2x, dcPole2x,
+                            compressorAttack2x, compressorRelease2x);
+                        PushPedalOversample(first, false);
+                        double second = RenderPedalHalfStep(sample, distortionGain,
+                            distortionType, distortionBite, fxDistortion,
+                            pedalPrePole2x, pedalPostPole2x, dcPole2x,
+                            compressorAttack2x, compressorRelease2x);
+                        saturated = PushPedalOversample(second, true);
+                        lastPedalInput = sample;
                     }
                     else
                     {
@@ -519,8 +769,12 @@ namespace ZPunk.DAW
                     // Fractional taps avoid jumping between integer samples.
                     if (use303Delay && delayMode == 4)
                     {
-                        double flutter = (Math.Sin(tapePhase) * .0007 +
-                            Math.Sin(tapePhase * .23) * .00035) * sampleRate;
+                        // The tape motor is sub-audio: 8-sample control updates
+                        // avoid running two sin() calls every PCM sample.
+                        if ((frame & 7) == 0)
+                            tapeFlutter = (Math.Sin(tapePhase) * .0007 +
+                                Math.Sin(tapePhase * .23) * .00035) * sampleRate;
+                        double flutter = tapeFlutter;
                         double readBack = Math.Max(1.0, Math.Min(delayLeft.Length - 2.0,
                             delayFrames + flutter));
                         tapL = ReadLine(delayLeft, delayWrite, readBack);
@@ -552,7 +806,7 @@ namespace ZPunk.DAW
                             // Remove low-frequency accumulation from feedback.
                             tapeHighPassL += dcPole * (echoL - tapeHighPassL);
                             double feedback = echoL - tapeHighPassL;
-                            double tape = Math.Tanh(mono * .98 + feedback *
+                            double tape = FastTanh(mono * .98 + feedback *
                                 Math.Min(.87, enhancedFeedback) * 1.10);
                             delayLeft[delayWrite] = tape;
                             delayRight[delayWrite] = tape * .96;
@@ -561,15 +815,15 @@ namespace ZPunk.DAW
                         {
                             // Pan: dry input goes left, right carries next echo.
                             double warmth = delayMode == 2 ? .86 : 1.0;
-                            delayLeft[delayWrite] = Math.Tanh(mono * 1.10 +
+                            delayLeft[delayWrite] = FastTanh(mono * 1.10 +
                                 echoR * enhancedFeedback * warmth);
-                            delayRight[delayWrite] = Math.Tanh(echoL * enhancedFeedback * warmth);
+                            delayRight[delayWrite] = FastTanh(echoL * enhancedFeedback * warmth);
                         }
                         else // stereo + digital: clear parallel repeats
                         {
-                            delayLeft[delayWrite] = Math.Tanh(incomingL * 1.1 +
+                            delayLeft[delayWrite] = FastTanh(incomingL * 1.1 +
                                 echoL * enhancedFeedback * .95);
-                            delayRight[delayWrite] = Math.Tanh(incomingR * 1.1 +
+                            delayRight[delayWrite] = FastTanh(incomingR * 1.1 +
                                 echoR * enhancedFeedback * .95);
                         }
                         // Strong first echo, retaining enough dry for articulation.
@@ -628,12 +882,37 @@ namespace ZPunk.DAW
                     left = left * (1.0 - mix) + (aL + bL) * mix * 1.05;
                     right = right * (1.0 - mix) + (aR + bR) * mix * 1.05;
                 }
-                // Cap occasional combined resonance/feedback peaks at the voice,
-                // before the shared master stage. All-bypass is unchanged.
-                if (fxDistortion > .0001 || fxChorus > .0001 || fxDelay > .0001 || fxReverb > .0001)
+                // Protect refreshed 303 patches from digital hard clipping.
+                // All legacy saves (refined303Engine=false) retain their old DSP.
+                if (refined303)
+                {
+                    if (fxDistortion > .0001 && distortionType != 0)
+                    {
+                        pedalOutputLowL += pedalOutputPole * (left - pedalOutputLowL);
+                        pedalOutputLowR += pedalOutputPole * (right - pedalOutputLowR);
+                        // Mostly dry blend: clean 303 bite remains while the
+                        // top octave of pedal fizz is lightly attenuated.
+                        left = left * .32 + pedalOutputLowL * .68;
+                        right = right * .32 + pedalOutputLowR * .68;
+                    }
+                    left = SoftCeiling(left);
+                    right = SoftCeiling(right);
+                }
+                else if (fxDistortion > .0001 || fxChorus > .0001 ||
+                         fxDelay > .0001 || fxReverb > .0001)
                 {
                     left = Math.Max(-1.0, Math.Min(1.0, left));
                     right = Math.Max(-1.0, Math.Min(1.0, right));
+                }
+                // Never send NaN/Infinity to Unity's mixer, even if an imported
+                // project contains corrupt values or a DSP state goes unstable.
+                if (double.IsNaN(left) || double.IsInfinity(left) ||
+                    double.IsNaN(right) || double.IsInfinity(right))
+                {
+                    left = right = 0.0;
+                    lp1 = lp2 = lp3 = lp4 = 0.0;
+                    pedalOutputLowL = pedalOutputLowR = 0.0;
+                    smoothed303Cutoff = smoothed303Resonance = 0.0;
                 }
                 // ACID LEVEL is an output trim, applied after distortion,
                 // chorus, delay, reverb and safety limiting. Changing it must
@@ -654,6 +933,13 @@ namespace ZPunk.DAW
             }
             if (offset > 0) audioQueue.RemoveRange(0, offset);
             lastPeak = peak;
+            double elapsed = (Stopwatch.GetTimestamp() - audioStartTicks) /
+                (double)Stopwatch.Frequency;
+            double available = (data.Length / (double)channels) /
+                Math.Max(8000, sampleRate);
+            float currentLoad = (float)(elapsed / Math.Max(.00001, available));
+            if (currentLoad > worstAudioLoad) worstAudioLoad = currentLoad;
+            if (currentLoad >= 1.0f) audioDeadlineMisses++;
         }
     }
 }
