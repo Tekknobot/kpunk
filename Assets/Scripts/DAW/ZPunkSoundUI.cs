@@ -28,14 +28,10 @@ namespace ZPunk.DAW
         private static readonly string[] SyncModes = { "FREE", "SYNC", "DOTTED", "TRIPLET" };
 
         private VisualElement root, moduleLayout, trackBar, presetCard, acidPanel;
-        private Button acidWave;
+        private Button acidWave, acidDelayRateButton;
+        private bool acidDialDragging;
+        private Vector2 acidDialScrollLock;
         private readonly List<AcidDial> acidDials = new List<AcidDial>();
-        // Route ACID dials through the same early (trickle-down) capture as the
-        // Helm knobs, before the SOUND ScrollView can claim touch drags.
-        private readonly Dictionary<VisualElement, AcidDial> acidKnobTargets = new Dictionary<VisualElement, AcidDial>();
-        private AcidDial activeAcidDial;
-        private int activeAcidPointer = -1;
-        private float activeAcidStartY, activeAcidStartValue;
         private sealed class AcidDial
         {
             public VisualElement marker;
@@ -92,6 +88,8 @@ namespace ZPunk.DAW
         private Button motionToggle, motionDepthMinus, motionDepthPlus, motionRate;
         private Label motionCaption;
         private TrackKind selected = TrackKind.Synth;
+        // Expose the active instrument lane when switching from SOUND to ARRANGE.
+        public int SelectedTrackIndex => (int)selected;
         private float nextRefresh;
         private float lastModuleWidth = -1f;
         // Short-lived UI acknowledgement, never a replay queue. Native Helm is
@@ -234,8 +232,9 @@ namespace ZPunk.DAW
             presetFilterButtons.Clear();
             presetFilter = "ALL";
             macros.Clear(); switches.Clear(); moduleCells.Clear();
-            selectors.Clear(); knobTargets.Clear(); acidDials.Clear(); acidKnobTargets.Clear();
-            activeAcidDial = null; activeAcidPointer = -1;
+            selectors.Clear(); knobTargets.Clear(); acidDials.Clear();
+            acidDelayRateButton = null;
+            acidDialDragging = false;
             auditionKeys.Clear();
             keyboardOpen = false;
             keyboardDrawer = keyboardBody = keyboardFrame = null;
@@ -454,6 +453,50 @@ namespace ZPunk.DAW
             AddAcidDial(dialGrid, "ACCENT", s => s.accent, (s,v) => s.accent=v);
             AddAcidDial(dialGrid, "DRIVE", s => s.drive, (s,v) => s.drive=v);
             AddAcidDial(dialGrid, "GLIDE", s => s.glide, (s,v) => s.glide=v);
+
+            // Independent per-track effects, after the 303 filter, not Helm FX.
+            var fxHeader = new VisualElement();
+            fxHeader.style.flexDirection = FlexDirection.Row;
+            fxHeader.style.alignItems = Align.Center;
+            fxHeader.style.marginTop = 12;
+            fxHeader.style.marginBottom = 8;
+            var fxTitle = T("ACID  /  FX RACK", 16, Aqua);
+            fxTitle.style.unityFontStyleAndWeight = FontStyle.Bold;
+            fxTitle.style.flexGrow = 1;
+            fxHeader.Add(fxTitle);
+            var fxReset = Action("RESET FX", () => ChangeAcidState(state =>
+            {
+                state.fxDistortion = state.fxChorus = state.fxDelay = 0f;
+                state.fxFeedback = state.fxReverb = state.fxRoom = 0f;
+                state.fxDelayRate = 0;
+            }));
+            fxReset.style.fontSize = 11;
+            fxReset.style.minHeight = 38;
+            fxHeader.Add(fxReset);
+            panel.Add(fxHeader);
+
+            var fxGrid = new VisualElement();
+            fxGrid.style.width = Length.Percent(100);
+            fxGrid.style.flexDirection = FlexDirection.Row;
+            fxGrid.style.flexWrap = Wrap.Wrap;
+            panel.Add(fxGrid);
+            AddAcidDial(fxGrid, "FX DRIVE", s => s.fxDistortion, (s,v) => s.fxDistortion=v, true);
+            AddAcidDial(fxGrid, "CHORUS", s => s.fxChorus, (s,v) => s.fxChorus=v, true);
+            AddAcidDial(fxGrid, "DELAY MIX", s => s.fxDelay, (s,v) => s.fxDelay=v, true);
+            AddAcidDial(fxGrid, "FEEDBACK", s => s.fxFeedback, (s,v) => s.fxFeedback=v, true);
+            AddAcidDial(fxGrid, "REVERB", s => s.fxReverb, (s,v) => s.fxReverb=v, true);
+            AddAcidDial(fxGrid, "ROOM SIZE", s => s.fxRoom, (s,v) => s.fxRoom=v, true);
+            acidDelayRateButton = Action("DELAY  /  1/8", () => ChangeAcidState(state =>
+                state.fxDelayRate = (Mathf.Clamp(state.fxDelayRate, 0, 3) + 1) % 4));
+            acidDelayRateButton.style.height = 44;
+            acidDelayRateButton.style.marginTop = 5;
+            acidDelayRateButton.style.marginBottom = 7;
+            acidDelayRateButton.style.backgroundColor = Tile;
+            panel.Add(acidDelayRateButton);
+            var fxHint = T("FX DRIVE  /  CHORUS  /  DELAY  /  REVERB. Zero mix is bypass. DELAY follows song BPM; FEEDBACK and ROOM SIZE shape the tail.", 11, Dim);
+            fxHint.style.whiteSpace = WhiteSpace.Normal;
+            fxHint.style.marginBottom = 8;
+            panel.Add(fxHint);
             var explanation = T("DRAG A DIAL UP/DOWN  /  Tap WAVE to switch saw and square. In CREATE, select an ACID note to enable ACCENT or SLIDE. Both are stored per note.", 11, Dim);
             explanation.style.whiteSpace = WhiteSpace.Normal;
             explanation.style.marginLeft = 6;
@@ -471,7 +514,7 @@ namespace ZPunk.DAW
                 song.tracks[5].instrument != null ? song.tracks[5].instrument.acid : null;
         }
 
-        private void ChangeAcidState(Action<AcidState> change)
+        private void ChangeAcidState(Action<AcidState> change, bool userEdited = true)
         {
             FindServices();
             if (songProjects == null) return;
@@ -485,14 +528,16 @@ namespace ZPunk.DAW
             if (instrument == null) instrument = song.tracks[5].instrument = new InstrumentState();
             if (instrument.acid == null) instrument.acid = new AcidState();
             change(instrument.acid);
+            if (userEdited) instrument.acid.patchModified = true;
             songProjects.AcceptArrangementEdit(song);
             if (songTransport != null) songTransport.ApplyLiveMix(song);
             RefreshAcidPanel();
         }
 
         private void AddAcidDial(VisualElement grid, string caption, Func<AcidState,float> get,
-            Action<AcidState,float> set)
+            Action<AcidState,float> set, bool isEffect = false)
         {
+            Color dialColor = isEffect ? Aqua : Gold;
             var tile = new VisualElement();
             tile.style.width = Length.Percent(33.333f);
             tile.style.minWidth = 0;
@@ -512,10 +557,10 @@ namespace ZPunk.DAW
             face.style.borderRightWidth = 2;
             face.style.borderBottomWidth = 2;
             face.style.borderLeftWidth = 2;
-            face.style.borderTopColor = Gold;
-            face.style.borderRightColor = Gold;
-            face.style.borderBottomColor = Gold;
-            face.style.borderLeftColor = Gold;
+            face.style.borderTopColor = dialColor;
+            face.style.borderRightColor = dialColor;
+            face.style.borderBottomColor = dialColor;
+            face.style.borderLeftColor = dialColor;
             face.style.position = Position.Relative;
             face.style.justifyContent = Justify.Center;
             face.style.alignItems = Align.Center;
@@ -530,15 +575,50 @@ namespace ZPunk.DAW
             marker.style.borderTopRightRadius = 3;
             marker.style.borderBottomLeftRadius = 3;
             marker.style.borderBottomRightRadius = 3;
-            marker.style.backgroundColor = Gold;
+            marker.style.backgroundColor = dialColor;
             marker.pickingMode = PickingMode.Ignore;
             face.Add(marker);
             var dial = new AcidDial { marker = marker, value = value, get = get, set = set,
                 label = caption };
             acidDials.Add(dial);
-            acidKnobTargets[face] = dial;
+            float initial = 0, startY = 0;
+            Vector2 originalScroll = Vector2.zero;
+            int capturedPointer = -1;
+            face.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0) return;
+                var state = CurrentAcidState();
+                if (state == null) return;
+                initial = get(state); startY = evt.position.y;
+                originalScroll = pageScroll != null ? pageScroll.scrollOffset : Vector2.zero;
+                acidDialScrollLock = originalScroll;
+                acidDialDragging = true;
+                capturedPointer = evt.pointerId;
+                face.CapturePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            face.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (capturedPointer != evt.pointerId || !face.HasPointerCapture(evt.pointerId)) return;
+                float amount = Mathf.Clamp01(initial + (startY - evt.position.y) / 170f);
+                ChangeAcidState(state => set(state, amount));
+                // Resist touch-driven ScrollView drift while adjusting any dial.
+                if (pageScroll != null) pageScroll.scrollOffset = originalScroll;
+                evt.StopPropagation();
+            });
+            face.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (capturedPointer != evt.pointerId) return;
+                capturedPointer = -1;
+                acidDialDragging = false;
+                if (face.HasPointerCapture(evt.pointerId)) face.ReleasePointer(evt.pointerId);
+                if (pageScroll != null) pageScroll.scrollOffset = originalScroll;
+                evt.StopPropagation();
+            });
+            face.RegisterCallback<PointerCancelEvent>(evt => { capturedPointer = -1; acidDialDragging = false; });
+            face.RegisterCallback<PointerCaptureOutEvent>(evt => { capturedPointer = -1; acidDialDragging = false; });
             tile.Add(face);
-            var label = T(caption, 11, Gold);
+            var label = T(FormatKnobLabel(caption), 11, dialColor);
             label.style.unityTextAlign = TextAnchor.MiddleCenter;
             label.style.marginTop = 6;
             tile.Add(label);
@@ -550,6 +630,11 @@ namespace ZPunk.DAW
             var state = CurrentAcidState();
             if (state == null) return;
             if (acidWave != null) acidWave.text = "WAVE  /  " + (state.square ? "SQUARE" : "SAWTOOTH");
+            if (acidDelayRateButton != null)
+                acidDelayRateButton.text = "DELAY RATE  /  " + ZPunkAcidPresets.RateLabel(state.fxDelayRate) + "  ·  BPM SYNC";
+            if (presetName != null)
+                presetName.text = (string.IsNullOrEmpty(state.patchName) ? "CUSTOM 303" : state.patchName) +
+                    (state.patchModified ? "  /  EDITED" : "");
             foreach (var dial in acidDials)
             {
                 float amount = Mathf.Clamp01(dial.get(state));
@@ -916,7 +1001,6 @@ namespace ZPunk.DAW
 
         public void OnHidden()
         {
-            CancelAcidDrag();
             ClosePresetBrowser();
             ReleaseAllAuditionNotes();
         }
@@ -1123,7 +1207,6 @@ namespace ZPunk.DAW
         {
             if (selected != track) ClosePresetBrowser();
             if (selected != track) ReleaseAllAuditionNotes();
-            CancelAcidDrag();
             if (dragging != null && root != null && root.HasPointerCapture(dragPointer))
                 root.ReleasePointer(dragPointer);
             dragging = null; dragPointer = -1;
@@ -1131,8 +1214,6 @@ namespace ZPunk.DAW
             ClearPendingDistortion();
             OnShown();
         }
-        public int SelectedTrackIndex => (int)selected;
-
         public void OnShown(int requestedTrack = -1)
         {
             if (requestedTrack >= 0 && requestedTrack <= 5)
@@ -1161,7 +1242,7 @@ namespace ZPunk.DAW
             if (subhead != null)
                 subhead.text = selected == TrackKind.Acid ? "ACID  /  303 MONO SYNTH" : selected.ToString().ToUpperInvariant() + "  /  AUDIO HELM";
             bool showAcid = selected == TrackKind.Acid;
-            if (presetCard != null) presetCard.style.display = showAcid ? DisplayStyle.None : DisplayStyle.Flex;
+            if (presetCard != null) presetCard.style.display = DisplayStyle.Flex;
             if (moduleLayout != null) moduleLayout.style.display = showAcid ? DisplayStyle.None : DisplayStyle.Flex;
             if (acidPanel != null) acidPanel.style.display = showAcid ? DisplayStyle.Flex : DisplayStyle.None;
             // The existing two-octave drawer doubles as a monophonic 303
@@ -1190,6 +1271,14 @@ namespace ZPunk.DAW
                 mainPicker.ApplyPresetChoice(mainPicker.CurrentPresetIndex + direction, null);
             else if (selected == TrackKind.Pads && padRuntime != null)
                 padRuntime.StepPreset(direction);
+            else if (selected == TrackKind.Acid)
+            {
+                var state = CurrentAcidState();
+                int index = ZPunkAcidPresets.IndexOf(state != null ? state.patchName : null);
+                if (index < 0) index = direction > 0 ? -1 : 0;
+                int next = (index + direction + ZPunkAcidPresets.Count) % ZPunkAcidPresets.Count;
+                ChangeAcidState(acid => ZPunkAcidPresets.Load(next, acid), false);
+            }
             Refresh();
         }
 
@@ -1278,6 +1367,7 @@ namespace ZPunk.DAW
 
         private int BrowserPresetCount()
         {
+            if (selected == TrackKind.Acid) return ZPunkAcidPresets.Count;
             if (selected == TrackKind.Bass) return rack != null ? rack.BassPresetCount : 0;
             if (selected == TrackKind.Pads) return padRuntime != null ? padRuntime.PresetCount : 0;
             return mainPicker != null ? mainPicker.SynthPresetCount : 0;
@@ -1285,6 +1375,11 @@ namespace ZPunk.DAW
 
         private int BrowserCurrentIndex()
         {
+            if (selected == TrackKind.Acid)
+            {
+                var state = CurrentAcidState();
+                return ZPunkAcidPresets.IndexOf(state != null ? state.patchName : null);
+            }
             if (selected == TrackKind.Bass) return rack != null ? rack.BassPresetIndex : -1;
             if (selected == TrackKind.Pads) return padRuntime != null ? padRuntime.CurrentPresetIndex : -1;
             return mainPicker != null ? mainPicker.CurrentPresetIndex : -1;
@@ -1292,6 +1387,7 @@ namespace ZPunk.DAW
 
         private string BrowserPresetPath(int index)
         {
+            if (selected == TrackKind.Acid) return ZPunkAcidPresets.NameAt(index);
             if (selected == TrackKind.Bass) return rack != null ? rack.BassPresetPathAt(index) : null;
             if (selected == TrackKind.Pads) return padRuntime != null ? padRuntime.PresetPathAt(index) : null;
             return mainPicker != null ? mainPicker.PresetPathAt(index) : null;
@@ -1336,7 +1432,9 @@ namespace ZPunk.DAW
                 string path = BrowserPresetPath(i);
                 if (string.IsNullOrEmpty(path)) continue;
                 string name = DisplayPath(path);
-                if (presetFilter != "ALL" && name.IndexOf(presetFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                string group = selected == TrackKind.Acid ? ZPunkAcidPresets.CategoryAt(i) : name;
+                if (presetFilter != "ALL" &&
+                    (string.IsNullOrEmpty(group) || group.IndexOf(presetFilter, StringComparison.OrdinalIgnoreCase) < 0))
                     continue;
 
                 int choice = i;
@@ -1389,6 +1487,8 @@ namespace ZPunk.DAW
                 mainPicker.ApplyPresetChoice(index, path);
             else if (selected == TrackKind.Pads && padRuntime != null)
                 padRuntime.ApplyPresetChoice(index, path);
+            else if (selected == TrackKind.Acid)
+                ChangeAcidState(acid => ZPunkAcidPresets.Load(index, acid), false);
             ClosePresetBrowser();
             Refresh();
         }
@@ -1768,31 +1868,6 @@ namespace ZPunk.DAW
             scrollLockUntil = Time.unscaledTime + .18f;
             LockScroll();
         }
-        private AcidDial FindAcidDial(VisualElement target)
-        {
-            while (target != null && target != root)
-            {
-                if (acidKnobTargets.TryGetValue(target, out AcidDial dial)) return dial;
-                target = target.parent;
-            }
-            return null;
-        }
-        private void EndAcidDrag(int pointer)
-        {
-            if (activeAcidDial == null || activeAcidPointer != pointer) return;
-            activeAcidDial = null;
-            activeAcidPointer = -1;
-            scrollLockUntil = Time.unscaledTime + .18f;
-            LockScroll();
-        }
-        private void CancelAcidDrag()
-        {
-            if (activeAcidDial == null) return;
-            int pointer = activeAcidPointer;
-            EndAcidDrag(pointer);
-            if (root != null && root.HasPointerCapture(pointer)) root.ReleasePointer(pointer);
-        }
-
         private Macro FindKnob(VisualElement target)
         {
             while (target != null && target != root)
@@ -1804,21 +1879,7 @@ namespace ZPunk.DAW
         }
         private void OnKnobDown(PointerDownEvent evt)
         {
-            if (evt.button != 0 || dragging != null || activeAcidDial != null) return;
-            var acid = selected == TrackKind.Acid ? FindAcidDial(evt.target as VisualElement) : null;
-            if (acid != null)
-            {
-                var state = CurrentAcidState();
-                if (state == null) return;
-                activeAcidDial = acid;
-                activeAcidPointer = evt.pointerId;
-                activeAcidStartY = evt.position.y;
-                activeAcidStartValue = acid.get(state);
-                lockedScroll = pageScroll != null ? pageScroll.scrollOffset : Vector2.zero;
-                root.CapturePointer(evt.pointerId);
-                evt.StopPropagation();
-                return;
-            }
+            if (evt.button != 0 || dragging != null) return;
             var macro = FindKnob(evt.target as VisualElement);
             if (macro == null) return;
             dragging = macro;
@@ -1831,20 +1892,6 @@ namespace ZPunk.DAW
         }
         private void OnKnobMove(PointerMoveEvent evt)
         {
-            if (activeAcidDial != null && activeAcidPointer == evt.pointerId)
-            {
-                float amount = Mathf.Clamp01(activeAcidStartValue +
-                    (activeAcidStartY - evt.position.y) / 170f);
-                var current = CurrentAcidState();
-                if (current != null && Mathf.Abs(activeAcidDial.get(current) - amount) > .0001f)
-                {
-                    var dial = activeAcidDial;
-                    ChangeAcidState(state => dial.set(state, amount));
-                }
-                LockScroll();
-                evt.StopPropagation();
-                return;
-            }
             if (dragging == null || dragPointer != evt.pointerId) return;
             float sensitivity = evt.shiftKey ? .0012f : .006f;
             SetMacro(dragging, dragStart + (dragY - evt.position.y) * sensitivity);
@@ -1853,13 +1900,6 @@ namespace ZPunk.DAW
         }
         private void OnKnobUp(PointerUpEvent evt)
         {
-            if (activeAcidDial != null && activeAcidPointer == evt.pointerId)
-            {
-                EndAcidDrag(evt.pointerId);
-                if (root.HasPointerCapture(evt.pointerId)) root.ReleasePointer(evt.pointerId);
-                evt.StopPropagation();
-                return;
-            }
             if (dragging == null || dragPointer != evt.pointerId) return;
             EndDrag(evt.pointerId);
             if (root.HasPointerCapture(evt.pointerId)) root.ReleasePointer(evt.pointerId);
@@ -1867,13 +1907,6 @@ namespace ZPunk.DAW
         }
         private void OnKnobCancel(PointerCancelEvent evt)
         {
-            if (activeAcidDial != null && activeAcidPointer == evt.pointerId)
-            {
-                EndAcidDrag(evt.pointerId);
-                if (root.HasPointerCapture(evt.pointerId)) root.ReleasePointer(evt.pointerId);
-                evt.StopPropagation();
-                return;
-            }
             if (dragging == null || dragPointer != evt.pointerId) return;
             EndDrag(evt.pointerId);
             if (root.HasPointerCapture(evt.pointerId)) root.ReleasePointer(evt.pointerId);
@@ -1881,7 +1914,6 @@ namespace ZPunk.DAW
         }
         private void OnKnobCaptureLost(PointerCaptureOutEvent evt)
         {
-            if (activeAcidDial != null && activeAcidPointer == evt.pointerId) EndAcidDrag(evt.pointerId);
             if (dragging != null && dragPointer == evt.pointerId) EndDrag(evt.pointerId);
         }
 
@@ -2001,7 +2033,8 @@ namespace ZPunk.DAW
         {
             FindServices();
             if (root == null || root.resolvedStyle.display == DisplayStyle.None) return;
-            if (dragging != null || activeAcidDial != null || Time.unscaledTime < scrollLockUntil) LockScroll();
+            if (dragging != null || Time.unscaledTime < scrollLockUntil) LockScroll();
+            if (acidDialDragging && pageScroll != null) pageScroll.scrollOffset = acidDialScrollLock;
             if (Time.unscaledTime < nextRefresh) return;
             nextRefresh = Time.unscaledTime + .25f;
             Refresh();

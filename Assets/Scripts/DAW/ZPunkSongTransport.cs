@@ -1077,6 +1077,7 @@ namespace ZPunk.DAW
             double exactTick = beforeStart ? startTick :
                 startTick + (now - anchorDsp) / secondsPerTick;
             bpm = Mathf.Clamp(nextBpm, 1f, 400f);
+            acid?.SetTempo(bpm);
             secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
             if (!beforeStart)
                 anchorDsp = now - (exactTick - startTick) * secondsPerTick;
@@ -1154,6 +1155,7 @@ namespace ZPunk.DAW
             song = updated;
             plan = next;
             bpm = Mathf.Clamp(song.bpm, 1f, 400f);
+            if (tempoChanged) acid?.SetTempo(bpm);
             if (tempoChanged)
             {
                 secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
@@ -1237,7 +1239,7 @@ namespace ZPunk.DAW
                 if (candidate != null && candidate.solo) { otherSolo = true; break; }
             if (otherSolo && !track.solo) return;
             var voice = EnsureAcidVoice();
-            voice.Apply(track.instrument != null ? track.instrument.acid : null, track.volume);
+            voice.Apply(track.instrument != null ? track.instrument.acid : null, track.volume, current.bpm);
             voice.Schedule(AudioSettings.dspTime + .005, true, pitch, 110, 0);
         }
 
@@ -1329,7 +1331,7 @@ namespace ZPunk.DAW
             if (acid != null && song.tracks.Count > 5 && song.tracks[5] != null)
             {
                 var state = song.tracks[5].instrument != null ? song.tracks[5].instrument.acid : null;
-                acid.Apply(state, TrackAudible(5) ? song.tracks[5].volume : 0f);
+                acid.Apply(state, TrackAudible(5) ? song.tracks[5].volume : 0f, song.bpm);
             }
             if (drums != null)
             {

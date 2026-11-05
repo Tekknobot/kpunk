@@ -69,7 +69,7 @@ namespace ZPunk.DAW
         // 2.3.4: The chord brush is exclusive to SYNTH and PADS. Chord groups
         // are ordinary MIDI notes, with an optional persistent edit-group ID.
         private VisualElement acidNoteToolbar;
-        private Button accentNoteButton, slideNoteButton, sampleLabButton, acidSoundButton;
+        private Button accentNoteButton, slideNoteButton, sampleLabButton;
         private Button previousClipButton, nextClipButton;
         private VisualElement chordDrawToolbar;
         private Button noteDrawButton, chordDrawButton;
@@ -118,6 +118,9 @@ namespace ZPunk.DAW
         private ClipContentData content;
         private int trackIndex;
         private string clipId;
+        // Read-only selection for ARRANGE navigation. No mutation of song/clip data.
+        public int SelectedTrackIndex => trackIndex;
+        public string SelectedClipId => clipId;
         private int octave = 4;
         private int noteFocusRevision;
         private long quantum = SongData.TicksPerSixteenth;
@@ -416,12 +419,6 @@ namespace ZPunk.DAW
             sampleLabButton.style.display = DisplayStyle.None;
             sampleLabButton.tooltip = "Open CHOPS sampler and slice editor";
             trackScopeRow.Add(sampleLabButton);
-            acidSoundButton = Btn("303 SOUND", () => {
-                var tabs = FindObjectOfType<KMusicTabsUI>();
-                if (tabs != null) tabs.OpenAcidSound();
-            }, 100);
-            acidSoundButton.style.display = DisplayStyle.None;
-            trackScopeRow.Add(acidSoundButton);
             root.Add(trackScopeRow);
 
             // Six equally sized controls fit a portrait phone on ONE row.
@@ -2513,8 +2510,6 @@ namespace ZPunk.DAW
                     ? DisplayStyle.Flex : DisplayStyle.None;
             if (sampleLabButton != null)
                 sampleLabButton.style.display = trackIndex == 4 ? DisplayStyle.Flex : DisplayStyle.None;
-            if (acidSoundButton != null)
-                acidSoundButton.style.display = trackIndex == 5 ? DisplayStyle.Flex : DisplayStyle.None;
             if (trackScope != null)
                 trackScope.style.display = DisplayStyle.Flex;
             if (trackScope != null && trackIndex > 0 && trackIndex < 6)
@@ -2895,10 +2890,6 @@ namespace ZPunk.DAW
                 if (steps[i] >= 1 && steps[i] <= 16) return true;
             return false;
         }
-
-        // Workspace navigation uses the active CREATE track to target ARRANGE's + CLIP.
-        public int SelectedTrackIndex => trackIndex;
-        public string SelectedClipId => clipId;
 
         public void OnShown(int requestedTrack=-1, string requestedClip=null)
         {

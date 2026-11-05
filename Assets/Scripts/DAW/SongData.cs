@@ -156,6 +156,17 @@ namespace ZPunk.DAW
         public float accent = 0.72f;
         public float drive = 0.20f;  // added modern parameter
         public float glide = 0.45f;  // added modern parameter
+        // Optional ACID FX rack. Zero is a strict bypass for all older saves.
+        // No existing instrument/track indices or JSON schema are changed.
+        public float fxDistortion;  // extra post-filter saturation, 0..1
+        public float fxChorus;      // stereo chorus mix, 0..1
+        public float fxDelay;       // tempo-synced echo mix, 0..1
+        public float fxFeedback;    // delay feedback, 0..1 (inaudible when fxDelay=0)
+        public float fxReverb;      // stereo room mix, 0..1
+        public float fxRoom;        // reverb tail, 0..1 (inaudible when fxReverb=0)
+        public int fxDelayRate;     // 0=1/8, 1=1/16, 2=1/4, 3=3/16
+        public string patchName;   // optional factory ID; null means a legacy/custom patch
+        public bool patchModified;
     }
 
     [Serializable]

@@ -34,6 +34,13 @@ namespace ZPunk.DAW
         private float lastPeak;
         private int sampleRate = 44100;
         private AudioSource source;
+        // Bounded, per-voice buffers for the independent ACID effects rack.
+        // Allocated once on the MAIN thread; no DSP callback allocations.
+        private double[] chorusLine, delayLeft, delayRight;
+        private double[] roomLeftA, roomLeftB, roomRightA, roomRightB;
+        private int chorusWrite, delayWrite, roomWriteLA, roomWriteLB, roomWriteRA, roomWriteRB;
+        private double chorusPhase;
+        private volatile float tempoBpm = 120f;
 
         public float Peak => lastPeak;
 
@@ -41,17 +48,24 @@ namespace ZPunk.DAW
         {
             if (source != null) return;
             sampleRate = Math.Max(8000, AudioSettings.outputSampleRate);
+            chorusLine = new double[Math.Max(4096, sampleRate / 12)];
+            delayLeft = new double[sampleRate * 3];
+            delayRight = new double[sampleRate * 3];
+            roomLeftA = new double[Math.Max(1, sampleRate * 37 / 1000)];
+            roomLeftB = new double[Math.Max(1, sampleRate * 43 / 1000)];
+            roomRightA = new double[Math.Max(1, sampleRate * 41 / 1000)];
+            roomRightB = new double[Math.Max(1, sampleRate * 47 / 1000)];
             source = gameObject.AddComponent<AudioSource>();
             source.playOnAwake = false;
             source.loop = true;
             source.spatialBlend = 0f;
             // The silent clip is only a DSP clock. The callback writes all audio.
-            source.clip = AudioClip.Create("ACID DSP clock", 1024, 1, sampleRate, false);
+            source.clip = AudioClip.Create("ACID DSP clock", 1024, 2, sampleRate, false);
             source.volume = 1f;
             source.Play();
         }
 
-        public void Apply(AcidState state, float trackGain)
+        public void Apply(AcidState state, float trackGain, float tempo)
         {
             if (state == null) state = new AcidState();
             // Publish a new immutable snapshot; never change the audio thread's
@@ -59,9 +73,31 @@ namespace ZPunk.DAW
             parameters = new AcidState {
                 square = state.square, tune = state.tune, cutoff = state.cutoff,
                 resonance = state.resonance, envMod = state.envMod, decay = state.decay,
-                accent = state.accent, drive = state.drive, glide = state.glide
+                accent = state.accent, drive = state.drive, glide = state.glide,
+                fxDistortion = state.fxDistortion, fxChorus = state.fxChorus,
+                fxDelay = state.fxDelay, fxFeedback = state.fxFeedback,
+                fxReverb = state.fxReverb, fxRoom = state.fxRoom,
+                fxDelayRate = state.fxDelayRate
             };
             gain = Mathf.Clamp(trackGain, 0f, 2f);
+            SetTempo(tempo);
+        }
+
+        public void SetTempo(float tempo)
+        {
+            tempoBpm = Mathf.Clamp(tempo, 1f, 400f);
+        }
+
+        // Fractional read for smoothly modulated chorus delay taps.
+        private static double ReadLine(double[] line, int write, double back)
+        {
+            double pos = write - back;
+            if (pos < 0) pos += line.Length;
+            int index = (int)pos;
+            int next = index + 1;
+            if (next == line.Length) next = 0;
+            double fraction = pos - index;
+            return line[index] * (1.0 - fraction) + line[next] * fraction;
         }
 
         public void Schedule(double when, bool noteOn, int pitch, int velocity, int flags)
@@ -152,6 +188,21 @@ namespace ZPunk.DAW
             double res = Norm(p.resonance) * 3.55;
             double envDepth = Norm(p.envMod) * 4.5;
             double accentStrength = Norm(p.accent);
+            // All new rack amounts default to zero in existing song JSON:
+            // with every FX at zero, original DSP output is bit-identical.
+            double fxDistortion = Norm(p.fxDistortion);
+            double distortionGain = 1.0 + fxDistortion * 10.0;
+            double distortionNormal = fxDistortion > .0001 ? 1.0 / Math.Tanh(distortionGain) : 1.0;
+            double fxChorus = Norm(p.fxChorus);
+            double fxDelay = Norm(p.fxDelay);
+            double fxFeedback = .14 + Norm(p.fxFeedback) * .73;
+            double fxReverb = Norm(p.fxReverb);
+            double reverbFeedback = .52 + Norm(p.fxRoom) * .36;
+            double beatSeconds = 60.0 / Math.Max(1.0, tempoBpm);
+            double delayBeats = p.fxDelayRate == 1 ? .25 : p.fxDelayRate == 2 ? 1.0 :
+                                p.fxDelayRate == 3 ? .75 : .5;
+            int delayFrames = Math.Max(1, Math.Min(delayLeft.Length - 2,
+                (int)(beatSeconds * delayBeats * sampleRate)));
             float peak = 0f;
             int offset = 0;
             for (int frame = 0; frame < data.Length / channels; frame++)
@@ -191,10 +242,77 @@ namespace ZPunk.DAW
                 lp3 += a * (Clip(lp2 * 1.4) - lp3);
                 lp4 += a * (Clip(lp3 * 1.4) - lp4);
                 double sample = Clip(lp4 * 2.0) * envelope * g * .62;
-                float output = (float)sample;
-                peak = Math.Max(peak, Math.Abs(output));
+                double left = sample, right = sample;
+                // Post-filter warm overdrive. Pure bypass at 0.
+                if (fxDistortion > .0001)
+                {
+                    double saturated = Math.Tanh(sample * distortionGain) * distortionNormal;
+                    left = right = sample * (1.0 - fxDistortion * .85) +
+                        saturated * fxDistortion * .85;
+                }
+                // Stereo chorus: two fractional modulated taps of the MONO input,
+                // opposed in phase to widen the ACID track without extra voices.
+                if (fxChorus > .0001 && chorusLine != null)
+                {
+                    chorusLine[chorusWrite] = left;
+                    double modulation = Math.Sin(chorusPhase) * (sampleRate * .0035);
+                    double baseDelay = sampleRate * .019;
+                    double wetLeft = ReadLine(chorusLine, chorusWrite, baseDelay + modulation);
+                    double wetRight = ReadLine(chorusLine, chorusWrite, baseDelay - modulation);
+                    double mix = fxChorus * .52;
+                    left = left * (1.0 - mix) + wetLeft * mix;
+                    right = right * (1.0 - mix) + wetRight * mix;
+                    chorusWrite++;
+                    if (chorusWrite >= chorusLine.Length) chorusWrite = 0;
+                    chorusPhase += 2.0 * Math.PI * .67 * delta;
+                    if (chorusPhase >= 2.0 * Math.PI) chorusPhase -= 2.0 * Math.PI;
+                }
+                // Beat-synced stereo ping-pong delay; no feedback when mix is OFF.
+                if (fxDelay > .0001 && delayLeft != null)
+                {
+                    int read = delayWrite - delayFrames;
+                    if (read < 0) read += delayLeft.Length;
+                    double tapL = delayLeft[read], tapR = delayRight[read];
+                    double incomingL = left, incomingR = right;
+                    delayLeft[delayWrite] = Clip(incomingL * .72 + tapR * fxFeedback);
+                    delayRight[delayWrite] = Clip(incomingR * .12 + tapL * fxFeedback);
+                    double mix = fxDelay * .59;
+                    left = incomingL + tapL * mix;
+                    right = incomingR + tapR * mix;
+                    delayWrite++;
+                    if (delayWrite == delayLeft.Length) delayWrite = 0;
+                }
+                // Compact parallel-comb stereo room. Each side has two different
+                // lengths; feedback below unity is stable even at 100% ROOM.
+                if (fxReverb > .0001 && roomLeftA != null)
+                {
+                    double aL = roomLeftA[roomWriteLA], bL = roomLeftB[roomWriteLB];
+                    double aR = roomRightA[roomWriteRA], bR = roomRightB[roomWriteRB];
+                    roomLeftA[roomWriteLA] = Clip(left * .28 + aL * reverbFeedback);
+                    roomLeftB[roomWriteLB] = Clip(left * .23 + bL * reverbFeedback);
+                    roomRightA[roomWriteRA] = Clip(right * .28 + aR * reverbFeedback);
+                    roomRightB[roomWriteRB] = Clip(right * .23 + bR * reverbFeedback);
+                    if (++roomWriteLA == roomLeftA.Length) roomWriteLA = 0;
+                    if (++roomWriteLB == roomLeftB.Length) roomWriteLB = 0;
+                    if (++roomWriteRA == roomRightA.Length) roomWriteRA = 0;
+                    if (++roomWriteRB == roomRightB.Length) roomWriteRB = 0;
+                    double mix = fxReverb * .50;
+                    left = left * (1.0 - mix) + (aL + bL) * mix * 1.05;
+                    right = right * (1.0 - mix) + (aR + bR) * mix * 1.05;
+                }
+                // Cap occasional combined resonance/feedback peaks at the voice,
+                // before the shared master stage. All-bypass is unchanged.
+                if (fxDistortion > .0001 || fxChorus > .0001 || fxDelay > .0001 || fxReverb > .0001)
+                {
+                    left = Math.Max(-1.0, Math.Min(1.0, left));
+                    right = Math.Max(-1.0, Math.Min(1.0, right));
+                }
+                peak = (float)Math.Max(peak, Math.Max(Math.Abs(left), Math.Abs(right)));
                 int baseIndex = frame * channels;
-                for (int c = 0; c < channels; c++) data[baseIndex + c] = output;
+                if (channels == 1) data[baseIndex] = (float)((left + right) * .5);
+                else
+                    for (int c = 0; c < channels; c++)
+                        data[baseIndex + c] = (float)((c & 1) == 0 ? left : right);
             }
             if (offset > 0) audioQueue.RemoveRange(0, offset);
             lastPeak = peak;
