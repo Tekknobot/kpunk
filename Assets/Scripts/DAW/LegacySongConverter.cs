@@ -31,7 +31,7 @@ namespace ZPunk.DAW
         }
 
         private static readonly int[] TierVelocities = { 54, 90, 122 };
-        private static readonly string[] TrackIds = { "drums", "bass", "synth", "pads", "chops" };
+        private static readonly string[] TrackIds = { "drums", "bass", "synth", "pads", "chops", "acid" };
 
         public static SongData Convert(
             PatternBank.PatternBankSave bank,
@@ -53,6 +53,8 @@ namespace ZPunk.DAW
             song.tracks.Add(NewTrack(TrackKind.Synth, "Synth", "#6C9EDF"));
             song.tracks.Add(NewTrack(TrackKind.Pads, "Pads", "#A38BD9"));
             song.tracks.Add(NewTrack(TrackKind.Chops, "Chops", "#65BEA9"));
+            song.tracks.Add(NewTrack(TrackKind.Acid, "Acid", "#E6D15D"));
+            song.EnsureAcidTrack(); // Initializes only the new lane's sound state.
 
             song.tracks[0].instrument.drumKitIndex = settings.kitIndex;
             song.tracks[2].instrument.presetRelPath = settings.synthPresetPath;
@@ -103,7 +105,7 @@ namespace ZPunk.DAW
                 string patternKey = hasAssignedSlot ? "pattern-" + barIds[bar] : "live";
                 for (int t = 0; t < song.tracks.Count; t++)
                 {
-                    if (t == 1) continue; // Bass did not exist in v1.
+                    if (t == 1 || t == 5) continue; // Neither Bass nor Acid existed in v1.
                     TrackData track = song.tracks[t];
                     string contentId = "legacy/" + patternKey + "/" + track.id;
                     ClipContentData content = FindContent(song, contentId);

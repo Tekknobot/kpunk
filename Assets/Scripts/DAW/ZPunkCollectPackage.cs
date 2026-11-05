@@ -37,7 +37,7 @@ namespace ZPunk.DAW
             public List<AssetEntry> assets = new List<AssetEntry>();
         }
 
-        private static readonly string[] Stems = { "DRUMS", "BASS", "SYNTH", "PADS", "CHOPS" };
+        private static readonly string[] Stems = { "DRUMS", "BASS", "SYNTH", "PADS", "CHOPS", "ACID" };
         private static readonly string[] DrumNames = { "KICK", "SNARE", "CLAP", "HAT_CLOSED", "HAT_OPEN", "RIDE", "RIM", "CRASH" };
         private readonly string stage;
         private readonly string root;
@@ -84,7 +84,7 @@ namespace ZPunk.DAW
         public ZPunkCollectPackage(string projectJson, SongData snapshot,
             string title, string projectId, int slot)
         {
-            if (string.IsNullOrEmpty(projectJson) || snapshot == null || snapshot.tracks == null || snapshot.tracks.Count != 5)
+            if (string.IsNullOrEmpty(projectJson) || snapshot == null || snapshot.tracks == null || snapshot.tracks.Count != 6)
                 throw new InvalidDataException("Project snapshot is incomplete.");
             song = SongData.FromJson(snapshot.ToJson());
             DisplayName = SafeName(title);

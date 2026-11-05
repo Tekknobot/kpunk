@@ -12,8 +12,8 @@ namespace ZPunk.DAW
     internal sealed class ZPunkTrackScope : VisualElement
     {
         private const int HistoryCount = 64;
-        private readonly float[,] history = new float[5, HistoryCount];
-        private readonly float[] smoothed = new float[5];
+        private readonly float[,] history = new float[6, HistoryCount];
+        private readonly float[] smoothed = new float[6];
         private int selectedTrack = 1;
         private Color trackColor = new Color(.96f, .36f, .48f);
 
@@ -34,18 +34,19 @@ namespace ZPunk.DAW
 
         internal void Select(int trackIndex, Color color)
         {
-            if (trackIndex < 1 || trackIndex > 4) return;
+            if (trackIndex < 1 || trackIndex > 5) return;
             selectedTrack = trackIndex;
             trackColor = color;
             MarkDirtyRepaint();
         }
 
-        internal void PushLevels(float bass, float synth, float pads, float chops)
+        internal void PushLevels(float bass, float synth, float pads, float chops, float acid)
         {
             Push(1, bass);
             Push(2, synth);
             Push(3, pads);
             Push(4, chops);
+            Push(5, acid);
             MarkDirtyRepaint();
         }
 

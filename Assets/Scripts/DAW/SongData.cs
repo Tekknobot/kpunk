@@ -6,7 +6,7 @@ namespace ZPunk.DAW
 {
     // Phase 1: pure, scene-independent song document. Unity JsonUtility-compatible:
     // no dictionaries, interface fields, or polymorphic serialized collections.
-    public enum TrackKind { Drums = 0, Bass = 1, Synth = 2, Pads = 3, Chops = 4 }
+    public enum TrackKind { Drums = 0, Bass = 1, Synth = 2, Pads = 3, Chops = 4, Acid = 5 }
     public enum ClipKind { Midi = 0, Drums = 1, Chops = 2 }
 
     [Serializable]
@@ -62,6 +62,31 @@ namespace ZPunk.DAW
         public List<TrackData> tracks = new List<TrackData>();
         public List<ClipContentData> contents = new List<ClipContentData>();
 
+        // Add the new lane without renumbering any existing track or modifying old clips.
+        // Called on load and after converting pre-2.4 bank projects.
+        public void EnsureAcidTrack()
+        {
+            if (tracks == null) tracks = new List<TrackData>();
+            // Historical native saves have five tracks (indices 0..4). Only append
+            // when that exact original layout is present; never insert, reorder,
+            // replace, rename or clear any saved track, clip, or instrument.
+            if (tracks.Count == 5)
+            {
+                bool classicLayout = true;
+                for (int i = 0; i < 5; i++)
+                    if (tracks[i] == null || (int)tracks[i].kind != i) classicLayout = false;
+                if (classicLayout)
+                    tracks.Add(new TrackData { id = "acid", name = "Acid", kind = TrackKind.Acid,
+                        colorHex = "#E6D15D" });
+            }
+            // Idempotent: an existing ACID lane keeps its saved patch and notes.
+            if (tracks.Count > 5 && tracks[5] != null && tracks[5].kind == TrackKind.Acid)
+            {
+                if (tracks[5].instrument == null) tracks[5].instrument = new InstrumentState();
+                if (tracks[5].instrument.acid == null) tracks[5].instrument.acid = new AcidState();
+            }
+        }
+
         public string ToJson(bool pretty = false) { return JsonUtility.ToJson(this, pretty); }
 
         public static SongData FromJson(string json)
@@ -72,6 +97,7 @@ namespace ZPunk.DAW
                 throw new NotSupportedException("Unsupported ZPunk song schema. This version expects " + CurrentSchema + ".");
             if (song.tracks == null || song.contents == null)
                 throw new FormatException("ZPunk song has missing track or content lists.");
+            song.EnsureAcidTrack();
             return song;
         }
     }
@@ -104,6 +130,9 @@ namespace ZPunk.DAW
         public float[] sliceEnd01;
         // Per-lane drum shaping; missing/empty means fully neutral sound for old projects.
         public List<DrumShapeData> drumDesign = new List<DrumShapeData>();
+        // Optional: only the ACID track owns 303 state. Existing instruments in
+        // five-track native saves keep their original instrument payloads.
+        public AcidState acid;
         public int legacyChordMode;
         public float savedMasterVolume = -1f;
         // 2.3.5: Tempo-locked filter movement is opt-in and independent per synth.
@@ -111,6 +140,22 @@ namespace ZPunk.DAW
         public float filterMotionDepth; // 0..1, modulation size
         public int filterMotionRate;    // 0=1/2 bar, 1=1 bar, 2=2 bars, 3=4 bars
         public float filterMotionCenter = -1f; // normalized Helm cutoff; -1=uncaptured
+    }
+
+    // 303-inspired instrument state. Unit-normalized values preserve precision in JSON.
+    // Defaults apply to new projects; old project files acquire a neutral initial patch.
+    [Serializable]
+    public sealed class AcidState
+    {
+        public bool square;
+        public float tune = 0.5f;     // centre = concert tuning, +/- 12 semitones
+        public float cutoff = 0.52f;
+        public float resonance = 0.72f;
+        public float envMod = 0.60f;
+        public float decay = 0.40f;
+        public float accent = 0.72f;
+        public float drive = 0.20f;  // added modern parameter
+        public float glide = 0.45f;  // added modern parameter
     }
 
     [Serializable]
@@ -166,6 +211,9 @@ namespace ZPunk.DAW
         // Optional 2.3.4 manual chord edit group. Older project JSON defaults to null.
         // Chord notes remain regular independent NoteEvents for playback/export.
         public string chordGroupId;
+        // ACID-only 303 performance gestures. Harmless for other MIDI tracks.
+        public bool accent;
+        public bool slide;
     }
 
     [Serializable]

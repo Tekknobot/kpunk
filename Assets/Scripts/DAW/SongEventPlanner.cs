@@ -19,6 +19,7 @@ namespace ZPunk.DAW
             public EventType type;
             public int value; // MIDI pitch, 0-based drum lane, or 1-based slice ID
             public int velocity;
+            public int flags; // ACID notes: bit 0 accent, bit 1 slide
         }
 
         public sealed class Plan
@@ -121,7 +122,7 @@ namespace ZPunk.DAW
                         EventType.Chop, chop.sliceId, chop.velocity));
                 }
             }
-            else if ((trackKind == TrackKind.Bass || trackKind == TrackKind.Synth || trackKind == TrackKind.Pads) &&
+            else if ((trackKind == TrackKind.Bass || trackKind == TrackKind.Synth || trackKind == TrackKind.Pads || trackKind == TrackKind.Acid) &&
                      content.kind == ClipKind.Midi && content.notes != null)
             {
                 foreach (NoteEvent note in content.notes)
@@ -137,7 +138,9 @@ namespace ZPunk.DAW
                     if (visibleEnd <= visibleStart) continue;
                     long tick = songStart + visibleStart - sourceStart;
                     long end = songStart + visibleEnd - sourceStart;
-                    plan.midi.Add(New(tick, trackIndex, EventType.NoteOn, note.pitch, note.velocity));
+                    var on = New(tick, trackIndex, EventType.NoteOn, note.pitch, note.velocity);
+                    if (trackKind == TrackKind.Acid) on.flags = (note.accent ? 1 : 0) | (note.slide ? 2 : 0);
+                    plan.midi.Add(on);
                     plan.midi.Add(New(end, trackIndex, EventType.NoteOff, note.pitch, 0));
                 }
             }

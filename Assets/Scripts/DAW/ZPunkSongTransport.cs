@@ -106,6 +106,8 @@ namespace ZPunk.DAW
         private KMusicApp app;
         private HelmController synth;
         private HelmController pads;
+        private ZPunkAcidVoice acid;
+        private int acidCursor, acidPrefetchCursor;
         private readonly List<HelmSequencer> suspendedSequencers = new List<HelmSequencer>();
         private readonly Dictionary<int, HelmController> trackControllers = new Dictionary<int, HelmController>();
         // Helm's native mixer is not exposed as a reliable Unity AudioSource meter.
@@ -407,7 +409,9 @@ namespace ZPunk.DAW
             left.Sort(ComparePlaybackEvents);
             right.Sort(ComparePlaybackEvents);
             for (int i = 0; i < left.Count; i++)
-                if (ComparePlaybackEvents(left[i], right[i]) != 0) return false;
+                if (ComparePlaybackEvents(left[i], right[i]) != 0 ||
+                    left[i].velocity != right[i].velocity || left[i].flags != right[i].flags)
+                    return false;
             return true;
         }
 
@@ -586,6 +590,7 @@ namespace ZPunk.DAW
             // short pause preferable to duplicate/16th-note retriggers.
             DisposeNativeMidi();
             StopAllSynthNotes();
+            acid?.AllNotesOff();
             if (drums != null) drums.StopDAWVoices();
 
             song = updated;
@@ -602,8 +607,9 @@ namespace ZPunk.DAW
             cycle = 0;
             sampleCursor = 0;
             midiCursor = 0;
-            prefetchedLoopSamples = 0;
+            acidCursor = acidPrefetchCursor = 0;
             scheduledSamples.Clear();
+            prefetchedLoopSamples = 0;
             lateMidiEvents = 0;
             SkipBefore(startTick);
 
@@ -854,7 +860,9 @@ namespace ZPunk.DAW
             if (drums != null) drums.StopDAWVoices();
             startTick = newTick;
             CurrentTick = newTick;
-            sampleCursor = midiCursor = 0;
+            sampleCursor = midiCursor = acidCursor = 0;
+            acidPrefetchCursor = 0;
+            acid?.AllNotesOff();
             prefetchedLoopSamples = 0;
             scheduledSamples.Clear();
             cycle = 0;
@@ -1030,6 +1038,8 @@ namespace ZPunk.DAW
             anchorDsp = AudioSettings.dspTime + Math.Max(startDelay, audioLookahead + 0.04f);
             sampleCursor = 0;
             midiCursor = 0;
+            acidCursor = acidPrefetchCursor = 0;
+            acid?.AllNotesOff();
             cycle = 0;
             scheduledSamples.Clear();
             prefetchedLoopSamples = 0;
@@ -1073,6 +1083,10 @@ namespace ZPunk.DAW
             PublishPerformanceFxClock();
             if (clock != null) clock.bpm = bpm;
             ResetFutureSamples((long)Math.Max(0.0, Math.Floor(exactTick)));
+            acid?.AllNotesOff();
+            acidCursor = acidPrefetchCursor = 0;
+            long acidPosition = (long)Math.Max(0.0, Math.Floor(exactTick));
+            while (acidCursor < plan.midi.Count && plan.midi[acidCursor].tick < acidPosition) acidCursor++;
             liveRevision++;
         }
 
@@ -1181,12 +1195,56 @@ namespace ZPunk.DAW
                 !RefreshEditedNativeMidiTracks(previousPlan, next, position))
                 ReconcileFallbackHeldMidi(previousPlan, next, position);
             midiCursor = 0;
+            if (tempoChanged || loopChanged ||
+                (midiChanged && ChangedMidiTracks(previousPlan, next).Contains((int)TrackKind.Acid)))
+            {
+                acid?.AllNotesOff();
+                acidCursor = acidPrefetchCursor = 0;
+                while (acidCursor < plan.midi.Count && plan.midi[acidCursor].tick < position) acidCursor++;
+            }
             while (midiCursor < plan.midi.Count &&
                    (plan.midi[midiCursor].tick < position ||
                    (!beforeStart && plan.midi[midiCursor].tick == position)))
                 midiCursor++;
             PublishPerformanceFxClock();
             liveRevision++;
+        }
+
+        // SOUND's compact keyboard can audition ACID while the transport is
+        // stopped. This creates no clip and does not modify a project save.
+        private ZPunkAcidVoice EnsureAcidVoice()
+        {
+            if (acid == null)
+            {
+                var voiceObject = new GameObject("ZPUNK_ACID_303_Voice");
+                voiceObject.transform.SetParent(transform, false);
+                acid = voiceObject.AddComponent<ZPunkAcidVoice>();
+                acid.Initialize();
+            }
+            return acid;
+        }
+
+        public void AuditionAcidNoteOn(int pitch)
+        {
+            if (playing || exportingOneShot || pitch < 0 || pitch > 127) return;
+            if (projects == null) projects = FindObjectOfType<KMusicProjectManager>();
+            var current = projects != null ? projects.GetSongForArrangementEditor() : null;
+            if (current?.tracks == null || current.tracks.Count <= (int)TrackKind.Acid) return;
+            var track = current.tracks[(int)TrackKind.Acid];
+            if (track == null || track.kind != TrackKind.Acid || track.mute) return;
+            bool otherSolo = false;
+            foreach (var candidate in current.tracks)
+                if (candidate != null && candidate.solo) { otherSolo = true; break; }
+            if (otherSolo && !track.solo) return;
+            var voice = EnsureAcidVoice();
+            voice.Apply(track.instrument != null ? track.instrument.acid : null, track.volume);
+            voice.Schedule(AudioSettings.dspTime + .005, true, pitch, 110, 0);
+        }
+
+        public void AuditionAcidNoteOff(int pitch)
+        {
+            if (playing || exportingOneShot || acid == null || pitch < 0 || pitch > 127) return;
+            acid.Schedule(AudioSettings.dspTime + .005, false, pitch, 0, 0);
         }
 
         private void ResolveControllers()
@@ -1199,6 +1257,9 @@ namespace ZPunk.DAW
             synth = painter != null ? painter.ActiveHelmController : null;
             pads = padRuntime != null ? padRuntime.ActiveHelmController : null;
             if (song == null || song.tracks == null) return;
+            if (song.tracks.Count > 5 && song.tracks[5] != null &&
+                song.tracks[5].kind == TrackKind.Acid)
+                EnsureAcidVoice();
             for (int i = 0; i < song.tracks.Count; i++)
             {
                 TrackData track = song.tracks[i];
@@ -1265,6 +1326,11 @@ namespace ZPunk.DAW
             if (drums != null && song.tracks.Count > 0 && song.tracks[0] != null && song.tracks[0].instrument != null)
                 drums.ApplyDAWDrumDesign(song.tracks[0].instrument.drumDesign);
             ZPunkMasterAudioTap.ApplySongSettings(song);
+            if (acid != null && song.tracks.Count > 5 && song.tracks[5] != null)
+            {
+                var state = song.tracks[5].instrument != null ? song.tracks[5].instrument.acid : null;
+                acid.Apply(state, TrackAudible(5) ? song.tracks[5].volume : 0f);
+            }
             if (drums != null)
             {
                 drums.DawKickRumble = Mathf.Clamp01(song.kickRumble);
@@ -1421,6 +1487,7 @@ namespace ZPunk.DAW
         public float GetTrackPeak(int index)
         {
             if (!playing || !TrackAudible(index)) return 0f;
+            if (index == (int)TrackKind.Acid) return acid != null ? acid.Peak : 0f;
             if (!pcmMeters.TryGetValue(index, out var meter) || meter == null || !meter.Available)
                 return 0f; // No simulated readings: PCM measurement unavailable.
             float gain = song != null && song.tracks != null && index < song.tracks.Count
@@ -1525,6 +1592,8 @@ namespace ZPunk.DAW
                 }
             }
 
+            // ACID has its own DSP-timed event queue; it never enters Helm's native sequencer.
+            ScheduleAcid(now);
             // The native Helm audio thread advances all melodic notes independently
             // of Unity FPS. Fallback is used only when native setup failed.
             if (!nativeMidiActive || liveDispatchedMidiTracks.Count > 0)
@@ -1559,6 +1628,8 @@ namespace ZPunk.DAW
                     scheduledSamples.RemoveWhere(e => e.cycleId < cycle);
                     sampleCursor = prefetchedLoopSamples;
                     midiCursor = 0;
+                    acidCursor = acidPrefetchCursor;
+                    acidPrefetchCursor = 0;
                     prefetchedLoopSamples = 0;
                     SkipBefore(startTick);
                     if (!nativeMidiActive || liveDispatchedMidiTracks.Count > 0)
@@ -1620,6 +1691,38 @@ namespace ZPunk.DAW
             }
         }
 
+        // A distinct cursor prevents Helm's native scheduler from consuming ACID events.
+        // Queue upcoming notes using the same absolute DSP anchor as drum samples.
+        private void ScheduleAcid(double now)
+        {
+            if (acid == null || song?.tracks == null || song.tracks.Count <= 5) return;
+            while (acidCursor < plan.midi.Count)
+            {
+                var e = plan.midi[acidCursor];
+                if (e.tick > loopEnd || (e.tick == loopEnd &&
+                    e.type != SongEventPlanner.EventType.NoteOff)) break;
+                double target = DspAt(e.tick);
+                if (target > now + audioLookahead) break;
+                acidCursor++;
+                if (e.trackIndex != 5) continue;
+                acid.Schedule(target, e.type == SongEventPlanner.EventType.NoteOn,
+                    e.value, e.velocity, e.flags);
+            }
+            if (!activeLoopEnabled || now + audioLookahead < DspAt(loopEnd)) return;
+            while (acidPrefetchCursor < plan.midi.Count)
+            {
+                var e = plan.midi[acidPrefetchCursor];
+                if (e.tick < loopStart) { acidPrefetchCursor++; continue; }
+                if (e.tick >= loopEnd) break;
+                double target = DspAt(loopEnd) + (e.tick - loopStart) * secondsPerTick;
+                if (target > now + audioLookahead) break;
+                acidPrefetchCursor++;
+                if (e.trackIndex != 5) continue;
+                acid.Schedule(target, e.type == SongEventPlanner.EventType.NoteOn,
+                    e.value, e.velocity, e.flags);
+            }
+        }
+
         private void DispatchSample(SongEventPlanner.Event e, double target, double now, long eventCycle)
         {
             if (!TrackAudible(e.trackIndex)) return;
@@ -1674,6 +1777,7 @@ namespace ZPunk.DAW
         {
             while (sampleCursor < plan.samples.Count && plan.samples[sampleCursor].tick < position) sampleCursor++;
             while (midiCursor < plan.midi.Count && plan.midi[midiCursor].tick < position) midiCursor++;
+            while (acidCursor < plan.midi.Count && plan.midi[acidCursor].tick < position) acidCursor++;
         }
 
         public void StopSong()
@@ -1701,6 +1805,7 @@ namespace ZPunk.DAW
             paused = false;
             DisposeNativeMidi();
             StopAllSynthNotes();
+            acid?.AllNotesOff();
             if (drums != null)
             {
                 drums.StopDAWVoices();

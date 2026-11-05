@@ -318,14 +318,14 @@ public sealed class KMusicProjectManager : MonoBehaviour
     {
         if (data == null || data.song == null || data.song.schemaVersion != SongData.CurrentSchema ||
             data.song.migratedFromLegacy || data.song.tracks == null || data.song.contents == null ||
-            data.song.tracks.Count != 5) return false;
+            (data.song.tracks.Count != 5 && data.song.tracks.Count != 6)) return false;
         // Current-format saves carry an explicit marker. Also accept native 2.0
         // arrangements saved by early preview builds, before the marker existed.
         if (data.ver >= ProjectVer && data.projectFormat != NativeFormat) return false;
         // Old 1.x saves may already contain a generated conversion preview.
         // That is NOT proof of a native 2.0 project: only authored 2.0 clips qualify.
         if (data.ver < ProjectVer && !data.song.arrangementAuthored) return false;
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < data.song.tracks.Count; i++)
         {
             var track = data.song.tracks[i];
             if (track == null || (int)track.kind != i || track.clips == null || track.instrument == null)
@@ -422,6 +422,7 @@ public sealed class KMusicProjectManager : MonoBehaviour
         {
             var parsed = JsonUtility.FromJson<ProjectData>(File.ReadAllText(path));
             if (!IsNativeProject(parsed)) return false;
+            parsed.song.EnsureAcidTrack();
             data = parsed;
             return true;
         }

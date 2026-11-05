@@ -1030,7 +1030,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         string zipPath = null;
         SongData snapshot = null;
         // Decided from the immutable snapshot, not the live editor or cached UI state.
-        bool[] renderStem = new bool[5];
+        bool[] renderStem = new bool[6];
         int totalPasses = 1; // The master mix is always rendered.
         ZPunkCollectPackage bundle = null;
         ZPunkWavCapture recorder = null;
@@ -1216,13 +1216,37 @@ public sealed class KMusicTabsUI : MonoBehaviour
         ApplyPages();
         editor.OnShown(index,selectedId);
     }
+    public void OpenAcidSound()
+    {
+        Navigate("sound");
+        if (sound != null) sound.OnShown((int)TrackKind.Acid);
+    }
+
     private void Navigate(string target)
     {
+        string previousWorkspace = workspace;
         workspace=target;
         ApplyPages();
-        if(target=="arrange") arrangement.OnShown();
-        else if(target=="create") editor.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:0,
-                arrangement!=null?arrangement.SelectedClipId:null);
+        if(target=="arrange")
+        {
+            arrangement.OnShown();
+            // The user may have selected ACID in CREATE while ARRANGE still
+            // remembered DRUMS. Sync the lane so + CLIP lands on ACID.
+            if(previousWorkspace=="create" && editor!=null)
+                arrangement.FocusTrack(editor.SelectedTrackIndex, editor.SelectedClipId);
+            else if(previousWorkspace=="sound" && sound!=null)
+                arrangement.FocusTrack(sound.SelectedTrackIndex);
+        }
+        else if(target=="create")
+        {
+            // ARRANGE explicitly owns the selection when opening its clip.
+            // Returning from SOUND or MIX must instead keep the clip just
+            // created/edited in CREATE, including the sixth ACID lane.
+            if (previousWorkspace == "arrange")
+                editor.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:0,
+                    arrangement!=null?arrangement.SelectedClipId:null);
+            else editor.OnShown();
+        }
         else if(target=="sound")sound.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:-1);
         else if(target=="mix")mixer.OnShown();
     }

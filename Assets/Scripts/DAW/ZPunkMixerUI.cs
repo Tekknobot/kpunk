@@ -106,7 +106,7 @@ namespace ZPunk.DAW
                 binding.held = Mathf.Max(peak, binding.held * .72f);
                 int active = binding.held < .0005f ? 0 : Mathf.Clamp(
                     Mathf.CeilToInt((20f * Mathf.Log10(Mathf.Max(.0001f, binding.held)) + 60f) / 60f * 18f), 0, 18);
-                Color accent = binding.trackIndex >= 0 ? TrackColors[Mathf.Min(binding.trackIndex, 4)] : TrackColors[0];
+                Color accent = binding.trackIndex >= 0 ? TrackColors[Mathf.Min(binding.trackIndex, TrackColors.Length - 1)] : TrackColors[0];
                 for (int i = 0; i < binding.leds.Length; ++i)
                     binding.leds[i].style.backgroundColor = i < active ? accent : new Color(.035f, .056f, .079f);
             }
@@ -119,7 +119,7 @@ namespace ZPunk.DAW
         {
             new Color(.98f, .66f, .28f), new Color(.96f, .36f, .48f),
             new Color(.35f, .60f, .98f), new Color(.66f, .45f, .94f),
-            new Color(.24f, .82f, .69f)
+            new Color(.24f, .82f, .69f), new Color(.91f, .81f, .36f)
         };
 
         public void Initialize(VisualElement host)
@@ -258,7 +258,7 @@ namespace ZPunk.DAW
                 int cols;
                 // Main console keeps all five strips together, including phones.
                 // Drum submix uses four strips per bank on phones, eight on tablets.
-                cols = drumsBank ? (width >= 690f ? 8 : 4) : 5;
+                cols = drumsBank ? (width >= 690f ? 8 : 4) : (width >= 690f ? 6 : 3);
                 // Percent sizes are recalculated only on viewport resizing, not while dragging.
                 var percent = new Length(100f / cols, LengthUnit.Percent);
                 foreach (var child in grid.Children()) child.style.width = percent;

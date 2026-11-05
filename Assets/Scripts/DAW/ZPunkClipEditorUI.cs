@@ -18,7 +18,7 @@ namespace ZPunk.DAW
         private static readonly Color Accent = new Color(.31f,.88f,.74f);
         private readonly Color[] colors = {
             new Color(.98f,.66f,.28f), new Color(.96f,.36f,.48f),
-            new Color(.35f,.60f,.98f), new Color(.66f,.45f,.94f), new Color(.24f,.82f,.69f)
+            new Color(.35f,.60f,.98f), new Color(.66f,.45f,.94f), new Color(.24f,.82f,.69f), new Color(.91f,.81f,.36f)
         };
         private VisualElement root, canvas, gridScrollContainer, chips, labelViewport, labelColumn;
         // Note hit targets sit ABOVE (not inside) the ScrollView. This prevents
@@ -68,6 +68,9 @@ namespace ZPunk.DAW
         private Label title, info, selectedInfo;
         // 2.3.4: The chord brush is exclusive to SYNTH and PADS. Chord groups
         // are ordinary MIDI notes, with an optional persistent edit-group ID.
+        private VisualElement acidNoteToolbar;
+        private Button accentNoteButton, slideNoteButton, sampleLabButton, acidSoundButton;
+        private Button previousClipButton, nextClipButton;
         private VisualElement chordDrawToolbar;
         private Button noteDrawButton, chordDrawButton;
         // Compact ZPUNK-styled selectors: the Unity PopupField's reserved arrow
@@ -298,6 +301,22 @@ namespace ZPunk.DAW
             newClipButton.style.borderBottomWidth = 1;
             newClipButton.style.borderLeftWidth = 1;
             newClipButton.style.borderRightWidth = 1;
+            // Clip browsing lives beside NEW CLIP, not on another vertical row.
+            // Users can return to and edit clips they created without visiting ARRANGE.
+            previousClipButton = Btn("<", () => StepClip(-1), 33);
+            previousClipButton.style.minWidth = 33;
+            previousClipButton.style.marginRight = 2;
+            previousClipButton.style.paddingLeft = 2;
+            previousClipButton.style.paddingRight = 2;
+            previousClipButton.tooltip = "Edit previous clip on this track";
+            nextClipButton = Btn(">", () => StepClip(1), 33);
+            nextClipButton.style.minWidth = 33;
+            nextClipButton.style.marginRight = 4;
+            nextClipButton.style.paddingLeft = 2;
+            nextClipButton.style.paddingRight = 2;
+            nextClipButton.tooltip = "Edit next clip on this track";
+            heading.Add(previousClipButton);
+            heading.Add(nextClipButton);
             heading.Add(newClipButton);
             root.Add(heading);
 
@@ -377,7 +396,7 @@ namespace ZPunk.DAW
             trackScopeRow.style.borderTopRightRadius = 6;
             trackScopeRow.style.borderBottomLeftRadius = 6;
             trackScopeRow.style.borderBottomRightRadius = 6;
-            trackScopeRow.pickingMode = PickingMode.Ignore;
+            trackScopeRow.pickingMode = PickingMode.Position;
             var scopeLegend = new VisualElement();
             scopeLegend.style.width = 74;
             scopeLegend.style.flexShrink = 0;
@@ -393,6 +412,16 @@ namespace ZPunk.DAW
             trackScopeRow.Add(scopeLegend);
             trackScope = new ZPunkTrackScope();
             trackScopeRow.Add(trackScope);
+            sampleLabButton = Btn("SAMPLE", OpenSampler, 84);
+            sampleLabButton.style.display = DisplayStyle.None;
+            sampleLabButton.tooltip = "Open CHOPS sampler and slice editor";
+            trackScopeRow.Add(sampleLabButton);
+            acidSoundButton = Btn("303 SOUND", () => {
+                var tabs = FindObjectOfType<KMusicTabsUI>();
+                if (tabs != null) tabs.OpenAcidSound();
+            }, 100);
+            acidSoundButton.style.display = DisplayStyle.None;
+            trackScopeRow.Add(acidSoundButton);
             root.Add(trackScopeRow);
 
             // Six equally sized controls fit a portrait phone on ONE row.
@@ -453,6 +482,19 @@ namespace ZPunk.DAW
             chordDrawToolbar.Add(chordQualityButton);
             chordDrawToolbar.Add(chordLengthButton);
             root.Add(chordDrawToolbar);
+            // One optional row, only visible on ACID; per-note gestures are saved
+            // into regular MIDI notes and remain editable after arrangement copies.
+            acidNoteToolbar = new VisualElement { name = "ZPunkAcidNoteModifiers" };
+            acidNoteToolbar.style.height = 45;
+            acidNoteToolbar.style.flexDirection = FlexDirection.Row;
+            acidNoteToolbar.style.flexShrink = 0;
+            accentNoteButton = EqualButton("ACCENT", () => ToggleAcidNoteModifier(true));
+            slideNoteButton = EqualButton("SLIDE", () => ToggleAcidNoteModifier(false));
+            accentNoteButton.tooltip = "Toggle 303 accent on the selected note";
+            slideNoteButton.tooltip = "Slide from the preceding note into this note";
+            acidNoteToolbar.Add(accentNoteButton);
+            acidNoteToolbar.Add(slideNoteButton);
+            root.Add(acidNoteToolbar);
             RefreshChordDrawToolbar();
 
             info = Txt("Choose a track, then create or select a clip.",11,Muted);
@@ -2072,6 +2114,11 @@ namespace ZPunk.DAW
                 song.tracks[requestedTrack].kind == TrackKind.Chops) return;
             if (requestedTrack != trackIndex) SelectTrack(requestedTrack);
             generatorTargetTrack = trackIndex;
+            if (song.tracks[trackIndex].kind == TrackKind.Acid)
+            {
+                GenerateAcidSequence();
+                return;
+            }
             // All generator tracks read the SAME saved project-wide progression/key.
             if (song.sharedProgressionChoice > 0)
             {
@@ -2296,6 +2343,44 @@ namespace ZPunk.DAW
             }
             return true;
         }
+        // 303 patterns are intentionally monophonic, use rests and octave jumps,
+        // and store ACCENT/SLIDE as explicit note modifiers. Each GEN makes a
+        // fresh variation without altering the six standard genre/style presets.
+        private void GenerateAcidSequence()
+        {
+            const int bars = 2;
+            if (!PrepareGeneratorContent(bars) || content == null) return;
+            var random = new System.Random(unchecked(Environment.TickCount ^
+                (int)(Time.realtimeSinceStartup * 1000f)));
+            int tonic = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
+            bool minor = song.sharedProgressionMinor;
+            int[] degrees = minor ? new[] { 0, 3, 5, 7, 10 } : new[] { 0, 2, 5, 7, 9 };
+            int root = 36 + tonic; // Low C2 + transpose, matches techno bass octaves.
+            long stepTicks = SongData.TicksPerSixteenth;
+            content.kind = ClipKind.Midi;
+            content.generatedTag = "ACID / 303 / 2 BARS";
+            content.lengthTicks = bars * SongData.TicksPerBar4;
+            content.notes = new List<NoteEvent>();
+            content.drums = new List<DrumEvent>();
+            content.chops = new List<ChopEvent>();
+            for (int step = 0; step < bars * 16; step++)
+            {
+                if (random.NextDouble() < (step % 4 == 0 ? .08 : .28)) continue;
+                int degree = random.NextDouble() < .56 ? 0 : random.Next(degrees.Length);
+                int octave = random.NextDouble() < .18 ? 12 : 0;
+                int pitch = Mathf.Clamp(root + degrees[degree] + octave, 0, 127);
+                bool slide = step > 0 && random.NextDouble() < .27;
+                bool accent = random.NextDouble() < (step % 4 == 0 ? .7 : .30);
+                content.notes.Add(new NoteEvent {
+                    pitch = pitch, startTick = step * stepTicks,
+                    durationTicks = stepTicks,
+                    velocity = accent ? 118 : 92,
+                    accent = accent, slide = slide
+                });
+            }
+            FinishGeneratorContent();
+        }
+
         private void FinishGeneratorContent()
         {
             clip.sourceOffsetTick = 0;
@@ -2424,16 +2509,22 @@ namespace ZPunk.DAW
             // the inactive slot from taking another 50 points of screen height.
             kitSelector.style.display = trackIndex == 0 ? DisplayStyle.Flex : DisplayStyle.None;
             if (trackScopeRow != null)
-                trackScopeRow.style.display = trackIndex > 0 && trackIndex < 5
+                trackScopeRow.style.display = trackIndex > 0 && trackIndex < 6
                     ? DisplayStyle.Flex : DisplayStyle.None;
-            if (trackScope != null && trackIndex > 0 && trackIndex < 5)
+            if (sampleLabButton != null)
+                sampleLabButton.style.display = trackIndex == 4 ? DisplayStyle.Flex : DisplayStyle.None;
+            if (acidSoundButton != null)
+                acidSoundButton.style.display = trackIndex == 5 ? DisplayStyle.Flex : DisplayStyle.None;
+            if (trackScope != null)
+                trackScope.style.display = DisplayStyle.Flex;
+            if (trackScope != null && trackIndex > 0 && trackIndex < 6)
             {
                 var color = colors[trackIndex];
                 trackScope.Select(trackIndex, color);
                 if (trackScopeTitle != null)
                 {
                     trackScopeTitle.text = trackIndex == 1 ? "BASS" :
-                        trackIndex == 2 ? "SYNTH" : trackIndex == 3 ? "PADS" : "CHOPS";
+                        trackIndex == 2 ? "SYNTH" : trackIndex == 3 ? "PADS" : trackIndex == 4 ? "CHOPS" : "ACID";
                     trackScopeTitle.style.color = color;
                 }
             }
@@ -2583,7 +2674,8 @@ namespace ZPunk.DAW
                 trackIndex >= 0 && trackIndex < song.tracks.Count &&
                 (song.tracks[trackIndex].kind == TrackKind.Bass ||
                  song.tracks[trackIndex].kind == TrackKind.Synth ||
-                 song.tracks[trackIndex].kind == TrackKind.Pads);
+                 song.tracks[trackIndex].kind == TrackKind.Pads ||
+                 song.tracks[trackIndex].kind == TrackKind.Acid);
             bool hasSampleKey = samplePlayer != null && samplePlayer.DawSampleKeyAvailable;
             bool show = midiTrack && (sampleKeyGuideEnabled || hasSampleKey);
             clipSampleKeyReference.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
@@ -2804,6 +2896,10 @@ namespace ZPunk.DAW
             return false;
         }
 
+        // Workspace navigation uses the active CREATE track to target ARRANGE's + CLIP.
+        public int SelectedTrackIndex => trackIndex;
+        public string SelectedClipId => clipId;
+
         public void OnShown(int requestedTrack=-1, string requestedClip=null)
         {
             if (!ready) return;
@@ -2887,16 +2983,41 @@ namespace ZPunk.DAW
         }
         private void NewClip()
         {
-            if (!Writable()) return;
+            if (!Writable() || song.tracks == null || trackIndex < 0 ||
+                trackIndex >= song.tracks.Count || song.tracks[trackIndex] == null) return;
             var track = song.tracks[trackIndex];
-            long start = ArrangementEditing.NextFreeStart(track,0,SongData.TicksPerBar4);
-            clip = ArrangementEditing.CreateClip(song,track,start);
-            clipId = clip != null ? clip.id : null;
-            content = clip == null ? null : ArrangementEditing.FindContent(song,clip.contentId);
-            selectedNote = -1;
-            selectedEventRow = -1;
-            selectedEventTick = -1;
+            long start = ArrangementEditing.NextFreeStart(track, 0, SongData.TicksPerBar4);
+            var created = ArrangementEditing.CreateClip(song, track, start);
+            if (created == null) return;
+            // Select the newly created clip immediately. Its content is an
+            // independent, blank piano-roll/drum/chop pattern that can be edited.
+            clipId = created.id;
+            LoadClip();
             Changed(true, false);
+            FocusPatternNotes();
+        }
+
+        private void StepClip(int direction)
+        {
+            if (song == null || song.tracks == null || trackIndex < 0 ||
+                trackIndex >= song.tracks.Count) return;
+            var track = song.tracks[trackIndex];
+            if (track == null || track.clips == null || track.clips.Count == 0) return;
+            // Navigation is by arrangement position, even when the clip list was
+            // populated or reordered by older versions of the app.
+            var ordered = new List<ClipData>();
+            foreach (var c in track.clips) if (c != null) ordered.Add(c);
+            ordered.Sort((a, b) => {
+                int cmp = a.startTick.CompareTo(b.startTick);
+                return cmp != 0 ? cmp : string.CompareOrdinal(a.id, b.id);
+            });
+            if (ordered.Count == 0) return;
+            int current = ordered.FindIndex(c => c.id == clipId);
+            int next = Mathf.Clamp(current + direction, 0, ordered.Count - 1);
+            if (current == next) return;
+            clipId = ordered[next].id;
+            LoadClip();
+            Redraw(false);
             FocusPatternNotes();
         }
         private void Save()
@@ -2917,6 +3038,46 @@ namespace ZPunk.DAW
             Redraw(false);
             FocusPatternNotes();
         }
+        private bool IsAcidNoteTrack => song != null && song.tracks != null &&
+            trackIndex >= 0 && trackIndex < song.tracks.Count &&
+            song.tracks[trackIndex].kind == TrackKind.Acid;
+
+        private void RefreshAcidNoteButtons()
+        {
+            if (acidNoteToolbar == null) return;
+            bool acidTrack = IsAcidNoteTrack;
+            acidNoteToolbar.style.display = acidTrack ? DisplayStyle.Flex : DisplayStyle.None;
+            bool selectedValid = acidTrack && content != null && content.kind == ClipKind.Midi &&
+                content.notes != null && selectedNote >= 0 && selectedNote < content.notes.Count;
+            var note = selectedValid ? content.notes[selectedNote] : null;
+            if (accentNoteButton != null)
+            {
+                accentNoteButton.SetEnabled(note != null);
+                accentNoteButton.text = note != null && note.accent ? "ACCENT  ON" : "ACCENT  OFF";
+                accentNoteButton.style.backgroundColor = note != null && note.accent ? colors[5] : Raised;
+                accentNoteButton.style.color = note != null && note.accent ? Surface : Ink;
+            }
+            if (slideNoteButton != null)
+            {
+                slideNoteButton.SetEnabled(note != null);
+                slideNoteButton.text = note != null && note.slide ? "SLIDE  ON" : "SLIDE  OFF";
+                slideNoteButton.style.backgroundColor = note != null && note.slide ? colors[5] : Raised;
+                slideNoteButton.style.color = note != null && note.slide ? Surface : Ink;
+            }
+        }
+
+        private void ToggleAcidNoteModifier(bool accent)
+        {
+            if (!IsAcidNoteTrack || content?.notes == null || selectedNote < 0 ||
+                selectedNote >= content.notes.Count || !Writable()) return;
+            var note = content.notes[selectedNote];
+            if (note == null) return;
+            if (accent) note.accent = !note.accent;
+            else note.slide = !note.slide;
+            RefreshAcidNoteButtons();
+            Changed(false);
+        }
+
         private bool IsChordTrack => song != null && song.tracks != null &&
             trackIndex >= 0 && trackIndex < song.tracks.Count &&
             (song.tracks[trackIndex].kind == TrackKind.Synth ||
@@ -3303,6 +3464,7 @@ namespace ZPunk.DAW
             if (velocityFill != null) velocityFill.style.width = new Length(percent, LengthUnit.Percent);
             if (velocityThumb != null) velocityThumb.style.left = new Length(percent, LengthUnit.Percent);
             if (selectedInfo != null) selectedInfo.text = velocity.ToString();
+            RefreshAcidNoteButtons();
         }
         private void SelectNoteVelocity(int index)
         {
@@ -3358,7 +3520,7 @@ namespace ZPunk.DAW
             {
                 bool selected = IsMidi ? IsMemberOfSelectedChord(display.noteIndex) :
                     display.row == selectedEventRow && display.tick == selectedEventTick && selectedEventRow >= 0;
-                display.cell.style.backgroundColor = selected ? Accent : colors[Mathf.Min(trackIndex, 4)];
+                display.cell.style.backgroundColor = selected ? Accent : colors[Mathf.Min(trackIndex, colors.Length - 1)];
                 display.cell.style.borderBottomWidth = selected ? 2 : 0;
                 display.cell.style.borderBottomColor = Ink;
                 float span = Mathf.Max(1f, display.width - 6f);
@@ -3430,7 +3592,8 @@ namespace ZPunk.DAW
                 song.tracks != null && trackIndex >= 0 && trackIndex < song.tracks.Count &&
                 (song.tracks[trackIndex].kind == TrackKind.Bass ||
                  song.tracks[trackIndex].kind == TrackKind.Synth ||
-                 song.tracks[trackIndex].kind == TrackKind.Pads);
+                 song.tracks[trackIndex].kind == TrackKind.Pads ||
+                 song.tracks[trackIndex].kind == TrackKind.Acid);
             for (int row = 0; row < pitchRowBackgrounds.Count; row++)
             {
                 int pitch = PitchForRow(row);
@@ -4292,7 +4455,7 @@ namespace ZPunk.DAW
                     item.RegisterCallback<PointerCaptureOutEvent>(evt => { pressing = false; hold?.Pause(); });
                     item.RegisterCallback<DetachFromPanelEvent>(evt => { pressing = false; hold?.Pause(); });
                 }
-                var trackColor = colors[Mathf.Min(i,4)];
+                var trackColor = colors[Mathf.Min(i, colors.Length - 1)];
                 bool isSelectedTrack = i == trackIndex;
                 item.style.backgroundColor = isSelectedTrack ? trackColor : Raised;
                 item.style.color = isSelectedTrack ? new Color(.03f,.07f,.10f) : trackColor;
@@ -4306,9 +4469,9 @@ namespace ZPunk.DAW
                 item.style.borderRightColor = isSelectedTrack ? trackColor : new Color(trackColor.r, trackColor.g, trackColor.b, 0.82f);
                 chips.Add(item);
             }
-            var sampleButton = EqualButton("SAMPLE", OpenSampler);
-            sampleButton.style.color = Ink;
-            chips.Add(sampleButton);
+            // SAMPLE moved to the existing 50pt CHOPS context row.
+            // Six generous track buttons fit where five tracks + SAMPLE sat,
+            // without a seventh narrow button or a hidden horizontal scroll.
             if (trackScroller != null)
                 trackScroller.schedule.Execute(() => { if (trackScroller != null) trackScroller.scrollOffset = new Vector2(chipX, 0); }).ExecuteLater(0);
             RefreshKitSelector();
@@ -4316,9 +4479,24 @@ namespace ZPunk.DAW
             if (designButton != null) designButton.style.display = trackIndex == 0 ? DisplayStyle.Flex : DisplayStyle.None;
             RefreshClipSampleKeyReference();
             RefreshChordDrawToolbar();
+            RefreshAcidNoteButtons();
             if (generatorQuickButton != null)
                 generatorQuickButton.SetEnabled(song.tracks[trackIndex].kind != TrackKind.Chops);
-            if (title != null) title.text = song.tracks[trackIndex].name.ToUpperInvariant()+"  /  " + (clip != null ? clip.name : "NO CLIP");
+            // Explicit navigation also makes NEW CLIP immediately useful when
+            // a track has several patterns. Don't silently reopen clip one.
+            var trackClips = song.tracks[trackIndex].clips;
+            var orderedClips = new List<ClipData>();
+            if (trackClips != null)
+                foreach (var item in trackClips) if (item != null) orderedClips.Add(item);
+            orderedClips.Sort((a, b) => {
+                int cmp = a.startTick.CompareTo(b.startTick);
+                return cmp != 0 ? cmp : string.CompareOrdinal(a.id, b.id);
+            });
+            int activeClip = orderedClips.FindIndex(c => c.id == clipId);
+            if (previousClipButton != null) previousClipButton.SetEnabled(activeClip > 0);
+            if (nextClipButton != null) nextClipButton.SetEnabled(activeClip >= 0 && activeClip < orderedClips.Count - 1);
+            if (title != null) title.text = song.tracks[trackIndex].name.ToUpperInvariant() +
+                "  /  " + (clip != null ? (activeClip + 1) + "/" + orderedClips.Count : "NO CLIP");
             if (info != null) info.text= clip == null ? "NO CLIP  /  HOLD TRACK TO GENERATE" :
                 (!string.IsNullOrEmpty(content?.generatedTag) ? "GEN " + content.generatedTag :
                 (IsMidi ? "PIANO ROLL" : content != null && content.kind==ClipKind.Drums ? "DRUM STEP EDITOR" : "SAMPLE STEP EDITOR") +
@@ -4659,7 +4837,8 @@ namespace ZPunk.DAW
             float synth = songTransport != null ? songTransport.GetTrackPeak(2) : 0f;
             float pads = songTransport != null ? songTransport.GetTrackPeak(3) : 0f;
             float chops = drumEngine != null ? drumEngine.GetDAWChopPeak() : 0f;
-            trackScope.PushLevels(bass, synth, pads, chops);
+            float acid = songTransport != null ? songTransport.GetTrackPeak(5) : 0f;
+            trackScope.PushLevels(bass, synth, pads, chops, acid);
         }
 
         private void Update()
@@ -4746,7 +4925,7 @@ namespace ZPunk.DAW
             float x = (float)tick / quantum * StepW;
             if (x >= steps * StepW) return;
             float w = Mathf.Max(13f, (float)duration / quantum * StepW - 2f);
-            var e = Box(colors[Mathf.Min(trackIndex, 4)], 3);
+            var e = Box(colors[Mathf.Min(trackIndex, colors.Length - 1)], 3);
             e.style.position = Position.Absolute;
             e.style.left = x + 1;
             e.style.top = row * RowH + 4;

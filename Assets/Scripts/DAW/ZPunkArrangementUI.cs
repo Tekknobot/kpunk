@@ -109,6 +109,20 @@ namespace ZPunk.DAW
         public int SelectedTrackIndex => selectedTrackIndex;
         public Action<int, string> EditRequested;
 
+        /// <summary>Keep the ARRANGE + CLIP target aligned with CREATE's active track.
+        /// No song or clip data is modified by changing the focused lane.</summary>
+        public void FocusTrack(int requestedIndex, string requestedClipId = null)
+        {
+            if (song == null || song.tracks == null ||
+                requestedIndex < 0 || requestedIndex >= song.tracks.Count) return;
+            selectedTrackIndex = requestedIndex;
+            var existing = ArrangementEditing.FindClip(song, requestedClipId, out TrackData owner);
+            selectedClipId = existing != null && owner == song.tracks[requestedIndex]
+                ? requestedClipId : null;
+            selectedVisual = null;
+            Refresh();
+        }
+
         public void Initialize(VisualElement target)
         {
             if (target == null || (initialized && ReferenceEquals(page, target))) return;
@@ -226,7 +240,8 @@ namespace ZPunk.DAW
             var songActions = page.Q<VisualElement>("ZPunkSongActions");
             if (songActions != null) songActions.style.height = 51 * scale;
             if (timelineFrame != null)
-                timelineFrame.style.height = RulerHeight + 5 * RowHeight + 2 * scale;
+                timelineFrame.style.height = RulerHeight +
+                    (song != null && song.tracks != null ? song.tracks.Count : 6) * RowHeight + 2 * scale;
             if (song != null) Refresh();
         }
 
@@ -451,7 +466,8 @@ namespace ZPunk.DAW
             var arrangement = new VisualElement { name = "ZPunkArrangementBoard" };
             arrangement.style.flexDirection = FlexDirection.Row;
             timelineFrame = arrangement;
-            arrangement.style.height = RulerHeight + 5 * RowHeight + 2;
+            // Include the ACID lane; never clip the last track behind the board edge.
+            arrangement.style.height = RulerHeight + 6 * RowHeight + 2;
             // The timeline is never allowed to shrink just because the
             // project menu takes vertical room from the workspace.
             arrangement.style.flexShrink = 0;
@@ -956,6 +972,11 @@ namespace ZPunk.DAW
             canvas.Clear();
             clipPlaybackCursors.Clear();
             int count = song.tracks != null ? song.tracks.Count : 0;
+            // The board must be as tall as the actual track list, not the original
+            // five-lane layout. The outer page is vertically scrollable on phones.
+            if (timelineFrame != null)
+                timelineFrame.style.height = RulerHeight + count * RowHeight + 2 * uiScale;
+            selectedTrackIndex = count > 0 ? Mathf.Clamp(selectedTrackIndex, 0, count - 1) : 0;
             int bars = (int)Math.Ceiling((double)Math.Max(song.lengthTicks, SongData.TicksPerBar4) / SongData.TicksPerBar4);
             renderedBars = Mathf.Clamp(bars + 4, 16, MaxVisibleBars);
             float width = renderedBars * pixelsPerBar;

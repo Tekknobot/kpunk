@@ -27,7 +27,23 @@ namespace ZPunk.DAW
         private static readonly Color Pink = new Color(.97f, .48f, .61f);
         private static readonly string[] SyncModes = { "FREE", "SYNC", "DOTTED", "TRIPLET" };
 
-        private VisualElement root, moduleLayout, trackBar;
+        private VisualElement root, moduleLayout, trackBar, presetCard, acidPanel;
+        private Button acidWave;
+        private readonly List<AcidDial> acidDials = new List<AcidDial>();
+        // Route ACID dials through the same early (trickle-down) capture as the
+        // Helm knobs, before the SOUND ScrollView can claim touch drags.
+        private readonly Dictionary<VisualElement, AcidDial> acidKnobTargets = new Dictionary<VisualElement, AcidDial>();
+        private AcidDial activeAcidDial;
+        private int activeAcidPointer = -1;
+        private float activeAcidStartY, activeAcidStartValue;
+        private sealed class AcidDial
+        {
+            public VisualElement marker;
+            public Label value;
+            public Func<AcidState, float> get;
+            public Action<AcidState, float> set;
+            public string label;
+        }
         private ScrollView pageScroll;
         // Fixed audition drawer is a sibling of the scrolling modules, not a child.
         // It sends only live MIDI note events to the current Helm controller.
@@ -35,7 +51,7 @@ namespace ZPunk.DAW
         private Button keyboardToggle, octaveDown, octaveUp;
         private Label octaveCaption;
         private bool keyboardOpen;
-        private int bassOctave = 2, synthOctave = 4, padsOctave = 3;
+        private int bassOctave = 2, synthOctave = 4, padsOctave = 3, acidOctave = 2;
         private readonly List<AuditionKey> auditionKeys = new List<AuditionKey>();
         private readonly Dictionary<int, AuditionPress> auditionPresses = new Dictionary<int, AuditionPress>();
         private static readonly int[] WhiteSemitones = { 0, 2, 4, 5, 7, 9, 11 };
@@ -50,6 +66,7 @@ namespace ZPunk.DAW
         private sealed class AuditionPress
         {
             public HelmController controller;
+            public bool acid;
             public AuditionKey key;
             public int midi;
         }
@@ -217,7 +234,8 @@ namespace ZPunk.DAW
             presetFilterButtons.Clear();
             presetFilter = "ALL";
             macros.Clear(); switches.Clear(); moduleCells.Clear();
-            selectors.Clear(); knobTargets.Clear();
+            selectors.Clear(); knobTargets.Clear(); acidDials.Clear(); acidKnobTargets.Clear();
+            activeAcidDial = null; activeAcidPointer = -1;
             auditionKeys.Clear();
             keyboardOpen = false;
             keyboardDrawer = keyboardBody = keyboardFrame = null;
@@ -253,7 +271,7 @@ namespace ZPunk.DAW
             trackBar.style.height = 51;
             trackBar.style.flexShrink = 0;
             trackBar.style.marginBottom = 8;
-            foreach (var kind in new[] { TrackKind.Bass, TrackKind.Synth, TrackKind.Pads })
+            foreach (var kind in new[] { TrackKind.Bass, TrackKind.Synth, TrackKind.Pads, TrackKind.Acid })
             {
                 TrackKind chosen = kind;
                 var button = Action(kind.ToString().ToUpperInvariant(), () => Select(chosen));
@@ -268,7 +286,7 @@ namespace ZPunk.DAW
             }
             root.Add(trackBar);
 
-            var presetCard = new VisualElement();
+            presetCard = new VisualElement();
             presetCard.style.flexDirection = FlexDirection.Row;
             presetCard.style.alignItems = Align.Center;
             presetCard.style.height = 74;
@@ -322,6 +340,9 @@ namespace ZPunk.DAW
             moduleLayout.style.flexWrap = Wrap.Wrap;
             moduleLayout.style.width = new Length(100, LengthUnit.Percent);
             pageScroll.Add(moduleLayout);
+            acidPanel = BuildAcidPanel();
+            acidPanel.style.display = DisplayStyle.None;
+            pageScroll.Add(acidPanel);
             moduleLayout.RegisterCallback<GeometryChangedEvent>(OnLayoutChanged);
             BuildAuditionDrawer(); // Outside pageScroll: remains accessible while knobs scroll.
 
@@ -400,6 +421,150 @@ namespace ZPunk.DAW
             OnShown();
         }
 
+        // The original six 303 knobs plus useful DRIVE and GLIDE, without a
+        // second Helm plugin or an imitation hardware step-sequencer.
+        private VisualElement BuildAcidPanel()
+        {
+            var panel = new VisualElement { name = "ZPunkAcid303Sound" };
+            panel.style.flexDirection = FlexDirection.Column;
+            panel.style.width = Length.Percent(100);
+            panel.style.paddingTop = 8;
+            var title = T("303  /  BASS LINE", 17, Gold);
+            title.style.unityFontStyleAndWeight = FontStyle.Bold;
+            title.style.marginBottom = 8;
+            panel.Add(title);
+            acidWave = Action("WAVE   SAW", () =>
+            {
+                ChangeAcidState(state => state.square = !state.square);
+            });
+            acidWave.style.height = 47;
+            acidWave.style.marginBottom = 11;
+            acidWave.style.backgroundColor = Tile;
+            panel.Add(acidWave);
+            var dialGrid = new VisualElement();
+            dialGrid.style.width = Length.Percent(100);
+            dialGrid.style.flexDirection = FlexDirection.Row;
+            dialGrid.style.flexWrap = Wrap.Wrap;
+            panel.Add(dialGrid);
+            AddAcidDial(dialGrid, "TUNE", s => s.tune, (s,v) => s.tune=v);
+            AddAcidDial(dialGrid, "CUTOFF", s => s.cutoff, (s,v) => s.cutoff=v);
+            AddAcidDial(dialGrid, "RESONANCE", s => s.resonance, (s,v) => s.resonance=v);
+            AddAcidDial(dialGrid, "ENV MOD", s => s.envMod, (s,v) => s.envMod=v);
+            AddAcidDial(dialGrid, "DECAY", s => s.decay, (s,v) => s.decay=v);
+            AddAcidDial(dialGrid, "ACCENT", s => s.accent, (s,v) => s.accent=v);
+            AddAcidDial(dialGrid, "DRIVE", s => s.drive, (s,v) => s.drive=v);
+            AddAcidDial(dialGrid, "GLIDE", s => s.glide, (s,v) => s.glide=v);
+            var explanation = T("DRAG A DIAL UP/DOWN  /  Tap WAVE to switch saw and square. In CREATE, select an ACID note to enable ACCENT or SLIDE. Both are stored per note.", 11, Dim);
+            explanation.style.whiteSpace = WhiteSpace.Normal;
+            explanation.style.marginLeft = 6;
+            explanation.style.marginTop = 8;
+            explanation.style.marginBottom = 14;
+            panel.Add(explanation);
+            return panel;
+        }
+
+        private AcidState CurrentAcidState()
+        {
+            FindServices();
+            var song = songProjects != null ? songProjects.GetSongForArrangementEditor() : null;
+            return song?.tracks != null && song.tracks.Count > 5 && song.tracks[5] != null &&
+                song.tracks[5].instrument != null ? song.tracks[5].instrument.acid : null;
+        }
+
+        private void ChangeAcidState(Action<AcidState> change)
+        {
+            FindServices();
+            if (songProjects == null) return;
+            var song = songProjects.GetSongForArrangementEditor();
+            if (song == null) return;
+            if (!ReferenceEquals(songProjects.CurrentSong, song))
+                song = ArrangementEditing.IndependentCopy(song);
+            song.EnsureAcidTrack();
+            if (song.tracks.Count <= 5 || song.tracks[5] == null) return;
+            var instrument = song.tracks[5].instrument;
+            if (instrument == null) instrument = song.tracks[5].instrument = new InstrumentState();
+            if (instrument.acid == null) instrument.acid = new AcidState();
+            change(instrument.acid);
+            songProjects.AcceptArrangementEdit(song);
+            if (songTransport != null) songTransport.ApplyLiveMix(song);
+            RefreshAcidPanel();
+        }
+
+        private void AddAcidDial(VisualElement grid, string caption, Func<AcidState,float> get,
+            Action<AcidState,float> set)
+        {
+            var tile = new VisualElement();
+            tile.style.width = Length.Percent(33.333f);
+            tile.style.minWidth = 0;
+            tile.style.height = 126;
+            tile.style.flexShrink = 0;
+            tile.style.alignItems = Align.Center;
+            tile.style.justifyContent = Justify.Center;
+            var face = new VisualElement();
+            face.style.width = 72;
+            face.style.height = 72;
+            face.style.backgroundColor = Face;
+            face.style.borderTopLeftRadius = 36;
+            face.style.borderTopRightRadius = 36;
+            face.style.borderBottomLeftRadius = 36;
+            face.style.borderBottomRightRadius = 36;
+            face.style.borderTopWidth = 2;
+            face.style.borderRightWidth = 2;
+            face.style.borderBottomWidth = 2;
+            face.style.borderLeftWidth = 2;
+            face.style.borderTopColor = Gold;
+            face.style.borderRightColor = Gold;
+            face.style.borderBottomColor = Gold;
+            face.style.borderLeftColor = Gold;
+            face.style.position = Position.Relative;
+            face.style.justifyContent = Justify.Center;
+            face.style.alignItems = Align.Center;
+            var value = T("50", 15, Ink);
+            value.style.unityFontStyleAndWeight = FontStyle.Bold;
+            face.Add(value);
+            var marker = new VisualElement();
+            marker.style.position = Position.Absolute;
+            marker.style.width = 6;
+            marker.style.height = 6;
+            marker.style.borderTopLeftRadius = 3;
+            marker.style.borderTopRightRadius = 3;
+            marker.style.borderBottomLeftRadius = 3;
+            marker.style.borderBottomRightRadius = 3;
+            marker.style.backgroundColor = Gold;
+            marker.pickingMode = PickingMode.Ignore;
+            face.Add(marker);
+            var dial = new AcidDial { marker = marker, value = value, get = get, set = set,
+                label = caption };
+            acidDials.Add(dial);
+            acidKnobTargets[face] = dial;
+            tile.Add(face);
+            var label = T(caption, 11, Gold);
+            label.style.unityTextAlign = TextAnchor.MiddleCenter;
+            label.style.marginTop = 6;
+            tile.Add(label);
+            grid.Add(tile);
+        }
+
+        private void RefreshAcidPanel()
+        {
+            var state = CurrentAcidState();
+            if (state == null) return;
+            if (acidWave != null) acidWave.text = "WAVE  /  " + (state.square ? "SQUARE" : "SAWTOOTH");
+            foreach (var dial in acidDials)
+            {
+                float amount = Mathf.Clamp01(dial.get(state));
+                dial.value.text = dial.label == "TUNE"
+                    ? ((Mathf.RoundToInt((amount - .5f) * 24f) >= 0 ? "+" : "") +
+                       Mathf.RoundToInt((amount - .5f) * 24f) + "st")
+                    : dial.label == "DECAY" ? (.09f + amount * 1.5f).ToString("0.00") + "s"
+                    : dial.label == "GLIDE" ? Mathf.RoundToInt(25 + amount * 225f) + "ms"
+                    : Mathf.RoundToInt(amount * 100).ToString();
+                float angle = Mathf.Lerp(-135f, 135f, amount) * Mathf.Deg2Rad;
+                dial.marker.style.left = 33f + Mathf.Sin(angle) * 26f;
+                dial.marker.style.top = 33f - Mathf.Cos(angle) * 26f;
+            }
+        }
+
         // ---------------------------------------------------------------------
         // Fixed, performance-only keyboard. Does not edit SongData, the piano
         // roll, generation history, a project, or any track/clip event list.
@@ -407,7 +572,8 @@ namespace ZPunk.DAW
         private int KeyboardOctave
         {
             get { return selected == TrackKind.Bass ? bassOctave :
-                selected == TrackKind.Pads ? padsOctave : synthOctave; }
+                selected == TrackKind.Pads ? padsOctave :
+                selected == TrackKind.Acid ? acidOctave : synthOctave; }
         }
 
         private void BuildAuditionDrawer()
@@ -570,6 +736,7 @@ namespace ZPunk.DAW
             int octave = Mathf.Clamp(KeyboardOctave + delta, 0, 7);
             if (selected == TrackKind.Bass) bassOctave = octave;
             else if (selected == TrackKind.Pads) padsOctave = octave;
+            else if (selected == TrackKind.Acid) acidOctave = octave;
             else synthOctave = octave;
             RefreshAuditionHeader();
         }
@@ -607,10 +774,18 @@ namespace ZPunk.DAW
                 auditionPresses.ContainsKey(evt.pointerId)) return;
             AuditionKey key = AuditionKeyAt(evt.position);
             if (key == null) return;
-            HelmController controller = Controller();
-            if (controller == null || !controller.isActiveAndEnabled) return;
+            bool isAcid = selected == TrackKind.Acid;
+            HelmController controller = isAcid ? null : Controller();
+            if (!isAcid && (controller == null || !controller.isActiveAndEnabled)) return;
+            if (isAcid)
+            {
+                if (songTransport == null) songTransport = FindObjectOfType<ZPunkSongTransport>();
+                // Audition never plays extra 303 notes over a running pattern.
+                if (songTransport == null || songTransport.IsPlaying || songTransport.IsExportingOneShot)
+                    return;
+            }
 
-            var press = new AuditionPress { controller = controller, key = null, midi = -1 };
+            var press = new AuditionPress { controller = controller, acid = isAcid, key = null, midi = -1 };
             auditionPresses.Add(evt.pointerId, press);
             keyboardFrame.CapturePointer(evt.pointerId);
             SetAuditionKey(press, key);
@@ -658,7 +833,8 @@ namespace ZPunk.DAW
             AuditionPress excluded)
         {
             foreach (var other in auditionPresses.Values)
-                if (other != excluded && other.controller == controller && other.midi == midi)
+                if (other != excluded && other.controller == controller &&
+                    other.acid == excluded.acid && other.midi == midi)
                     return true;
             return false;
         }
@@ -673,7 +849,11 @@ namespace ZPunk.DAW
 
             if (oldMidi >= 0 && !OtherAuditionHolds(press.controller, oldMidi, press))
             {
-                try { if (press.controller != null) press.controller.NoteOff(oldMidi); }
+                try
+                {
+                    if (press.acid) songTransport?.AuditionAcidNoteOff(oldMidi);
+                    else if (press.controller != null) press.controller.NoteOff(oldMidi);
+                }
                 catch (Exception ex)
                 {
                     Debug.LogWarning("[ZPUNK SOUND] Audition note-off failed: " + ex.Message);
@@ -683,12 +863,15 @@ namespace ZPunk.DAW
 
             if (newKey == null) return;
             int newMidi = (KeyboardOctave + 1) * 12 + newKey.semitone;
-            if (newMidi < 0 || newMidi > 127 || press.controller == null ||
-                !press.controller.isActiveAndEnabled) return;
+            if (newMidi < 0 || newMidi > 127 ||
+                (!press.acid && (press.controller == null || !press.controller.isActiveAndEnabled))) return;
             try
             {
                 if (!OtherAuditionHolds(press.controller, newMidi, press))
-                    press.controller.NoteOn(newMidi, .85f);
+                {
+                    if (press.acid) songTransport?.AuditionAcidNoteOn(newMidi);
+                    else press.controller.NoteOn(newMidi, .85f);
+                }
                 press.key = newKey;
                 press.midi = newMidi;
                 RefreshAuditionKey(newKey);
@@ -733,6 +916,7 @@ namespace ZPunk.DAW
 
         public void OnHidden()
         {
+            CancelAcidDrag();
             ClosePresetBrowser();
             ReleaseAllAuditionNotes();
         }
@@ -939,6 +1123,7 @@ namespace ZPunk.DAW
         {
             if (selected != track) ClosePresetBrowser();
             if (selected != track) ReleaseAllAuditionNotes();
+            CancelAcidDrag();
             if (dragging != null && root != null && root.HasPointerCapture(dragPointer))
                 root.ReleasePointer(dragPointer);
             dragging = null; dragPointer = -1;
@@ -946,12 +1131,14 @@ namespace ZPunk.DAW
             ClearPendingDistortion();
             OnShown();
         }
+        public int SelectedTrackIndex => (int)selected;
+
         public void OnShown(int requestedTrack = -1)
         {
-            if (requestedTrack >= 0 && requestedTrack <= 4)
+            if (requestedTrack >= 0 && requestedTrack <= 5)
             {
                 var kind = (TrackKind)requestedTrack;
-                if (kind == TrackKind.Bass || kind == TrackKind.Synth || kind == TrackKind.Pads)
+                if (kind == TrackKind.Bass || kind == TrackKind.Synth || kind == TrackKind.Pads || kind == TrackKind.Acid)
                 {
                     if (selected != kind)
                     {
@@ -972,7 +1159,14 @@ namespace ZPunk.DAW
                 entry.Value.style.color = active ? Face : Ink;
             }
             if (subhead != null)
-                subhead.text = selected.ToString().ToUpperInvariant() + "  /  AUDIO HELM";
+                subhead.text = selected == TrackKind.Acid ? "ACID  /  303 MONO SYNTH" : selected.ToString().ToUpperInvariant() + "  /  AUDIO HELM";
+            bool showAcid = selected == TrackKind.Acid;
+            if (presetCard != null) presetCard.style.display = showAcid ? DisplayStyle.None : DisplayStyle.Flex;
+            if (moduleLayout != null) moduleLayout.style.display = showAcid ? DisplayStyle.None : DisplayStyle.Flex;
+            if (acidPanel != null) acidPanel.style.display = showAcid ? DisplayStyle.Flex : DisplayStyle.None;
+            // The existing two-octave drawer doubles as a monophonic 303
+            // audition keyboard; no extra panel height on portrait screens.
+            if (keyboardDrawer != null) keyboardDrawer.style.display = DisplayStyle.Flex;
             RefreshMotionButtons();
             foreach (var m in macros) m.lastDisplay = -999;
             foreach (var sw in switches) sw.lastState = -1;
@@ -1275,6 +1469,12 @@ namespace ZPunk.DAW
         }
         private void Refresh()
         {
+            if (selected == TrackKind.Acid)
+            {
+                RefreshAcidPanel();
+                if (instrumentStatus != null) instrumentStatus.text = "MONOPHONIC  /  SAW + SQUARE  /  ACCENT + SLIDE";
+                return;
+            }
             var controller = Controller();
             string status = controller == null ? "INSTRUMENT INITIALIZING" :
                 "CHANNEL " + controller.channel + "  /  AUDIO HELM";
@@ -1568,6 +1768,31 @@ namespace ZPunk.DAW
             scrollLockUntil = Time.unscaledTime + .18f;
             LockScroll();
         }
+        private AcidDial FindAcidDial(VisualElement target)
+        {
+            while (target != null && target != root)
+            {
+                if (acidKnobTargets.TryGetValue(target, out AcidDial dial)) return dial;
+                target = target.parent;
+            }
+            return null;
+        }
+        private void EndAcidDrag(int pointer)
+        {
+            if (activeAcidDial == null || activeAcidPointer != pointer) return;
+            activeAcidDial = null;
+            activeAcidPointer = -1;
+            scrollLockUntil = Time.unscaledTime + .18f;
+            LockScroll();
+        }
+        private void CancelAcidDrag()
+        {
+            if (activeAcidDial == null) return;
+            int pointer = activeAcidPointer;
+            EndAcidDrag(pointer);
+            if (root != null && root.HasPointerCapture(pointer)) root.ReleasePointer(pointer);
+        }
+
         private Macro FindKnob(VisualElement target)
         {
             while (target != null && target != root)
@@ -1579,7 +1804,21 @@ namespace ZPunk.DAW
         }
         private void OnKnobDown(PointerDownEvent evt)
         {
-            if (evt.button != 0 || dragging != null) return;
+            if (evt.button != 0 || dragging != null || activeAcidDial != null) return;
+            var acid = selected == TrackKind.Acid ? FindAcidDial(evt.target as VisualElement) : null;
+            if (acid != null)
+            {
+                var state = CurrentAcidState();
+                if (state == null) return;
+                activeAcidDial = acid;
+                activeAcidPointer = evt.pointerId;
+                activeAcidStartY = evt.position.y;
+                activeAcidStartValue = acid.get(state);
+                lockedScroll = pageScroll != null ? pageScroll.scrollOffset : Vector2.zero;
+                root.CapturePointer(evt.pointerId);
+                evt.StopPropagation();
+                return;
+            }
             var macro = FindKnob(evt.target as VisualElement);
             if (macro == null) return;
             dragging = macro;
@@ -1592,6 +1831,20 @@ namespace ZPunk.DAW
         }
         private void OnKnobMove(PointerMoveEvent evt)
         {
+            if (activeAcidDial != null && activeAcidPointer == evt.pointerId)
+            {
+                float amount = Mathf.Clamp01(activeAcidStartValue +
+                    (activeAcidStartY - evt.position.y) / 170f);
+                var current = CurrentAcidState();
+                if (current != null && Mathf.Abs(activeAcidDial.get(current) - amount) > .0001f)
+                {
+                    var dial = activeAcidDial;
+                    ChangeAcidState(state => dial.set(state, amount));
+                }
+                LockScroll();
+                evt.StopPropagation();
+                return;
+            }
             if (dragging == null || dragPointer != evt.pointerId) return;
             float sensitivity = evt.shiftKey ? .0012f : .006f;
             SetMacro(dragging, dragStart + (dragY - evt.position.y) * sensitivity);
@@ -1600,6 +1853,13 @@ namespace ZPunk.DAW
         }
         private void OnKnobUp(PointerUpEvent evt)
         {
+            if (activeAcidDial != null && activeAcidPointer == evt.pointerId)
+            {
+                EndAcidDrag(evt.pointerId);
+                if (root.HasPointerCapture(evt.pointerId)) root.ReleasePointer(evt.pointerId);
+                evt.StopPropagation();
+                return;
+            }
             if (dragging == null || dragPointer != evt.pointerId) return;
             EndDrag(evt.pointerId);
             if (root.HasPointerCapture(evt.pointerId)) root.ReleasePointer(evt.pointerId);
@@ -1607,6 +1867,13 @@ namespace ZPunk.DAW
         }
         private void OnKnobCancel(PointerCancelEvent evt)
         {
+            if (activeAcidDial != null && activeAcidPointer == evt.pointerId)
+            {
+                EndAcidDrag(evt.pointerId);
+                if (root.HasPointerCapture(evt.pointerId)) root.ReleasePointer(evt.pointerId);
+                evt.StopPropagation();
+                return;
+            }
             if (dragging == null || dragPointer != evt.pointerId) return;
             EndDrag(evt.pointerId);
             if (root.HasPointerCapture(evt.pointerId)) root.ReleasePointer(evt.pointerId);
@@ -1614,6 +1881,7 @@ namespace ZPunk.DAW
         }
         private void OnKnobCaptureLost(PointerCaptureOutEvent evt)
         {
+            if (activeAcidDial != null && activeAcidPointer == evt.pointerId) EndAcidDrag(evt.pointerId);
             if (dragging != null && dragPointer == evt.pointerId) EndDrag(evt.pointerId);
         }
 
@@ -1733,7 +2001,7 @@ namespace ZPunk.DAW
         {
             FindServices();
             if (root == null || root.resolvedStyle.display == DisplayStyle.None) return;
-            if (dragging != null || Time.unscaledTime < scrollLockUntil) LockScroll();
+            if (dragging != null || activeAcidDial != null || Time.unscaledTime < scrollLockUntil) LockScroll();
             if (Time.unscaledTime < nextRefresh) return;
             nextRefresh = Time.unscaledTime + .25f;
             Refresh();

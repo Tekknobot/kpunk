@@ -50,7 +50,8 @@ namespace ZPunk.DAW
                 int channel = track.kind == TrackKind.Drums ? 9 :
                     track.kind == TrackKind.Bass ? 0 :
                     track.kind == TrackKind.Synth ? 1 :
-                    track.kind == TrackKind.Pads ? 2 : 3;
+                    track.kind == TrackKind.Pads ? 2 :
+                    track.kind == TrackKind.Acid ? 4 : 3;
                 var events = new List<Entry>();
                 var name = Encoding.UTF8.GetBytes(string.IsNullOrEmpty(track.name) ? track.kind.ToString() : track.name);
                 var nameBytes = new List<byte> { 0xFF, 0x03 };
