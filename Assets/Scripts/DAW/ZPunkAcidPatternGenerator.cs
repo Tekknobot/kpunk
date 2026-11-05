@@ -66,6 +66,48 @@ namespace ZPunk.DAW
             internal int division = 1, density = 2, accent = 2, slide = 2;
             internal int swing = 0, gate = 1, motif = 4, leap = 1;
             internal int syncopation = 1, variation = 1;
+            // Scale-degree bitmask (up to 12 chromatic notes). -1 means all
+            // notes in the currently selected scale. It is relative to the
+            // tonic, so changing key transposes the chosen note pool.
+            internal int noteMask = -1;
+        }
+
+        // One note switch per degree in the displayed scale. The UI and writer
+        // both use these helpers, ensuring excluded pitches cannot be generated.
+        internal static int DegreeCount(int scale)
+        {
+            return ScaleOffsets[Mathf.Clamp(scale, 0, ScaleOffsets.Length - 1)].Length;
+        }
+
+        internal static string DegreeName(int key, int scale, int degree)
+        {
+            int[] offsets = ScaleOffsets[Mathf.Clamp(scale, 0, ScaleOffsets.Length - 1)];
+            return Keys[(Mathf.Clamp(key, 0, 11) + offsets[Mathf.Clamp(degree, 0, offsets.Length - 1)]) % 12];
+        }
+
+        internal static bool DegreeEnabled(Settings settings, int degree)
+        {
+            return settings != null && degree >= 0 && degree < DegreeCount(settings.scale) &&
+                (settings.noteMask & (1 << degree)) != 0;
+        }
+
+        internal static int EnabledDegreeCount(Settings settings)
+        {
+            if (settings == null) return 0;
+            int count = 0;
+            for (int i = 0; i < DegreeCount(settings.scale); i++)
+                if (DegreeEnabled(settings, i)) count++;
+            return count;
+        }
+
+        internal static bool ToggleDegree(Settings settings, int degree)
+        {
+            if (settings == null || degree < 0 || degree >= DegreeCount(settings.scale)) return false;
+            int validMask = (1 << DegreeCount(settings.scale)) - 1;
+            int nextMask = (settings.noteMask ^ (1 << degree)) & validMask;
+            if (nextMask == 0) return false; // Never generate an empty pool.
+            settings.noteMask = nextMask;
+            return true;
         }
 
         private struct Step
@@ -79,7 +121,15 @@ namespace ZPunk.DAW
             if (content == null || settings == null) return;
             int bars = Bars[Mathf.Clamp(settings.bars, 0, Bars.Length - 1)];
             int scaleIndex = Mathf.Clamp(settings.scale, 0, ScaleOffsets.Length - 1);
-            int[] degrees = ScaleOffsets[scaleIndex];
+            int[] scaleDegrees = ScaleOffsets[scaleIndex];
+            // Filter before ANY melodic decisions. Phrase anchors, generated
+            // neighbours, mutations and octave leaps all draw from this pool.
+            var allowedOffsets = new List<int>(scaleDegrees.Length);
+            for (int degree = 0; degree < scaleDegrees.Length; degree++)
+                if ((settings.noteMask & (1 << degree)) != 0)
+                    allowedOffsets.Add(scaleDegrees[degree]);
+            if (allowedOffsets.Count == 0) allowedOffsets.Add(scaleDegrees[0]);
+            int[] degrees = allowedOffsets.ToArray();
             int tonic = Mathf.Clamp(settings.key, 0, 11);
             int root = 12 * (Mathf.Clamp(settings.octave, 1, 4) + 1) + tonic;
             int stepsPerBar = settings.division == 0 ? 8 : settings.division == 2 ? 32 : 16;

@@ -2167,14 +2167,27 @@ namespace ZPunk.DAW
                 ChangeAcidSetting(() =>
                 {
                     acidSettings.key = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
-                    acidSettings.scale = song.sharedProgressionMinor ? 0 : 1;
+                    int newScale = song.sharedProgressionMinor ? 0 : 1;
+                    if (acidSettings.scale != newScale)
+                    {
+                        acidSettings.scale = newScale;
+                        acidSettings.noteMask = -1;
+                    }
                 });
             }, 136);
             useSongKey.style.height = 36;
             useSongKey.style.marginBottom = 5;
             panel.Add(useSongKey);
             AddAcidCycler(panel, "SCALE", ZPunkAcidPatternGenerator.Scales,
-                () => acidSettings.scale, value => acidSettings.scale = value);
+                () => acidSettings.scale, value =>
+                {
+                    if (acidSettings.scale != value)
+                    {
+                        acidSettings.scale = value;
+                        acidSettings.noteMask = -1; // All notes of the new scale start active.
+                    }
+                });
+            AddAcidNotePool(panel);
             AddAcidCycler(panel, "ROOT OCTAVE", new[] { "C1", "C2", "C3", "C4" },
                 () => acidSettings.octave - 1, value => acidSettings.octave = value + 1);
             AddAcidCycler(panel, "OCTAVE SPAN", new[] { "1 OCT", "2 OCT", "3 OCT" },
@@ -2256,6 +2269,92 @@ namespace ZPunk.DAW
             acidGeneratorSummary.style.marginBottom = 9;
             panel.Add(acidGeneratorSummary);
             return panel;
+        }
+
+        // Select the actual pitches permitted by the active scale, without a
+        // long row of toggles or a horizontally scrolling keyboard. Chromatic
+        // mode uses three rows of four buttons on narrow portrait phones.
+        private void AddAcidNotePool(VisualElement panel)
+        {
+            var header = new VisualElement();
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.alignItems = Align.Center;
+            header.style.justifyContent = Justify.SpaceBetween;
+            header.style.marginTop = 11;
+            header.style.marginBottom = 3;
+            var titleLabel = Txt("ALLOWED NOTES", 10, Accent);
+            titleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            header.Add(titleLabel);
+            var countLabel = Txt("", 10, Muted);
+            countLabel.style.flexGrow = 1;
+            countLabel.style.unityTextAlign = TextAnchor.MiddleRight;
+            countLabel.style.marginRight = 9;
+            header.Add(countLabel);
+            var allButton = Btn("ALL", () =>
+            {
+                int count = ZPunkAcidPatternGenerator.DegreeCount(acidSettings.scale);
+                if (ZPunkAcidPatternGenerator.EnabledDegreeCount(acidSettings) == count) return;
+                ChangeAcidSetting(() => acidSettings.noteMask = -1);
+            }, 48);
+            allButton.style.height = 32;
+            allButton.style.marginRight = 0;
+            allButton.style.fontSize = 11;
+            header.Add(allButton);
+            panel.Add(header);
+
+            var notes = new VisualElement();
+            notes.style.flexDirection = FlexDirection.Row;
+            notes.style.flexWrap = Wrap.Wrap;
+            notes.style.justifyContent = Justify.SpaceBetween;
+            notes.style.marginBottom = 4;
+            var buttons = new Button[12];
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                int degree = i;
+                var button = Btn("", () =>
+                {
+                    // Prevent empty patterns; all other changes flow through
+                    // the existing debounced Live Apply path.
+                    if (ZPunkAcidPatternGenerator.DegreeEnabled(acidSettings, degree) &&
+                        ZPunkAcidPatternGenerator.EnabledDegreeCount(acidSettings) <= 1) return;
+                    ChangeAcidSetting(() => ZPunkAcidPatternGenerator.ToggleDegree(acidSettings, degree));
+                }, 0);
+                button.style.width = new Length(23, LengthUnit.Percent);
+                button.style.minWidth = 0;
+                button.style.flexShrink = 0;
+                button.style.height = 37;
+                button.style.marginRight = 0;
+                button.style.marginBottom = 5;
+                button.style.paddingLeft = 1;
+                button.style.paddingRight = 1;
+                button.style.fontSize = 12;
+                button.tooltip = "Include or exclude this note from generated ACID patterns";
+                buttons[i] = button;
+                notes.Add(button);
+            }
+            panel.Add(notes);
+            var hint = Txt("TAP NOTES TO EXCLUDE THEM FROM GENERATION", 10, Muted);
+            hint.style.whiteSpace = WhiteSpace.Normal;
+            panel.Add(hint);
+            acidControlPainters.Add(() =>
+            {
+                int count = ZPunkAcidPatternGenerator.DegreeCount(acidSettings.scale);
+                int enabled = ZPunkAcidPatternGenerator.EnabledDegreeCount(acidSettings);
+                countLabel.text = enabled + " / " + count + " SELECTED";
+                allButton.style.color = enabled == count ? Accent : Ink;
+                for (int i = 0; i < buttons.Length; i++)
+                {
+                    bool inScale = i < count;
+                    buttons[i].style.display = inScale ? DisplayStyle.Flex : DisplayStyle.None;
+                    if (!inScale) continue;
+                    bool selected = ZPunkAcidPatternGenerator.DegreeEnabled(acidSettings, i);
+                    buttons[i].text = ZPunkAcidPatternGenerator.DegreeName(
+                        acidSettings.key, acidSettings.scale, i);
+                    buttons[i].style.backgroundColor = selected ? SelectedColor() : Raised;
+                    buttons[i].style.color = selected ? Accent : Muted;
+                    buttons[i].style.opacity = selected ? 1f : .63f;
+                }
+            });
         }
 
         private void AddAcidSectionTitle(VisualElement panel, string name)
@@ -2762,6 +2861,7 @@ namespace ZPunk.DAW
                 {
                     acidSettings.key = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
                     acidSettings.scale = song.sharedProgressionMinor ? 0 : 1;
+                    acidSettings.noteMask = -1;
                     acidSettingsInitialized = true;
                 }
                 if (clip != null && content != null)
