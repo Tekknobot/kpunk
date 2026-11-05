@@ -37,6 +37,17 @@ namespace ZPunk.DAW
         private string sampleKeyGuideSampleId;
         private int sampleKeyGuideProjectSlot = -1;
         private VisualElement generatorPanel, generatorGenres, generatorStyles, generatorBarsRow, generatorSynthModeRow;
+        private VisualElement normalGeneratorSections, acidGeneratorSections;
+        private Label acidKeyLabel, acidGeneratorSummary;
+        private Button generatorApplyButton;
+        private readonly ZPunkAcidPatternGenerator.Settings acidSettings =
+            new ZPunkAcidPatternGenerator.Settings();
+        private readonly List<AcidOptionRow> acidOptionRows = new List<AcidOptionRow>();
+        private sealed class AcidOptionRow
+        {
+            internal Button[] buttons;
+            internal Func<int> index;
+        }
         private VisualElement generatorHistoryRows;
         private Label generatorHistoryLabel;
         private Button generatorQuickButton, generatorMelodyButton, generatorChordsButton;
@@ -2046,6 +2057,18 @@ namespace ZPunk.DAW
             historyHost.style.marginBottom = 7;
             body.Add(historyHost);
 
+            // A second, independent generator body. Genre/history controls
+            // remain unchanged for the other five instruments.
+            normalGeneratorSections = new VisualElement();
+            var normalChildren = new List<VisualElement>();
+            // Heading and warning stay visible for both generator modes.
+            foreach (var element in body.contentContainer.Children())
+                if (element != generatorHeading && element != generatorHint) normalChildren.Add(element);
+            foreach (var element in normalChildren) normalGeneratorSections.Add(element);
+            body.Add(normalGeneratorSections);
+            acidGeneratorSections = BuildAcidGeneratorControls();
+            body.Add(acidGeneratorSections);
+
             var actionRow = new VisualElement();
             actionRow.style.flexDirection = FlexDirection.Row;
             actionRow.style.height = 52;
@@ -2053,15 +2076,140 @@ namespace ZPunk.DAW
             var cancel = Btn("CANCEL",CloseGenerator,82);
             cancel.style.flexGrow = 1;
             actionRow.Add(cancel);
-            var apply = Btn("GENERATE",ApplyGenerator,109);
-            apply.style.backgroundColor = new Color(.12f,.36f,.34f);
-            apply.style.color = Accent;
-            apply.style.flexGrow = 1;
-            actionRow.Add(apply);
+            generatorApplyButton = Btn("GENERATE",ApplyGenerator,109);
+            generatorApplyButton.style.backgroundColor = new Color(.12f,.36f,.34f);
+            generatorApplyButton.style.color = Accent;
+            generatorApplyButton.style.flexGrow = 1;
+            actionRow.Add(generatorApplyButton);
             // Keep cancel/apply visible even on short phone displays.
             actionRow.style.paddingTop = 2;
             generatorPanel.Add(actionRow);
             root.Add(generatorPanel);
+        }
+
+        private VisualElement BuildAcidGeneratorControls()
+        {
+            acidOptionRows.Clear();
+            var panel = new VisualElement { name = "ZPunkAcid303GeneratorControls" };
+            panel.style.flexDirection = FlexDirection.Column;
+            var subtitle = Txt("303 PATTERN DESIGN  /  NO GENRES", 12, Accent);
+            subtitle.style.unityFontStyleAndWeight = FontStyle.Bold;
+            subtitle.style.marginBottom = 7;
+            panel.Add(subtitle);
+            var keyTitle = Txt("SONG KEY / TONIC", 11, Muted);
+            panel.Add(keyTitle);
+            var keyRow = new VisualElement();
+            keyRow.style.flexDirection = FlexDirection.Row;
+            keyRow.style.height = 47;
+            keyRow.style.alignItems = Align.Center;
+            keyRow.Add(Btn("<", () => { acidSettings.key = (acidSettings.key + 11) % 12; RefreshGeneratorPanel(); }, 42));
+            acidKeyLabel = Txt("A MINOR", 13, Accent);
+            acidKeyLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+            acidKeyLabel.style.flexGrow = 1;
+            keyRow.Add(acidKeyLabel);
+            keyRow.Add(Btn(">", () => { acidSettings.key = (acidSettings.key + 1) % 12; RefreshGeneratorPanel(); }, 42));
+            panel.Add(keyRow);
+            var useSongKey = Btn("USE SONG KEY", () =>
+            {
+                if (song == null) return;
+                acidSettings.key = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
+                acidSettings.scale = song.sharedProgressionMinor ? 0 : 1;
+                RefreshGeneratorPanel();
+            }, 135);
+            useSongKey.style.height = 39;
+            useSongKey.style.marginBottom = 8;
+            panel.Add(useSongKey);
+
+            AddAcidChoices(panel, "SCALE", ZPunkAcidPatternGenerator.Scales,
+                () => acidSettings.scale, value => acidSettings.scale = value);
+            AddAcidChoices(panel, "BARS", new[] { "1", "2", "4", "8", "16" },
+                () => acidSettings.bars, value => acidSettings.bars = value);
+            AddAcidChoices(panel, "ROOT OCTAVE", new[] { "C1", "C2", "C3", "C4" },
+                () => acidSettings.octave - 1, value => acidSettings.octave = value + 1);
+            AddAcidChoices(panel, "OCTAVE RANGE", new[] { "1 OCT", "2 OCT", "3 OCT" },
+                () => acidSettings.range, value => acidSettings.range = value);
+            AddAcidChoices(panel, "STEP GRID", ZPunkAcidPatternGenerator.Divisions,
+                () => acidSettings.division, value => acidSettings.division = value);
+            AddAcidChoices(panel, "NOTE DENSITY", new[] { "30%", "45%", "60%", "75%", "90%" },
+                () => acidSettings.density, value => acidSettings.density = value);
+            AddAcidChoices(panel, "ACCENT PROBABILITY", new[] { "OFF", "20%", "35%", "50%", "70%" },
+                () => acidSettings.accent, value => acidSettings.accent = value);
+            AddAcidChoices(panel, "SLIDE PROBABILITY", new[] { "OFF", "15%", "30%", "45%", "60%" },
+                () => acidSettings.slide, value => acidSettings.slide = value);
+            AddAcidChoices(panel, "SWING", new[] { "OFF", "15%", "30%", "45%" },
+                () => acidSettings.swing, value => acidSettings.swing = value);
+            AddAcidChoices(panel, "GATE LENGTH", ZPunkAcidPatternGenerator.Gates,
+                () => acidSettings.gate, value => acidSettings.gate = value);
+            AddAcidChoices(panel, "PHRASE PATTERN", ZPunkAcidPatternGenerator.Motifs,
+                () => acidSettings.motif, value => acidSettings.motif = value);
+            AddAcidChoices(panel, "OCTAVE LEAPS", new[] { "OFF", "15%", "30%", "50%" },
+                () => acidSettings.leap, value => acidSettings.leap = value);
+            AddAcidChoices(panel, "RHYTHMIC EMPHASIS", ZPunkAcidPatternGenerator.Syncopations,
+                () => acidSettings.syncopation, value => acidSettings.syncopation = value);
+            var variation = new VisualElement();
+            variation.style.flexDirection = FlexDirection.Row;
+            variation.style.alignItems = Align.Center;
+            variation.style.height = 51;
+            var variationTitle = Txt("FRESH VARIATION", 11, Muted);
+            variationTitle.style.flexGrow = 1;
+            variation.Add(variationTitle);
+            variation.Add(Btn("NEW SEED", () => { acidSettings.variation++; RefreshGeneratorPanel(); }, 109));
+            panel.Add(variation);
+            acidGeneratorSummary = Txt("", 11, Accent);
+            acidGeneratorSummary.style.whiteSpace = WhiteSpace.Normal;
+            acidGeneratorSummary.style.marginTop = 8;
+            acidGeneratorSummary.style.marginBottom = 12;
+            panel.Add(acidGeneratorSummary);
+            return panel;
+        }
+
+        private void AddAcidChoices(VisualElement panel, string caption, string[] names,
+            Func<int> selection, Action<int> set)
+        {
+            var heading = Txt(caption, 10, Muted);
+            heading.style.marginTop = 7;
+            panel.Add(heading);
+            var scroll = new ScrollView(ScrollViewMode.Horizontal);
+            scroll.style.height = 47;
+            scroll.style.flexShrink = 0;
+            scroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            scroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            scroll.contentContainer.style.flexDirection = FlexDirection.Row;
+            var buttons = new Button[names.Length];
+            for (int index = 0; index < names.Length; index++)
+            {
+                int chosen = index;
+                var button = Btn(names[index], () => { set(chosen); RefreshGeneratorPanel(); }, 74);
+                button.style.minWidth = names.Length <= 3 ? 98 : 74;
+                button.style.marginRight = 3;
+                button.style.fontSize = 11;
+                buttons[index] = button;
+                scroll.Add(button);
+            }
+            acidOptionRows.Add(new AcidOptionRow { buttons = buttons, index = selection });
+            panel.Add(scroll);
+        }
+
+        private void RefreshAcidGeneratorPanel()
+        {
+            if (acidKeyLabel != null)
+                acidKeyLabel.text = ZPunkAcidPatternGenerator.Keys[Mathf.Clamp(acidSettings.key, 0, 11)] +
+                    "  /  " + ZPunkAcidPatternGenerator.Scales[Mathf.Clamp(acidSettings.scale, 0, 4)];
+            foreach (var row in acidOptionRows)
+            {
+                int selected = row.index();
+                for (int i = 0; i < row.buttons.Length; i++)
+                {
+                    row.buttons[i].style.backgroundColor = i == selected ? SelectedColor() : Raised;
+                    row.buttons[i].style.color = i == selected ? Accent : Ink;
+                }
+            }
+            if (acidGeneratorSummary != null)
+                acidGeneratorSummary.text = "READY / " +
+                    ZPunkAcidPatternGenerator.Bars[Mathf.Clamp(acidSettings.bars, 0, 4)] +
+                    " BARS  /  " + ZPunkAcidPatternGenerator.Divisions[Mathf.Clamp(acidSettings.division, 0, 2)] +
+                    " GRID  /  SEED " + acidSettings.variation + "\n" +
+                    "Monophonic notes, rests, accent and slide. Only this ACID clip will be replaced.";
         }
 
         private void SaveSharedHarmonicSelection(int? newProgression = null)
@@ -2113,7 +2261,19 @@ namespace ZPunk.DAW
             generatorTargetTrack = trackIndex;
             if (song.tracks[trackIndex].kind == TrackKind.Acid)
             {
-                GenerateAcidSequence();
+                // Work from the project's key by default, but do not alter
+                // its shared harmony when exploring acid-only scales.
+                acidSettings.key = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
+                acidSettings.scale = song.sharedProgressionMinor ? 0 : 1;
+                if (clip != null && content != null)
+                {
+                    int currentBars = Mathf.Max(1, (int)(content.lengthTicks / SongData.TicksPerBar4));
+                    for (int index = 0; index < ZPunkAcidPatternGenerator.Bars.Length; index++)
+                        if (ZPunkAcidPatternGenerator.Bars[index] <= currentBars) acidSettings.bars = index;
+                }
+                acidSettings.variation++;
+                RefreshGeneratorPanel();
+                generatorPanel.style.display = DisplayStyle.Flex;
                 return;
             }
             // All generator tracks read the SAME saved project-wide progression/key.
@@ -2147,6 +2307,18 @@ namespace ZPunk.DAW
                 "Creates a new clip. No changes until GENERATE is tapped." :
                 "REPLACES all notes in " + clip.name + ". Cancel leaves it unchanged." +
                 (string.IsNullOrEmpty(content?.generatedTag) ? "" : "\nCURRENT: " + content.generatedTag);
+            bool acidGenerator = song.tracks[generatorTargetTrack].kind == TrackKind.Acid;
+            if (normalGeneratorSections != null)
+                normalGeneratorSections.style.display = acidGenerator ? DisplayStyle.None : DisplayStyle.Flex;
+            if (acidGeneratorSections != null)
+                acidGeneratorSections.style.display = acidGenerator ? DisplayStyle.Flex : DisplayStyle.None;
+            if (generatorApplyButton != null)
+                generatorApplyButton.text = acidGenerator ? "GENERATE ACID" : "GENERATE";
+            if (acidGenerator)
+            {
+                RefreshAcidGeneratorPanel();
+                return;
+            }
             generatorGenres.Clear();
             for (int g = 0; g < ZPunkGenreGenerator.Genres.Length; g++)
             {
@@ -2340,41 +2512,12 @@ namespace ZPunk.DAW
             }
             return true;
         }
-        // 303 patterns are intentionally monophonic, use rests and octave jumps,
-        // and store ACCENT/SLIDE as explicit note modifiers. Each GEN makes a
-        // fresh variation without altering the six standard genre/style presets.
+        // Applies only after the user confirms the ACID parameter sheet.
         private void GenerateAcidSequence()
         {
-            const int bars = 2;
+            int bars = ZPunkAcidPatternGenerator.Bars[Mathf.Clamp(acidSettings.bars, 0, 4)];
             if (!PrepareGeneratorContent(bars) || content == null) return;
-            var random = new System.Random(unchecked(Environment.TickCount ^
-                (int)(Time.realtimeSinceStartup * 1000f)));
-            int tonic = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
-            bool minor = song.sharedProgressionMinor;
-            int[] degrees = minor ? new[] { 0, 3, 5, 7, 10 } : new[] { 0, 2, 5, 7, 9 };
-            int root = 36 + tonic; // Low C2 + transpose, matches techno bass octaves.
-            long stepTicks = SongData.TicksPerSixteenth;
-            content.kind = ClipKind.Midi;
-            content.generatedTag = "ACID / 303 / 2 BARS";
-            content.lengthTicks = bars * SongData.TicksPerBar4;
-            content.notes = new List<NoteEvent>();
-            content.drums = new List<DrumEvent>();
-            content.chops = new List<ChopEvent>();
-            for (int step = 0; step < bars * 16; step++)
-            {
-                if (random.NextDouble() < (step % 4 == 0 ? .08 : .28)) continue;
-                int degree = random.NextDouble() < .56 ? 0 : random.Next(degrees.Length);
-                int octave = random.NextDouble() < .18 ? 12 : 0;
-                int pitch = Mathf.Clamp(root + degrees[degree] + octave, 0, 127);
-                bool slide = step > 0 && random.NextDouble() < .27;
-                bool accent = random.NextDouble() < (step % 4 == 0 ? .7 : .30);
-                content.notes.Add(new NoteEvent {
-                    pitch = pitch, startTick = step * stepTicks,
-                    durationTicks = stepTicks,
-                    velocity = accent ? 118 : 92,
-                    accent = accent, slide = slide
-                });
-            }
+            ZPunkAcidPatternGenerator.Fill(content, acidSettings);
             FinishGeneratorContent();
         }
 
@@ -2452,6 +2595,13 @@ namespace ZPunk.DAW
 
         private void ApplyGenerator()
         {
+            if (song != null && song.tracks != null && generatorTargetTrack >= 0 &&
+                generatorTargetTrack < song.tracks.Count &&
+                song.tracks[generatorTargetTrack].kind == TrackKind.Acid)
+            {
+                GenerateAcidSequence();
+                return;
+            }
             if (!PrepareGeneratorContent(generatorBars)) return;
             TrackKind kind = song.tracks[trackIndex].kind;
             bool chords = kind == TrackKind.Synth && generatorSynthChords;
@@ -4817,7 +4967,7 @@ namespace ZPunk.DAW
         {
             if (!ready || trackScope == null || root == null || root.panel == null ||
                 root.resolvedStyle.display == DisplayStyle.None || showingSampler ||
-                song == null || song.tracks == null || trackIndex < 1 || trackIndex > 4 ||
+                song == null || song.tracks == null || trackIndex < 1 || trackIndex > 5 ||
                 Time.unscaledTime < nextTrackScopeSample) return;
             nextTrackScopeSample = Time.unscaledTime + 1f / 24f;
             if (songTransport == null) songTransport = FindObjectOfType<ZPunkSongTransport>();

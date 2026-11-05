@@ -31,6 +31,15 @@ namespace ZPunk.DAW
         private Button acidWave, acidDelayRateButton;
         private bool acidDialDragging;
         private Vector2 acidDialScrollLock;
+        // Capture the gesture on the SOUND root during trickle-down, BEFORE
+        // ScrollView's touch manipulator sees it. Capturing from the dial face
+        // during bubbling was too late on iOS/Android.
+        private readonly Dictionary<VisualElement, AcidDial> acidDialTargets =
+            new Dictionary<VisualElement, AcidDial>();
+        private AcidDial activeAcidDial;
+        private int activeAcidPointer = -1;
+        private float acidStartY, acidStartValue;
+        private float acidScrollLockUntil;
         private readonly List<AcidDial> acidDials = new List<AcidDial>();
         private sealed class AcidDial
         {
@@ -220,6 +229,11 @@ namespace ZPunk.DAW
             ReleaseAllAuditionNotes();
             root = host;
             if (root == null) return;
+            root.UnregisterCallback<PointerDownEvent>(OnAcidDialDown, TrickleDown.TrickleDown);
+            root.UnregisterCallback<PointerMoveEvent>(OnAcidDialMove, TrickleDown.TrickleDown);
+            root.UnregisterCallback<PointerUpEvent>(OnAcidDialUp, TrickleDown.TrickleDown);
+            root.UnregisterCallback<PointerCancelEvent>(OnAcidDialCancel, TrickleDown.TrickleDown);
+            root.UnregisterCallback<PointerCaptureOutEvent>(OnAcidDialCaptureLost);
             root.UnregisterCallback<PointerDownEvent>(OnKnobDown, TrickleDown.TrickleDown);
             root.UnregisterCallback<PointerMoveEvent>(OnKnobMove, TrickleDown.TrickleDown);
             root.UnregisterCallback<PointerUpEvent>(OnKnobUp, TrickleDown.TrickleDown);
@@ -232,7 +246,8 @@ namespace ZPunk.DAW
             presetFilterButtons.Clear();
             presetFilter = "ALL";
             macros.Clear(); switches.Clear(); moduleCells.Clear();
-            selectors.Clear(); knobTargets.Clear(); acidDials.Clear();
+            selectors.Clear(); knobTargets.Clear(); acidDials.Clear(); acidDialTargets.Clear();
+            activeAcidDial = null; activeAcidPointer = -1; acidScrollLockUntil = 0f;
             acidDelayRateButton = null;
             acidDialDragging = false;
             auditionKeys.Clear();
@@ -244,6 +259,11 @@ namespace ZPunk.DAW
             motionCaption = null;
             lastModuleWidth = -1f;
             dragging = null; dragPointer = -1;
+            root.RegisterCallback<PointerDownEvent>(OnAcidDialDown, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerMoveEvent>(OnAcidDialMove, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerUpEvent>(OnAcidDialUp, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerCancelEvent>(OnAcidDialCancel, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerCaptureOutEvent>(OnAcidDialCaptureLost);
             root.RegisterCallback<PointerDownEvent>(OnKnobDown, TrickleDown.TrickleDown);
             root.RegisterCallback<PointerMoveEvent>(OnKnobMove, TrickleDown.TrickleDown);
             root.RegisterCallback<PointerUpEvent>(OnKnobUp, TrickleDown.TrickleDown);
@@ -581,48 +601,83 @@ namespace ZPunk.DAW
             var dial = new AcidDial { marker = marker, value = value, get = get, set = set,
                 label = caption };
             acidDials.Add(dial);
-            float initial = 0, startY = 0;
-            Vector2 originalScroll = Vector2.zero;
-            int capturedPointer = -1;
-            face.RegisterCallback<PointerDownEvent>(evt =>
-            {
-                if (evt.button != 0) return;
-                var state = CurrentAcidState();
-                if (state == null) return;
-                initial = get(state); startY = evt.position.y;
-                originalScroll = pageScroll != null ? pageScroll.scrollOffset : Vector2.zero;
-                acidDialScrollLock = originalScroll;
-                acidDialDragging = true;
-                capturedPointer = evt.pointerId;
-                face.CapturePointer(evt.pointerId);
-                evt.StopPropagation();
-            });
-            face.RegisterCallback<PointerMoveEvent>(evt =>
-            {
-                if (capturedPointer != evt.pointerId || !face.HasPointerCapture(evt.pointerId)) return;
-                float amount = Mathf.Clamp01(initial + (startY - evt.position.y) / 170f);
-                ChangeAcidState(state => set(state, amount));
-                // Resist touch-driven ScrollView drift while adjusting any dial.
-                if (pageScroll != null) pageScroll.scrollOffset = originalScroll;
-                evt.StopPropagation();
-            });
-            face.RegisterCallback<PointerUpEvent>(evt =>
-            {
-                if (capturedPointer != evt.pointerId) return;
-                capturedPointer = -1;
-                acidDialDragging = false;
-                if (face.HasPointerCapture(evt.pointerId)) face.ReleasePointer(evt.pointerId);
-                if (pageScroll != null) pageScroll.scrollOffset = originalScroll;
-                evt.StopPropagation();
-            });
-            face.RegisterCallback<PointerCancelEvent>(evt => { capturedPointer = -1; acidDialDragging = false; });
-            face.RegisterCallback<PointerCaptureOutEvent>(evt => { capturedPointer = -1; acidDialDragging = false; });
+            // Touches are intercepted at the root in trickle-down; see
+            // OnAcidDialDown. Do not register bubbling handlers here, because
+            // ScrollView can have already begun dragging by that point.
+            acidDialTargets[face] = dial;
             tile.Add(face);
             var label = T(FormatKnobLabel(caption), 11, dialColor);
             label.style.unityTextAlign = TextAnchor.MiddleCenter;
             label.style.marginTop = 6;
             tile.Add(label);
             grid.Add(tile);
+        }
+
+        private AcidDial FindAcidDial(VisualElement element)
+        {
+            while (element != null && element != root)
+            {
+                if (acidDialTargets.TryGetValue(element, out var dial)) return dial;
+                element = element.parent;
+            }
+            return null;
+        }
+
+        private void OnAcidDialDown(PointerDownEvent evt)
+        {
+            if (evt.button != 0 || activeAcidPointer >= 0 || selected != TrackKind.Acid) return;
+            var dial = FindAcidDial(evt.target as VisualElement);
+            if (dial == null) return;
+            var state = CurrentAcidState();
+            if (state == null) return;
+            activeAcidDial = dial;
+            activeAcidPointer = evt.pointerId;
+            acidStartValue = dial.get(state);
+            acidStartY = evt.position.y;
+            acidDialScrollLock = pageScroll != null ? pageScroll.scrollOffset : Vector2.zero;
+            acidDialDragging = true;
+            root.CapturePointer(evt.pointerId);
+            evt.StopImmediatePropagation();
+        }
+
+        private void OnAcidDialMove(PointerMoveEvent evt)
+        {
+            if (activeAcidDial == null || evt.pointerId != activeAcidPointer) return;
+            float amount = Mathf.Clamp01(acidStartValue + (acidStartY - evt.position.y) / 170f);
+            var dial = activeAcidDial;
+            ChangeAcidState(state => dial.set(state, amount));
+            if (pageScroll != null) pageScroll.scrollOffset = acidDialScrollLock;
+            evt.StopImmediatePropagation();
+        }
+
+        private void EndAcidDial(int pointerId)
+        {
+            if (pointerId != activeAcidPointer) return;
+            acidDialDragging = false;
+            activeAcidDial = null;
+            activeAcidPointer = -1;
+            acidScrollLockUntil = Time.unscaledTime + .18f;
+            if (pageScroll != null) pageScroll.scrollOffset = acidDialScrollLock;
+            if (root != null && root.HasPointerCapture(pointerId)) root.ReleasePointer(pointerId);
+        }
+
+        private void OnAcidDialUp(PointerUpEvent evt)
+        {
+            if (evt.pointerId != activeAcidPointer) return;
+            EndAcidDial(evt.pointerId);
+            evt.StopImmediatePropagation();
+        }
+
+        private void OnAcidDialCancel(PointerCancelEvent evt)
+        {
+            if (evt.pointerId != activeAcidPointer) return;
+            EndAcidDial(evt.pointerId);
+            evt.StopImmediatePropagation();
+        }
+
+        private void OnAcidDialCaptureLost(PointerCaptureOutEvent evt)
+        {
+            if (evt.pointerId == activeAcidPointer) EndAcidDial(evt.pointerId);
         }
 
         private void RefreshAcidPanel()
@@ -2034,7 +2089,8 @@ namespace ZPunk.DAW
             FindServices();
             if (root == null || root.resolvedStyle.display == DisplayStyle.None) return;
             if (dragging != null || Time.unscaledTime < scrollLockUntil) LockScroll();
-            if (acidDialDragging && pageScroll != null) pageScroll.scrollOffset = acidDialScrollLock;
+            if ((acidDialDragging || Time.unscaledTime < acidScrollLockUntil) && pageScroll != null)
+                pageScroll.scrollOffset = acidDialScrollLock;
             if (Time.unscaledTime < nextRefresh) return;
             nextRefresh = Time.unscaledTime + .25f;
             Refresh();
