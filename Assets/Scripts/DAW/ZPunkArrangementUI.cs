@@ -525,7 +525,7 @@ namespace ZPunk.DAW
             banks.style.flexShrink = 0;
             banks.style.marginTop = 7 * uiScale;
             banks.style.marginBottom = 9 * uiScale;
-            AddFilterBank(banks, "BASS  SYNTH  PADS  CHOPS", false, new Color(.29f, .84f, .72f));
+            AddFilterBank(banks, "MUSIC", false, new Color(.29f, .84f, .72f));
             AddFilterBank(banks, "DRUMS", true, new Color(.94f, .62f, .31f));
             arrangementPageScroll.Add(banks);
             BuildArrangementPerformanceFx();

@@ -8,9 +8,9 @@ namespace ZPunk.DAW
 {
     /// <summary>
     /// Two independent, post-instrument filter pairs. MUSIC affects Helm's
-    /// Bass/Synth/Pads mixer outputs and CHOPS AudioSource voices; DRUMS affects
-    /// drum AudioSource voices only. Native Helm patch/filter parameters are
-    /// deliberately untouched. No filtering is applied to the final master.
+    /// Bass/Synth/Pads mixer outputs and CHOPS/ACID AudioSource voices;
+    /// DRUMS affects drum AudioSource voices only. Native Helm patch/filter
+    /// parameters are deliberately untouched. No filtering is applied to the master.
     /// </summary>
     public sealed class ZPunkArrangementFilters : MonoBehaviour
     {
@@ -19,8 +19,8 @@ namespace ZPunk.DAW
         private const string Pref = "ZPunk.2.0.7.ArrangementFilter.";
         private static readonly List<AudioLowPassFilter> drumLows = new List<AudioLowPassFilter>();
         private static readonly List<AudioHighPassFilter> drumHighs = new List<AudioHighPassFilter>();
-        private static readonly List<AudioLowPassFilter> chopLows = new List<AudioLowPassFilter>();
-        private static readonly List<AudioHighPassFilter> chopHighs = new List<AudioHighPassFilter>();
+        private static readonly List<AudioLowPassFilter> musicSourceLows = new List<AudioLowPassFilter>();
+        private static readonly List<AudioHighPassFilter> musicSourceHighs = new List<AudioHighPassFilter>();
         private static readonly HashSet<AudioMixer> musicMixers = new HashSet<AudioMixer>();
         private static bool loaded;
         private static readonly float[] values = { 1f, 0f, 1f, 0f }; // MUSIC LP/HP, DRUM LP/HP
@@ -64,8 +64,8 @@ namespace ZPunk.DAW
             return hz >= 1000f ? (hz / 1000f).ToString("0.#") + "k" : hz.ToString("0") + "Hz";
         }
 
-        /// <summary>Called on creation of drum/chop voices; preserves their existing
-        /// output mixer routing and source gains. Safe to call repeatedly.</summary>
+        /// <summary>Called on creation of drum/chop/ACID voices; preserves their
+        /// existing output mixer routing and source gains. Safe to call repeatedly.</summary>
         public static void RegisterVoice(AudioSource source, bool drums)
         {
             if (source == null) return;
@@ -74,8 +74,8 @@ namespace ZPunk.DAW
             if (lp == null) lp = source.gameObject.AddComponent<AudioLowPassFilter>();
             var hp = source.GetComponent<AudioHighPassFilter>();
             if (hp == null) hp = source.gameObject.AddComponent<AudioHighPassFilter>();
-            var lows = drums ? drumLows : chopLows;
-            var highs = drums ? drumHighs : chopHighs;
+            var lows = drums ? drumLows : musicSourceLows;
+            var highs = drums ? drumHighs : musicSourceHighs;
             if (!lows.Contains(lp)) lows.Add(lp);
             if (!highs.Contains(hp)) highs.Add(hp);
             SetSourcePair(lp, hp, drums);
@@ -131,7 +131,7 @@ namespace ZPunk.DAW
         private static void Apply()
         {
             EnsureLoaded();
-            ApplyList(chopLows, chopHighs, false);
+            ApplyList(musicSourceLows, musicSourceHighs, false);
             ApplyList(drumLows, drumHighs, true);
             foreach (AudioMixer mixer in musicMixers)
             {

@@ -160,6 +160,11 @@ namespace ZPunk.DAW
             // The silent clip is only a DSP clock. The callback writes all audio.
             source.clip = AudioClip.Create("ACID DSP clock", 1024, 2, sampleRate, false);
             source.volume = 1f;
+            // ACID is a music instrument: apply the same ARRANGEMENT low/high
+            // pass filters used by Bass, Synth, Pads and Chops. Register after
+            // this OnAudioFilterRead voice so Unity filters its rendered output.
+            // Do this before Play() to avoid an unfiltered first audio buffer.
+            ZPunkArrangementFilters.RegisterVoice(source, false);
             source.Play();
         }
 
