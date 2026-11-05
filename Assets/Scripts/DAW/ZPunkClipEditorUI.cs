@@ -1400,7 +1400,7 @@ namespace ZPunk.DAW
                 v => Mathf.RoundToInt(v * 100f) + "%");
             AddDrumKnob(controls, "DECAY", .04f, 1f, 24, () => shape.decay,
                 v => SetDrumShape(d => d.decay = v),
-                v => Mathf.RoundToInt(v * 100f) + "%");
+                v => DrumDecayKnobLabel(v));
             AddDrumKnob(controls, "PAN", -1f, 1f, 20, () => shape.pan,
                 v => SetDrumShape(d => d.pan = v),
                 v => Mathf.Abs(v) < .001f ? "C" :
@@ -1424,6 +1424,17 @@ namespace ZPunk.DAW
                     AuditionDrumDesigner();
                 },
                 v => Mathf.RoundToInt(v * 100f) + "%", true);
+        }
+
+        private string DrumDecayKnobLabel(float amount)
+        {
+            if (amount >= .9999f) return "FULL";
+            FindDrumEngine();
+            float seconds = drumEngine != null
+                ? drumEngine.GetDrumDecaySeconds(drumDesignerLane + 1, amount) : -1f;
+            if (seconds <= 0f) return "PCM?";
+            return seconds < 1f ? Mathf.RoundToInt(seconds * 1000f) + "ms"
+                : seconds.ToString("0.0") + "s";
         }
 
         private void OpenDrumDesigner()

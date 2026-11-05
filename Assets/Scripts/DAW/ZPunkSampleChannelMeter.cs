@@ -30,6 +30,13 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
     private int gateDelayIndex;
     private const int GateDelaySamples = 8192;
     private volatile float hitSeconds = 0.25f;
+    // Audible boundaries in playback seconds, excluding silence padding.
+    private volatile float audibleStartSeconds;
+    private volatile float audibleEndSeconds = .25f;
+    private volatile float audibleOnsetThreshold = .00005f;
+    // Only increment the decay clock once the incoming drum audio really begins.
+    // The old clock included pre-scheduled silence and could expire early.
+    private bool audibleOnsetReached;
     private int sampleRate = 48000;
     private double samplePosition;
     private float filterL, filterR;
@@ -59,13 +66,30 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         }
     }
 
-    public void PrepareHit(float durationSeconds)
+    /// <summary>
+    /// Decay is a direct fraction of the sample's audible duration after
+    /// silence padding has been excluded. No logarithmic remapping.
+    /// At FULL, the sample is unmodified (including any source padding).
+    /// </summary>
+    public static float DecayTimeSeconds(float audibleSeconds, float amount)
     {
-        // Voices are stopped and reused before this reset; no envelopes are
-        // shared across voices or lanes. The audio thread owns filter history.
-        hitSeconds = Mathf.Max(0.015f, durationSeconds);
+        return Math.Max(.001f, audibleSeconds) * Math.Max(0f, Math.Min(1f, amount));
+    }
+
+    public void PrepareHit(float durationSeconds, float audibleStart = 0f,
+        float audibleEnd = -1f, float onsetThreshold = .00005f)
+    {
+        // Voices are stopped and reused before reset; clip analysis is done
+        // on the main thread and never from the audio callback.
+        hitSeconds = Mathf.Max(.001f, durationSeconds);
+        audibleStartSeconds = Mathf.Clamp(audibleStart, 0f, hitSeconds - .00001f);
+        audibleEndSeconds = audibleEnd > 0f
+            ? Mathf.Clamp(audibleEnd, audibleStartSeconds + .00001f, hitSeconds)
+            : hitSeconds;
+        audibleOnsetThreshold = Mathf.Max(.00001f, onsetThreshold);
         sampleRate = Mathf.Max(8000, AudioSettings.outputSampleRate);
         samplePosition = 0;
+        audibleOnsetReached = false;
         filterL = filterR = compressorEnvelope = 0f;
         crushCounter = 0;
         crushLeft = crushRight = 0f;
@@ -123,28 +147,38 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
         float alpha = 1f - (float)Math.Exp(-2.0 * Math.PI * cutoff / sampleRate);
         float boost = Math.Max(0f, (localTone - .5f) * .7f);
         float compressedRelease = (float)Math.Exp(-1.0 / (Math.Max(8000, sampleRate) * .06));
-        // DECAY is a sample-length control, not a continuously falling volume
-        // envelope. Preserve the original attack and body, then fade just the
-        // end of the requested portion. At 100% the signal is fully untouched.
-        // Calculate the boundary once per callback (no audio-thread allocation).
+        // Silent padding is removed from the LENGTH used by DECAY. The audio
+        // itself is never moved or truncated, and FULL always bypasses decay.
+        // We start the timer at the actual incoming audio onset, not PrepareHit:
+        // scheduled voices can sit idle for several audio buffers before PLAY.
         bool shortenHit = localDecay < .9999f;
-        double endFrame = seconds * sampleRate * localDecay;
-        double fadeFrames = shortenHit ? Math.Min(
-            sampleRate * .008, // At most an 8 ms click-free tail.
-            Math.Min(endFrame * .12, Math.Max(sampleRate * .0015,
-                seconds * sampleRate * (1.0 - localDecay) * 1.5))) : 0.0;
-        fadeFrames = Math.Max(1.0, fadeFrames);
+        double audibleSeconds = Math.Max(.00001,
+            audibleEndSeconds - audibleStartSeconds);
+        double endFrame = DecayTimeSeconds((float)audibleSeconds, localDecay) * sampleRate;
+        double fadeFrames = Math.Max(1.0, Math.Min(sampleRate * .008,
+            Math.Min(audibleSeconds * sampleRate * .08,
+                endFrame * .35)));
+        float onsetThreshold = audibleOnsetThreshold;
         for (int frame = 0; frame < data.Length / channels; ++frame)
         {
+            if (!audibleOnsetReached)
+            {
+                int frameOffset = frame * channels;
+                for (int channel = 0; channel < channels; ++channel)
+                    if (Math.Abs(data[frameOffset + channel]) >= onsetThreshold)
+                    {
+                        audibleOnsetReached = true;
+                        break;
+                    }
+            }
             float env = 1f;
-            if (shortenHit)
+            if (shortenHit && audibleOnsetReached)
             {
                 double remaining = endFrame - samplePosition;
                 if (remaining <= 0.0) env = 0f;
                 else if (remaining < fadeFrames)
                 {
-                    // Smoothstep reaches zero without the audible click of an
-                    // abrupt cut; samples before the tail keep their full level.
+                    // Short, smooth anti-click ramp right at the audible cut.
                     float t = (float)(remaining / fadeFrames);
                     env = t * t * (3f - 2f * t);
                 }
@@ -159,7 +193,7 @@ public sealed class ZPunkSampleChannelMeter : MonoBehaviour
             float gateEnvelope = gated ? (samplePosition < gateLength - gateFade ? 1f :
                 samplePosition >= gateLength ? 0f :
                 (float)((gateLength - samplePosition) / gateFade)) : 0f;
-            samplePosition++;
+            if (audibleOnsetReached) samplePosition++;
             bool crushCapture = crush && crushCounter <= 0;
             if (crushCapture) crushCounter = crushStride;
             for (int channel = 0; channel < channels; ++channel)

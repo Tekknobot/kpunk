@@ -53,6 +53,137 @@ public class KMusicDrumSequencer : MonoBehaviour
     // When routeDrumsToMixer is true, we use per-drum AudioSource voice pools (for mixer routing + meters).
     private readonly Dictionary<int, List<AudioSource>> _drumVoicePools = new();
     private readonly DrumShapeData[] _dawDrumShapes = new DrumShapeData[8];
+    // Each sample can contain silence before the attack, after the tail, or
+    // both. Decay must cover the region where the drum actually makes sound,
+    // not the total WAV/AudioClip length. Analyze PCM once per kit/clip on the
+    // main thread; never inspect PCM inside OnAudioFilterRead.
+    private struct DrumAudibleRegion
+    {
+        public float startSeconds;
+        public float endSeconds;
+        public float onsetThreshold;
+        public bool analyzed;
+        public float DurationSeconds => Mathf.Max(.001f, endSeconds - startSeconds);
+    }
+
+    private readonly Dictionary<AudioClip, DrumAudibleRegion> _drumAudibleRegionCache = new();
+
+    private DrumAudibleRegion GetDrumAudibleRegion(AudioClip clip)
+    {
+        if (clip == null) return default;
+        if (_drumAudibleRegionCache.TryGetValue(clip, out var existing)) return existing;
+
+        float full = Mathf.Max(.001f, clip.length);
+        var region = new DrumAudibleRegion
+        {
+            startSeconds = 0f,
+            endSeconds = full,
+            onsetThreshold = .00005f,
+            analyzed = false
+        };
+        // An unloaded clip can become available after this call. Don't cache
+        // the fallback until it is loaded, otherwise DECAY stays wrong forever.
+        if (clip.loadState != AudioDataLoadState.Loaded) return region;
+
+        // Unity GetData cannot read Compressed In Memory or Streaming clips.
+        // This used to silently assign their entire padded file length to DECAY.
+        if (clip.loadType != AudioClipLoadType.DecompressOnLoad ||
+            clip.samples <= 0 || clip.frequency <= 0 ||
+            clip.channels <= 0 || clip.channels > 8 || clip.length > 15f)
+        {
+            WarnUnreadableDrumClip(clip);
+            _drumAudibleRegionCache[clip] = region;
+            return region;
+        }
+
+        try
+        {
+            // Scan imported PCM on the main thread, once per kit/clip.
+            // 128-frame windows allow accurate detection of short hats.
+            const int blockFrames = 128;
+            int blocks = (clip.samples + blockFrames - 1) / blockFrames;
+            int channels = clip.channels;
+            var energy = new float[blocks];
+            var buffer = new float[blockFrames * channels];
+            float strongest = 0f;
+            bool readable = true;
+            for (int block = 0; block < blocks; ++block)
+            {
+                int firstFrame = block * blockFrames;
+                int frames = Mathf.Min(blockFrames, clip.samples - firstFrame);
+                if (!clip.GetData(buffer, firstFrame)) { readable = false; break; }
+                double squared = 0d;
+                int count = frames * channels;
+                for (int i = 0; i < count; ++i)
+                    squared += (double)buffer[i] * buffer[i];
+                float rms = (float)Math.Sqrt(squared / Math.Max(1, count));
+                energy[block] = rms;
+                if (rms > strongest) strongest = rms;
+            }
+
+            // Failed extraction and zero-filled data are NOT a successful
+            // silence measurement. Keep the fallback clearly identified.
+            if (readable && strongest > .00001f)
+            {
+                float threshold = Mathf.Max(.00001f, strongest * .003f);
+                int first = -1, last = -1;
+                for (int block = 0; block < blocks; ++block)
+                {
+                    if (energy[block] < threshold) continue;
+                    if (first < 0) first = block;
+                    last = block;
+                }
+                if (first >= 0)
+                {
+                    // Only one window of tolerance; trailing silence is
+                    // excluded rather than counted as part of the drum tail.
+                    int startFrame = Mathf.Max(0, (first - 1) * blockFrames);
+                    int endFrame = Mathf.Min(clip.samples, (last + 2) * blockFrames);
+                    region.startSeconds = startFrame / (float)clip.frequency;
+                    region.endSeconds = endFrame / (float)clip.frequency;
+                    // On the audio thread, begin counting at the real audible
+                    // onset, NOT while the sample is waiting to be scheduled.
+                    region.onsetThreshold = Mathf.Max(.00003f, strongest * .003f);
+                    region.analyzed = true;
+                    if (verbose)
+                        Debug.Log($"[ZPUNK DECAY] {clip.name}: file={full * 1000f:0}ms " +
+                            $"audible={region.DurationSeconds * 1000f:0}ms " +
+                            $"(start={region.startSeconds * 1000f:0}ms, " +
+                            $"end={region.endSeconds * 1000f:0}ms)");
+                }
+            }
+            if (!region.analyzed) WarnUnreadableDrumClip(clip);
+        }
+        catch (Exception)
+        {
+            WarnUnreadableDrumClip(clip);
+        }
+        _drumAudibleRegionCache[clip] = region;
+        return region;
+    }
+
+    private static void WarnUnreadableDrumClip(AudioClip clip)
+    {
+        Debug.LogWarning($"[ZPUNK DECAY] Cannot analyze audible duration of '{clip.name}' " +
+            $"(LoadType={clip.loadType}). DECAY is temporarily using full length. " +
+            "In the Unity Editor, run Tools > ZPUNK > Drum Designer > Prepare Sample PCM for Decay, " +
+            "then re-enter Play mode or rebuild the app.");
+    }
+
+    // Show actual audible duration affected by DECAY, excluding file padding.
+    // Drum IDs are 1-based in the playback engine.
+    public float GetDrumDecaySeconds(int drumId, float amount)
+    {
+        if (!_clipByDrumId.TryGetValue(drumId, out AudioClip clip) || clip == null)
+            return -1f;
+        var shape = drumId >= 1 && drumId <= 8 ? _dawDrumShapes[drumId - 1] : null;
+        float pitch = shape == null ? 1f : Mathf.Pow(2f,
+            Mathf.Clamp(shape.tune, -12f, 12f) / 12f);
+        var audible = GetDrumAudibleRegion(clip);
+        if (!audible.analyzed) return -1f; // UI shows PCM? instead of a misleading millisecond value.
+        float audibleSeconds = audible.DurationSeconds / Mathf.Max(.1f, pitch);
+        return ZPunkSampleChannelMeter.DecayTimeSeconds(audibleSeconds, amount);
+    }
     // Club low-end: isolated rumble voices cannot steal or delay the dry kick.
     // Defaults off for every older project. Rumble follows the kick bus fader/mute.
     public float DawKickRumble { get; set; }
@@ -230,6 +361,7 @@ public class KMusicDrumSequencer : MonoBehaviour
             for (int lane = 1; lane <= 8; lane++)
             {
                 if (!_clipByDrumId.TryGetValue(lane, out AudioClip clip) || clip == null) continue;
+                GetDrumAudibleRegion(clip); // warm PCM analysis before lookahead
                 var hits = new List<long>();
                 if (sampleEvents != null)
                     foreach (var e in sampleEvents)
@@ -563,7 +695,14 @@ public class KMusicDrumSequencer : MonoBehaviour
         var scheduledShape = _dawDrumShapes[drumId - 1];
         float nominalPitch = scheduledShape == null ? 1f : Mathf.Pow(2f,
             Mathf.Clamp(scheduledShape.tune, -12f, 12f) / 12f);
-        if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, nominalPitch));
+        if (meter != null)
+        {
+            var audible = GetDrumAudibleRegion(clip);
+            meter.PrepareHit(clip.length / Mathf.Max(.1f, nominalPitch),
+                audible.startSeconds / Mathf.Max(.1f, nominalPitch),
+                audible.endSeconds / Mathf.Max(.1f, nominalPitch),
+                audible.onsetThreshold);
+        }
         var pitchEnvelope = src.GetComponent<ZPunkDrumPitchEnvelope>();
         if (pitchEnvelope != null) pitchEnvelope.Arm(dspTime);
         src.PlayScheduled(dspTime);
@@ -853,7 +992,14 @@ public class KMusicDrumSequencer : MonoBehaviour
         var scheduledShape = _dawDrumShapes[drumId - 1];
         float nominalPitch = scheduledShape == null ? 1f : Mathf.Pow(2f,
             Mathf.Clamp(scheduledShape.tune, -12f, 12f) / 12f);
-        if (meter != null) meter.PrepareHit(clip.length / Mathf.Max(.1f, nominalPitch));
+        if (meter != null)
+        {
+            var audible = GetDrumAudibleRegion(clip);
+            meter.PrepareHit(clip.length / Mathf.Max(.1f, nominalPitch),
+                audible.startSeconds / Mathf.Max(.1f, nominalPitch),
+                audible.endSeconds / Mathf.Max(.1f, nominalPitch),
+                audible.onsetThreshold);
+        }
         var pitchEnvelope = src.GetComponent<ZPunkDrumPitchEnvelope>();
         if (pitchEnvelope != null) pitchEnvelope.Arm(now);
         src.PlayOneShot(clip, Mathf.Clamp01(velocityScale));
@@ -1875,6 +2021,7 @@ private void ApplySamplePitch()
         _sampler.AllNotesOff();
 
         // Update clip map used by your scheduler
+        _drumAudibleRegionCache.Clear();
         for (int drumId = 1; drumId <= LANES; drumId++)
             _clipByDrumId[drumId] = kit.GetClipByDrumId(drumId);
 
