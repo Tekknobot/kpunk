@@ -38,16 +38,29 @@ namespace ZPunk.DAW
         private int sampleKeyGuideProjectSlot = -1;
         private VisualElement generatorPanel, generatorGenres, generatorStyles, generatorBarsRow, generatorSynthModeRow;
         private VisualElement normalGeneratorSections, acidGeneratorSections;
-        private Label acidKeyLabel, acidGeneratorSummary;
-        private Button generatorApplyButton;
+        private Label acidKeyLabel, acidGeneratorSummary, acidLiveStatus;
+        private VisualElement acidPatternPreview;
+        private Button generatorApplyButton, generatorCancelButton, acidLiveButton;
+        private bool acidLiveEnabled = true, acidAppliedInSession, acidUnappliedChanges;
+        private IVisualElementScheduledItem acidLiveUpdate;
+        // Unity's touch ScrollView can claim a gesture before a child knob's
+        // bubble-phase pointer handlers run. The visible knobs stay in the
+        // scrolling content, but their *pickable* hit targets are transparent
+        // siblings ABOVE the ScrollView, so the pan manipulator never sees a
+        // knob drag. This is the same approach used for MIDI note dragging.
+        private ScrollView acidGeneratorScroll;
+        private VisualElement acidKnobTouchLayer;
+        private readonly List<VisualElement> acidKnobFaces = new List<VisualElement>();
+        private readonly List<VisualElement> acidKnobHitTargets = new List<VisualElement>();
+        private VisualElement acidActiveKnobTarget;
+        private int acidKnobPointerId = -1;
         private readonly ZPunkAcidPatternGenerator.Settings acidSettings =
             new ZPunkAcidPatternGenerator.Settings();
-        private readonly List<AcidOptionRow> acidOptionRows = new List<AcidOptionRow>();
-        private sealed class AcidOptionRow
-        {
-            internal Button[] buttons;
-            internal Func<int> index;
-        }
+        private bool acidSettingsInitialized;
+        private int acidSettingsProjectSlot = -1;
+        // Each control owns its visual refresh, so returning to the sheet never
+        // reconstructs controls (or loses a captured touch/scroll position).
+        private readonly List<Action> acidControlPainters = new List<Action>();
         private VisualElement generatorHistoryRows;
         private Label generatorHistoryLabel;
         private Button generatorQuickButton, generatorMelodyButton, generatorChordsButton;
@@ -1865,7 +1878,24 @@ namespace ZPunk.DAW
             body.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             body.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             body.contentContainer.style.paddingBottom = 14;
+            acidGeneratorScroll = body;
+            body.verticalScroller.valueChanged += _ => SyncAcidKnobTouchTargets();
+            body.RegisterCallback<GeometryChangedEvent>(_ => SyncAcidKnobTouchTargets());
+            generatorPanel.RegisterCallback<GeometryChangedEvent>(_ => SyncAcidKnobTouchTargets());
             generatorPanel.Add(body);
+
+            // Keep the hit targets OUTSIDE of the ScrollView's event hierarchy.
+            // The layer itself is unpickable; only the three knob-sized targets
+            // receive touches, leaving every other part of the sheet scrollable.
+            acidKnobTouchLayer = new VisualElement { name = "ZPunkAcidKnobTouchOverlay" };
+            acidKnobTouchLayer.style.position = Position.Absolute;
+            acidKnobTouchLayer.style.left = 0;
+            acidKnobTouchLayer.style.right = 0;
+            acidKnobTouchLayer.style.top = 0;
+            acidKnobTouchLayer.style.bottom = 0;
+            acidKnobTouchLayer.pickingMode = PickingMode.Ignore;
+            acidKnobTouchLayer.style.display = DisplayStyle.None;
+            generatorPanel.Add(acidKnobTouchLayer);
 
             generatorHeading = Txt("GENERATE / DRUMS",16,Ink);
             generatorHeading.style.unityFontStyleAndWeight = FontStyle.Bold;
@@ -2073,9 +2103,19 @@ namespace ZPunk.DAW
             actionRow.style.flexDirection = FlexDirection.Row;
             actionRow.style.height = 52;
             actionRow.style.flexShrink = 0;
-            var cancel = Btn("CANCEL",CloseGenerator,82);
-            cancel.style.flexGrow = 1;
-            actionRow.Add(cancel);
+            generatorCancelButton = Btn("CANCEL",CloseGenerator,78);
+            generatorCancelButton.style.flexGrow = 1;
+            actionRow.Add(generatorCancelButton);
+            acidLiveButton = Btn("LIVE ON", () =>
+            {
+                acidLiveEnabled = !acidLiveEnabled;
+                if (!acidLiveEnabled && acidLiveUpdate != null) acidLiveUpdate.Pause();
+                if (acidLiveEnabled && acidUnappliedChanges) QueueAcidLiveUpdate();
+                RefreshAcidGeneratorPanel();
+            }, 76);
+            acidLiveButton.style.display = DisplayStyle.None;
+            acidLiveButton.tooltip = "After APPLY, changes automatically rewrite the ACID clip";
+            actionRow.Add(acidLiveButton);
             generatorApplyButton = Btn("GENERATE",ApplyGenerator,109);
             generatorApplyButton.style.backgroundColor = new Color(.12f,.36f,.34f);
             generatorApplyButton.style.color = Accent;
@@ -2087,107 +2127,560 @@ namespace ZPunk.DAW
             root.Add(generatorPanel);
         }
 
+        // Instrument-like ACID pattern designer. No horizontally scrolling rows
+        // of configuration buttons: use compact selectors, touch sliders and knobs.
         private VisualElement BuildAcidGeneratorControls()
         {
-            acidOptionRows.Clear();
+            acidControlPainters.Clear();
+            acidKnobFaces.Clear();
+            acidKnobHitTargets.Clear();
+            if (acidKnobTouchLayer != null) acidKnobTouchLayer.Clear();
             var panel = new VisualElement { name = "ZPunkAcid303GeneratorControls" };
             panel.style.flexDirection = FlexDirection.Column;
-            var subtitle = Txt("303 PATTERN DESIGN  /  NO GENRES", 12, Accent);
+            panel.style.paddingBottom = 5;
+
+            var subtitle = Txt("303 / PATTERN LAB", 13, Accent);
             subtitle.style.unityFontStyleAndWeight = FontStyle.Bold;
-            subtitle.style.marginBottom = 7;
+            subtitle.style.marginBottom = 5;
             panel.Add(subtitle);
-            var keyTitle = Txt("SONG KEY / TONIC", 11, Muted);
-            panel.Add(keyTitle);
-            var keyRow = new VisualElement();
-            keyRow.style.flexDirection = FlexDirection.Row;
-            keyRow.style.height = 47;
-            keyRow.style.alignItems = Align.Center;
-            keyRow.Add(Btn("<", () => { acidSettings.key = (acidSettings.key + 11) % 12; RefreshGeneratorPanel(); }, 42));
-            acidKeyLabel = Txt("A MINOR", 13, Accent);
+            var instruction = Txt("Choose a phrase, shape its movement, then APPLY. LIVE ON updates the clip as you adjust.", 11, Muted);
+            instruction.style.whiteSpace = WhiteSpace.Normal;
+            instruction.style.marginBottom = 10;
+            panel.Add(instruction);
+
+            AddAcidSectionTitle(panel, "TONALITY");
+            var tonicRow = new VisualElement();
+            tonicRow.style.flexDirection = FlexDirection.Row;
+            tonicRow.style.alignItems = Align.Center;
+            tonicRow.style.height = 48;
+            tonicRow.Add(Btn("<", () => ChangeAcidSetting(() => acidSettings.key = (acidSettings.key + 11) % 12), 44));
+            acidKeyLabel = Txt("A / MINOR", 14, Accent);
             acidKeyLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+            acidKeyLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
             acidKeyLabel.style.flexGrow = 1;
-            keyRow.Add(acidKeyLabel);
-            keyRow.Add(Btn(">", () => { acidSettings.key = (acidSettings.key + 1) % 12; RefreshGeneratorPanel(); }, 42));
-            panel.Add(keyRow);
+            tonicRow.Add(acidKeyLabel);
+            tonicRow.Add(Btn(">", () => ChangeAcidSetting(() => acidSettings.key = (acidSettings.key + 1) % 12), 44));
+            panel.Add(tonicRow);
             var useSongKey = Btn("USE SONG KEY", () =>
             {
                 if (song == null) return;
-                acidSettings.key = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
-                acidSettings.scale = song.sharedProgressionMinor ? 0 : 1;
-                RefreshGeneratorPanel();
-            }, 135);
-            useSongKey.style.height = 39;
-            useSongKey.style.marginBottom = 8;
+                ChangeAcidSetting(() =>
+                {
+                    acidSettings.key = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
+                    acidSettings.scale = song.sharedProgressionMinor ? 0 : 1;
+                });
+            }, 136);
+            useSongKey.style.height = 36;
+            useSongKey.style.marginBottom = 5;
             panel.Add(useSongKey);
-
-            AddAcidChoices(panel, "SCALE", ZPunkAcidPatternGenerator.Scales,
+            AddAcidCycler(panel, "SCALE", ZPunkAcidPatternGenerator.Scales,
                 () => acidSettings.scale, value => acidSettings.scale = value);
-            AddAcidChoices(panel, "BARS", new[] { "1", "2", "4", "8", "16" },
-                () => acidSettings.bars, value => acidSettings.bars = value);
-            AddAcidChoices(panel, "ROOT OCTAVE", new[] { "C1", "C2", "C3", "C4" },
+            AddAcidCycler(panel, "ROOT OCTAVE", new[] { "C1", "C2", "C3", "C4" },
                 () => acidSettings.octave - 1, value => acidSettings.octave = value + 1);
-            AddAcidChoices(panel, "OCTAVE RANGE", new[] { "1 OCT", "2 OCT", "3 OCT" },
+            AddAcidCycler(panel, "OCTAVE SPAN", new[] { "1 OCT", "2 OCT", "3 OCT" },
                 () => acidSettings.range, value => acidSettings.range = value);
-            AddAcidChoices(panel, "STEP GRID", ZPunkAcidPatternGenerator.Divisions,
-                () => acidSettings.division, value => acidSettings.division = value);
-            AddAcidChoices(panel, "NOTE DENSITY", new[] { "30%", "45%", "60%", "75%", "90%" },
-                () => acidSettings.density, value => acidSettings.density = value);
-            AddAcidChoices(panel, "ACCENT PROBABILITY", new[] { "OFF", "20%", "35%", "50%", "70%" },
-                () => acidSettings.accent, value => acidSettings.accent = value);
-            AddAcidChoices(panel, "SLIDE PROBABILITY", new[] { "OFF", "15%", "30%", "45%", "60%" },
-                () => acidSettings.slide, value => acidSettings.slide = value);
-            AddAcidChoices(panel, "SWING", new[] { "OFF", "15%", "30%", "45%" },
-                () => acidSettings.swing, value => acidSettings.swing = value);
-            AddAcidChoices(panel, "GATE LENGTH", ZPunkAcidPatternGenerator.Gates,
-                () => acidSettings.gate, value => acidSettings.gate = value);
-            AddAcidChoices(panel, "PHRASE PATTERN", ZPunkAcidPatternGenerator.Motifs,
+
+            AddAcidSectionTitle(panel, "SEQUENCE");
+            AddAcidCycler(panel, "PHRASE", ZPunkAcidPatternGenerator.Motifs,
                 () => acidSettings.motif, value => acidSettings.motif = value);
-            AddAcidChoices(panel, "OCTAVE LEAPS", new[] { "OFF", "15%", "30%", "50%" },
-                () => acidSettings.leap, value => acidSettings.leap = value);
-            AddAcidChoices(panel, "RHYTHMIC EMPHASIS", ZPunkAcidPatternGenerator.Syncopations,
+            AddAcidCycler(panel, "GROOVE", ZPunkAcidPatternGenerator.Syncopations,
                 () => acidSettings.syncopation, value => acidSettings.syncopation = value);
+            AddAcidSegments(panel, "BARS", new[] { "1", "2", "4", "8", "16" },
+                () => acidSettings.bars, value => acidSettings.bars = value);
+            AddAcidSegments(panel, "STEP GRID", ZPunkAcidPatternGenerator.Divisions,
+                () => acidSettings.division, value => acidSettings.division = value);
+
+            AddAcidSectionTitle(panel, "RHYTHM / FEEL");
+            AddAcidSlider(panel, "NOTE DENSITY", new[] { "30%", "45%", "60%", "75%", "90%" },
+                () => acidSettings.density, value => acidSettings.density = value);
+            AddAcidSlider(panel, "SWING", new[] { "OFF", "15%", "30%", "45%" },
+                () => acidSettings.swing, value => acidSettings.swing = value);
+            AddAcidSegments(panel, "GATE", ZPunkAcidPatternGenerator.Gates,
+                () => acidSettings.gate, value => acidSettings.gate = value);
+
+            AddAcidSectionTitle(panel, "303 CHARACTER");
+            var knobs = new VisualElement();
+            knobs.style.flexDirection = FlexDirection.Row;
+            knobs.style.alignItems = Align.Center;
+            knobs.style.justifyContent = Justify.SpaceBetween;
+            AddAcidKnob(knobs, "ACCENT", new[] { "OFF", "20%", "35%", "50%", "70%" },
+                () => acidSettings.accent, value => acidSettings.accent = value);
+            AddAcidKnob(knobs, "SLIDE", new[] { "OFF", "15%", "30%", "45%", "60%" },
+                () => acidSettings.slide, value => acidSettings.slide = value);
+            AddAcidKnob(knobs, "LEAPS", new[] { "OFF", "15%", "30%", "50%" },
+                () => acidSettings.leap, value => acidSettings.leap = value);
+            panel.Add(knobs);
+
             var variation = new VisualElement();
             variation.style.flexDirection = FlexDirection.Row;
             variation.style.alignItems = Align.Center;
-            variation.style.height = 51;
-            var variationTitle = Txt("FRESH VARIATION", 11, Muted);
-            variationTitle.style.flexGrow = 1;
-            variation.Add(variationTitle);
-            variation.Add(Btn("NEW SEED", () => { acidSettings.variation++; RefreshGeneratorPanel(); }, 109));
+            variation.style.height = 49;
+            var variationLabel = Txt("PATTERN VARIATION", 11, Muted);
+            variationLabel.style.flexGrow = 1;
+            variation.Add(variationLabel);
+            variation.Add(Btn("NEW SEED", () => ChangeAcidSetting(() => acidSettings.variation++), 107));
             panel.Add(variation);
-            acidGeneratorSummary = Txt("", 11, Accent);
+
+            AddAcidSectionTitle(panel, "STEP ACTIVITY / FIRST BAR");
+            acidPatternPreview = new VisualElement();
+            acidPatternPreview.style.flexDirection = FlexDirection.Row;
+            acidPatternPreview.style.height = 26;
+            acidPatternPreview.style.marginTop = 5;
+            acidPatternPreview.style.marginBottom = 5;
+            for (int i = 0; i < 16; ++i)
+            {
+                var cell = new VisualElement();
+                cell.style.flexGrow = 1;
+                cell.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                cell.style.height = 19;
+                cell.style.marginRight = 2;
+                cell.style.backgroundColor = Raised;
+                cell.style.borderTopLeftRadius = 3;
+                cell.style.borderTopRightRadius = 3;
+                cell.style.borderBottomLeftRadius = 3;
+                cell.style.borderBottomRightRadius = 3;
+                cell.pickingMode = PickingMode.Ignore;
+                acidPatternPreview.Add(cell);
+            }
+            panel.Add(acidPatternPreview);
+            var legend = Txt("HIT = GREEN   /   ACCENT = ORANGE   /   SLIDE = BLUE", 9, Muted);
+            legend.style.whiteSpace = WhiteSpace.Normal;
+            panel.Add(legend);
+            acidLiveStatus = Txt("APPLY A PATTERN TO START LIVE EDITING", 11, Accent);
+            acidLiveStatus.style.whiteSpace = WhiteSpace.Normal;
+            acidLiveStatus.style.marginTop = 10;
+            panel.Add(acidLiveStatus);
+            acidGeneratorSummary = Txt("", 10, Muted);
             acidGeneratorSummary.style.whiteSpace = WhiteSpace.Normal;
-            acidGeneratorSummary.style.marginTop = 8;
-            acidGeneratorSummary.style.marginBottom = 12;
+            acidGeneratorSummary.style.marginTop = 4;
+            acidGeneratorSummary.style.marginBottom = 9;
             panel.Add(acidGeneratorSummary);
             return panel;
         }
 
-        private void AddAcidChoices(VisualElement panel, string caption, string[] names,
-            Func<int> selection, Action<int> set)
+        private void AddAcidSectionTitle(VisualElement panel, string name)
         {
-            var heading = Txt(caption, 10, Muted);
-            heading.style.marginTop = 7;
-            panel.Add(heading);
-            var scroll = new ScrollView(ScrollViewMode.Horizontal);
-            scroll.style.height = 47;
-            scroll.style.flexShrink = 0;
-            scroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            scroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
-            scroll.contentContainer.style.flexDirection = FlexDirection.Row;
+            var titleLabel = Txt(name, 10, Accent);
+            titleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            titleLabel.style.marginTop = 13;
+            titleLabel.style.marginBottom = 4;
+            panel.Add(titleLabel);
+        }
+
+        private void AddAcidCycler(VisualElement panel, string name, string[] names,
+            Func<int> get, Action<int> set)
+        {
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.alignItems = Align.Center;
+            row.style.height = 47;
+            var titleLabel = Txt(name, 11, Muted);
+            titleLabel.style.width = Length.Percent(35);
+            titleLabel.style.flexShrink = 0;
+            row.Add(titleLabel);
+            row.Add(Btn("<", () => ChangeAcidSetting(() => set((get() + names.Length - 1) % names.Length)), 37));
+            var value = Txt("", 12, Ink);
+            value.style.flexGrow = 1;
+            value.style.minWidth = 0;
+            value.style.unityTextAlign = TextAnchor.MiddleCenter;
+            value.style.unityFontStyleAndWeight = FontStyle.Bold;
+            row.Add(value);
+            row.Add(Btn(">", () => ChangeAcidSetting(() => set((get() + 1) % names.Length)), 37));
+            acidControlPainters.Add(() => value.text = names[Mathf.Clamp(get(), 0, names.Length - 1)]);
+            panel.Add(row);
+        }
+
+        private void AddAcidSegments(VisualElement panel, string name, string[] names,
+            Func<int> get, Action<int> set)
+        {
+            var label = Txt(name, 10, Muted);
+            label.style.marginTop = 7;
+            panel.Add(label);
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.height = 43;
             var buttons = new Button[names.Length];
-            for (int index = 0; index < names.Length; index++)
+            for (int i = 0; i < names.Length; ++i)
             {
-                int chosen = index;
-                var button = Btn(names[index], () => { set(chosen); RefreshGeneratorPanel(); }, 74);
-                button.style.minWidth = names.Length <= 3 ? 98 : 74;
-                button.style.marginRight = 3;
+                int index = i;
+                var button = Btn(names[i], () => ChangeAcidSetting(() => set(index)), 0);
+                button.style.flexGrow = 1;
+                button.style.flexShrink = 1;
+                button.style.flexBasis = new Length(0, LengthUnit.Pixel);
+                button.style.minWidth = 0;
+                button.style.marginLeft = 2;
+                button.style.marginRight = 2;
+                button.style.paddingLeft = 2;
+                button.style.paddingRight = 2;
                 button.style.fontSize = 11;
-                buttons[index] = button;
-                scroll.Add(button);
+                buttons[i] = button;
+                row.Add(button);
             }
-            acidOptionRows.Add(new AcidOptionRow { buttons = buttons, index = selection });
-            panel.Add(scroll);
+            acidControlPainters.Add(() =>
+            {
+                int selected = Mathf.Clamp(get(), 0, names.Length - 1);
+                for (int i = 0; i < buttons.Length; ++i)
+                {
+                    buttons[i].style.backgroundColor = i == selected ? SelectedColor() : Raised;
+                    buttons[i].style.color = i == selected ? Accent : Ink;
+                }
+            });
+            panel.Add(row);
+        }
+
+        private void AddAcidSlider(VisualElement panel, string name, string[] names,
+            Func<int> get, Action<int> set)
+        {
+            var heading = new VisualElement();
+            heading.style.flexDirection = FlexDirection.Row;
+            heading.style.justifyContent = Justify.SpaceBetween;
+            heading.style.alignItems = Align.Center;
+            heading.style.marginTop = 7;
+            heading.Add(Txt(name, 10, Muted));
+            var value = Txt("", 12, Accent);
+            value.style.unityFontStyleAndWeight = FontStyle.Bold;
+            heading.Add(value);
+            panel.Add(heading);
+
+            var rail = new VisualElement { name = "ZPunkAcidSlider" + name.Replace(" ", "") };
+            rail.style.height = 33;
+            rail.style.position = Position.Relative;
+            rail.style.flexShrink = 0;
+            rail.pickingMode = PickingMode.Position;
+            var track = new VisualElement();
+            track.style.position = Position.Absolute;
+            track.style.left = 10;
+            track.style.right = 10;
+            track.style.top = 13;
+            track.style.height = 7;
+            track.style.backgroundColor = Raised;
+            track.style.borderTopLeftRadius = 4;
+            track.style.borderTopRightRadius = 4;
+            track.style.borderBottomLeftRadius = 4;
+            track.style.borderBottomRightRadius = 4;
+            track.pickingMode = PickingMode.Ignore;
+            rail.Add(track);
+            var fill = new VisualElement();
+            fill.style.height = 7;
+            fill.style.backgroundColor = Accent;
+            fill.style.borderTopLeftRadius = 4;
+            fill.style.borderBottomLeftRadius = 4;
+            fill.pickingMode = PickingMode.Ignore;
+            track.Add(fill);
+            var thumb = new VisualElement();
+            thumb.style.position = Position.Absolute;
+            thumb.style.top = -5;
+            thumb.style.marginLeft = -8;
+            thumb.style.width = 17;
+            thumb.style.height = 17;
+            thumb.style.backgroundColor = Ink;
+            thumb.style.borderTopLeftRadius = 9;
+            thumb.style.borderTopRightRadius = 9;
+            thumb.style.borderBottomLeftRadius = 9;
+            thumb.style.borderBottomRightRadius = 9;
+            thumb.pickingMode = PickingMode.Ignore;
+            track.Add(thumb);
+            acidControlPainters.Add(() =>
+            {
+                int selected = Mathf.Clamp(get(), 0, names.Length - 1);
+                float percent = selected * 100f / Mathf.Max(1, names.Length - 1);
+                fill.style.width = Length.Percent(percent);
+                thumb.style.left = Length.Percent(percent);
+                value.text = names[selected];
+            });
+            int pointerId = -1;
+            Action<float> changeFromX = x =>
+            {
+                float usable = Mathf.Max(1f, rail.worldBound.width - 20f);
+                float normalized = Mathf.Clamp01((x - rail.worldBound.xMin - 10f) / usable);
+                int step = Mathf.RoundToInt(normalized * (names.Length - 1));
+                if (step != get()) ChangeAcidSetting(() => set(step));
+            };
+            rail.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0 || pointerId >= 0) return;
+                pointerId = evt.pointerId;
+                rail.CapturePointer(evt.pointerId);
+                changeFromX(evt.position.x);
+                evt.StopPropagation();
+            });
+            rail.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (pointerId != evt.pointerId) return;
+                changeFromX(evt.position.x);
+                evt.StopPropagation();
+            });
+            rail.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (pointerId != evt.pointerId) return;
+                changeFromX(evt.position.x);
+                pointerId = -1;
+                if (rail.HasPointerCapture(evt.pointerId)) rail.ReleasePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            rail.RegisterCallback<PointerCancelEvent>(evt =>
+            {
+                if (pointerId != evt.pointerId) return;
+                pointerId = -1;
+                if (rail.HasPointerCapture(evt.pointerId)) rail.ReleasePointer(evt.pointerId);
+            });
+            rail.RegisterCallback<PointerCaptureOutEvent>(evt => { if (pointerId == evt.pointerId) pointerId = -1; });
+            panel.Add(rail);
+        }
+
+        // Map each visible face to a transparent pointer target outside the
+        // scroll hierarchy. Clip the hit rectangles to the visible viewport so
+        // off-screen knobs cannot intercept unrelated buttons or gestures.
+        private void SyncAcidKnobTouchTargets()
+        {
+            if (acidKnobTouchLayer == null || acidGeneratorScroll == null ||
+                generatorPanel == null || acidGeneratorSections == null) return;
+            bool active = generatorPanel.style.display.value == DisplayStyle.Flex &&
+                acidGeneratorSections.style.display.value == DisplayStyle.Flex;
+            acidKnobTouchLayer.style.display = active ? DisplayStyle.Flex : DisplayStyle.None;
+            if (!active) return;
+
+            Rect viewport = acidGeneratorScroll.contentViewport.worldBound;
+            Rect overlay = acidKnobTouchLayer.worldBound;
+            for (int i = 0; i < acidKnobFaces.Count && i < acidKnobHitTargets.Count; i++)
+            {
+                VisualElement face = acidKnobFaces[i];
+                VisualElement hit = acidKnobHitTargets[i];
+                Rect bounds = face.worldBound;
+                float left = Mathf.Max(bounds.xMin, viewport.xMin);
+                float top = Mathf.Max(bounds.yMin, viewport.yMin);
+                float right = Mathf.Min(bounds.xMax, viewport.xMax);
+                float bottom = Mathf.Min(bounds.yMax, viewport.yMax);
+                if (right - left < 2f || bottom - top < 2f)
+                {
+                    // Never hide an actively captured hit target mid-gesture.
+                    if (hit != acidActiveKnobTarget) hit.style.display = DisplayStyle.None;
+                    continue;
+                }
+                hit.style.display = DisplayStyle.Flex;
+                // Do not move a hit target while it owns the pointer: pointer
+                // capture must stay stable even if the viewport relayouts.
+                if (hit == acidActiveKnobTarget) continue;
+                hit.style.left = left - overlay.xMin;
+                hit.style.top = top - overlay.yMin;
+                hit.style.width = right - left;
+                hit.style.height = bottom - top;
+            }
+        }
+
+        private bool BeginAcidKnobGesture(VisualElement hit, int pointerId)
+        {
+            if (acidKnobPointerId >= 0) return false;
+            acidKnobPointerId = pointerId;
+            acidActiveKnobTarget = hit;
+            return true;
+        }
+
+        private void EndAcidKnobGesture(int pointerId)
+        {
+            if (acidKnobPointerId != pointerId) return;
+            acidKnobPointerId = -1;
+            acidActiveKnobTarget = null;
+            SyncAcidKnobTouchTargets();
+        }
+
+        private void CancelAcidKnobGesture()
+        {
+            VisualElement active = acidActiveKnobTarget;
+            int pointer = acidKnobPointerId;
+            acidKnobPointerId = -1;
+            acidActiveKnobTarget = null;
+            if (active != null && pointer >= 0 && active.HasPointerCapture(pointer))
+                active.ReleasePointer(pointer);
+            SyncAcidKnobTouchTargets();
+        }
+
+        private void AddAcidKnob(VisualElement row, string name, string[] names,
+            Func<int> get, Action<int> set)
+        {
+            var tile = new VisualElement();
+            tile.style.width = Length.Percent(33.3333f);
+            tile.style.minWidth = 0;
+            tile.style.height = 112;
+            tile.style.alignItems = Align.Center;
+            tile.style.justifyContent = Justify.Center;
+            var face = new VisualElement { name = "ZPunkAcidKnob" + name };
+            face.style.width = 64;
+            face.style.height = 64;
+            face.style.position = Position.Relative;
+            face.style.backgroundColor = Raised;
+            face.style.borderTopLeftRadius = 32;
+            face.style.borderTopRightRadius = 32;
+            face.style.borderBottomLeftRadius = 32;
+            face.style.borderBottomRightRadius = 32;
+            face.style.borderLeftWidth = 2;
+            face.style.borderRightWidth = 2;
+            face.style.borderTopWidth = 2;
+            face.style.borderBottomWidth = 2;
+            face.style.borderLeftColor = Accent;
+            face.style.borderRightColor = Accent;
+            face.style.borderTopColor = Accent;
+            face.style.borderBottomColor = Accent;
+            face.style.justifyContent = Justify.Center;
+            face.style.alignItems = Align.Center;
+            // Only the detached overlay hit target is pickable; these visuals
+            // cannot pass a touch to the ScrollView's pan manipulator.
+            face.pickingMode = PickingMode.Ignore;
+            var readout = Txt("", 12, Ink);
+            readout.style.unityTextAlign = TextAnchor.MiddleCenter;
+            readout.style.unityFontStyleAndWeight = FontStyle.Bold;
+            readout.pickingMode = PickingMode.Ignore;
+            face.Add(readout);
+            var marker = new VisualElement();
+            marker.style.position = Position.Absolute;
+            marker.style.width = 6;
+            marker.style.height = 6;
+            marker.style.backgroundColor = Accent;
+            marker.style.borderTopLeftRadius = 3;
+            marker.style.borderTopRightRadius = 3;
+            marker.style.borderBottomLeftRadius = 3;
+            marker.style.borderBottomRightRadius = 3;
+            marker.pickingMode = PickingMode.Ignore;
+            face.Add(marker);
+            var hit = new VisualElement { name = "ZPunkAcidKnobTouch" + name };
+            hit.style.position = Position.Absolute;
+            hit.pickingMode = PickingMode.Position;
+            hit.style.display = DisplayStyle.None;
+            acidKnobFaces.Add(face);
+            acidKnobHitTargets.Add(hit);
+            if (acidKnobTouchLayer != null) acidKnobTouchLayer.Add(hit);
+            face.RegisterCallback<GeometryChangedEvent>(_ => SyncAcidKnobTouchTargets());
+            acidControlPainters.Add(() =>
+            {
+                int selected = Mathf.Clamp(get(), 0, names.Length - 1);
+                float fraction = selected / (float)Mathf.Max(1, names.Length - 1);
+                float theta = (-225f + 270f * fraction) * Mathf.Deg2Rad;
+                marker.style.left = 29f + Mathf.Cos(theta) * 23f;
+                marker.style.top = 29f + Mathf.Sin(theta) * 23f;
+                readout.text = names[selected];
+            });
+            int pointerId = -1, startStep = 0;
+            float downY = 0;
+            bool moved = false;
+            hit.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0 || pointerId >= 0) return;
+                if (!BeginAcidKnobGesture(hit, evt.pointerId)) return;
+                pointerId = evt.pointerId;
+                downY = evt.position.y;
+                startStep = get();
+                moved = false;
+                hit.CapturePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            hit.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (pointerId != evt.pointerId) return;
+                float distance = downY - evt.position.y;
+                if (Mathf.Abs(distance) >= 5f) moved = true;
+                int candidate = Mathf.Clamp(startStep + Mathf.RoundToInt(distance / 16f), 0, names.Length - 1);
+                if (moved && candidate != get()) ChangeAcidSetting(() => set(candidate));
+                evt.StopPropagation();
+            });
+            hit.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (pointerId != evt.pointerId) return;
+                if (!moved)
+                {
+                    int direction = evt.position.x < face.worldBound.center.x ? -1 : 1;
+                    int candidate = Mathf.Clamp(get() + direction, 0, names.Length - 1);
+                    if (candidate != get()) ChangeAcidSetting(() => set(candidate));
+                }
+                EndAcidKnobGesture(evt.pointerId);
+                pointerId = -1;
+                if (hit.HasPointerCapture(evt.pointerId)) hit.ReleasePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            hit.RegisterCallback<PointerCancelEvent>(evt =>
+            {
+                if (pointerId != evt.pointerId) return;
+                EndAcidKnobGesture(evt.pointerId);
+                pointerId = -1;
+                if (hit.HasPointerCapture(evt.pointerId)) hit.ReleasePointer(evt.pointerId);
+                evt.StopPropagation();
+            });
+            hit.RegisterCallback<PointerCaptureOutEvent>(evt =>
+            {
+                if (pointerId != evt.pointerId) return;
+                EndAcidKnobGesture(evt.pointerId);
+                pointerId = -1;
+            });
+            hit.RegisterCallback<DetachFromPanelEvent>(evt =>
+            {
+                if (pointerId < 0) return;
+                EndAcidKnobGesture(pointerId);
+                pointerId = -1;
+            });
+            tile.Add(face);
+            var caption = Txt(name, 10, Muted);
+            caption.style.marginTop = 7;
+            caption.style.unityTextAlign = TextAnchor.MiddleCenter;
+            caption.style.unityFontStyleAndWeight = FontStyle.Bold;
+            tile.Add(caption);
+            row.Add(tile);
+        }
+
+        private void ChangeAcidSetting(Action change)
+        {
+            change?.Invoke();
+            acidUnappliedChanges = true;
+            RefreshAcidGeneratorPanel();
+            QueueAcidLiveUpdate();
+        }
+
+        private void QueueAcidLiveUpdate()
+        {
+            if (acidLiveUpdate != null)
+            {
+                acidLiveUpdate.Pause();
+                acidLiveUpdate = null;
+            }
+            if (!acidLiveEnabled || !acidAppliedInSession || generatorPanel == null ||
+                generatorPanel.style.display.value != DisplayStyle.Flex) return;
+            // Coalesce rapid knob/slider gestures into safe clip/transport updates.
+            acidLiveUpdate = generatorPanel.schedule.Execute(() =>
+            {
+                acidLiveUpdate = null;
+                if (!acidLiveEnabled || !acidAppliedInSession || !acidUnappliedChanges ||
+                    generatorPanel == null || generatorPanel.style.display.value != DisplayStyle.Flex ||
+                    song == null || song.tracks == null || generatorTargetTrack != trackIndex ||
+                    song.tracks[trackIndex].kind != TrackKind.Acid) return;
+
+                GenerateAcidSequence();
+            });
+
+            acidLiveUpdate.ExecuteLater(190);
+        }
+
+        private void RefreshAcidStepPreview()
+        {
+            if (acidPatternPreview == null) return;
+            var hits = new bool[16];
+            var accents = new bool[16];
+            var slides = new bool[16];
+            if (acidAppliedInSession && content != null && content.kind == ClipKind.Midi && content.notes != null)
+            {
+                foreach (var note in content.notes)
+                {
+                    if (note == null || note.startTick < 0 || note.startTick >= SongData.TicksPerBar4) continue;
+                    int step = Mathf.Clamp((int)(note.startTick * 16 / SongData.TicksPerBar4), 0, 15);
+                    hits[step] = true;
+                    accents[step] |= note.accent;
+                    slides[step] |= note.slide;
+                }
+            }
+            for (int i = 0; i < 16; ++i)
+            {
+                var cell = acidPatternPreview[i];
+                cell.style.backgroundColor = !hits[i] ? Raised : accents[i] ?
+                    new Color(.98f,.66f,.28f) : slides[i] ? new Color(.35f,.60f,.98f) : Accent;
+                cell.style.opacity = hits[i] ? 1f : .5f;
+            }
         }
 
         private void RefreshAcidGeneratorPanel()
@@ -2195,21 +2688,23 @@ namespace ZPunk.DAW
             if (acidKeyLabel != null)
                 acidKeyLabel.text = ZPunkAcidPatternGenerator.Keys[Mathf.Clamp(acidSettings.key, 0, 11)] +
                     "  /  " + ZPunkAcidPatternGenerator.Scales[Mathf.Clamp(acidSettings.scale, 0, 4)];
-            foreach (var row in acidOptionRows)
+            foreach (var paint in acidControlPainters) paint();
+            if (acidLiveButton != null)
             {
-                int selected = row.index();
-                for (int i = 0; i < row.buttons.Length; i++)
-                {
-                    row.buttons[i].style.backgroundColor = i == selected ? SelectedColor() : Raised;
-                    row.buttons[i].style.color = i == selected ? Accent : Ink;
-                }
+                acidLiveButton.text = acidLiveEnabled ? "LIVE ON" : "LIVE OFF";
+                acidLiveButton.style.backgroundColor = acidLiveEnabled ? SelectedColor() : Raised;
+                acidLiveButton.style.color = acidLiveEnabled ? Accent : Muted;
             }
+            if (acidLiveStatus != null)
+                acidLiveStatus.text = !acidAppliedInSession ? "APPLY TO CREATE / REPLACE THE CLIP" :
+                    acidUnappliedChanges ? (acidLiveEnabled ? "LIVE / UPDATING PATTERN..." : "CHANGES PENDING / TAP APPLY") :
+                    (acidLiveEnabled ? "LIVE / CHANGES UPDATE THIS CLIP" : "LIVE OFF / TAP APPLY TO UPDATE");
             if (acidGeneratorSummary != null)
-                acidGeneratorSummary.text = "READY / " +
-                    ZPunkAcidPatternGenerator.Bars[Mathf.Clamp(acidSettings.bars, 0, 4)] +
+                acidGeneratorSummary.text = ZPunkAcidPatternGenerator.Bars[Mathf.Clamp(acidSettings.bars, 0, 4)] +
                     " BARS  /  " + ZPunkAcidPatternGenerator.Divisions[Mathf.Clamp(acidSettings.division, 0, 2)] +
-                    " GRID  /  SEED " + acidSettings.variation + "\n" +
-                    "Monophonic notes, rests, accent and slide. Only this ACID clip will be replaced.";
+                    " GRID  /  VARIATION " + acidSettings.variation +
+                    "  /  EDITS AFFECT ONLY THE SELECTED ACID CLIP";
+            RefreshAcidStepPreview();
         }
 
         private void SaveSharedHarmonicSelection(int? newProgression = null)
@@ -2261,19 +2756,29 @@ namespace ZPunk.DAW
             generatorTargetTrack = trackIndex;
             if (song.tracks[trackIndex].kind == TrackKind.Acid)
             {
-                // Work from the project's key by default, but do not alter
-                // its shared harmony when exploring acid-only scales.
-                acidSettings.key = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
-                acidSettings.scale = song.sharedProgressionMinor ? 0 : 1;
+                // Initialize once per project. Never silently reset the user's
+                // generator key/scale when they leave and reopen this panel.
+                if (!acidSettingsInitialized)
+                {
+                    acidSettings.key = Mathf.Clamp(song.sharedProgressionKey, 0, 11);
+                    acidSettings.scale = song.sharedProgressionMinor ? 0 : 1;
+                    acidSettingsInitialized = true;
+                }
                 if (clip != null && content != null)
                 {
                     int currentBars = Mathf.Max(1, (int)(content.lengthTicks / SongData.TicksPerBar4));
                     for (int index = 0; index < ZPunkAcidPatternGenerator.Bars.Length; index++)
                         if (ZPunkAcidPatternGenerator.Bars[index] <= currentBars) acidSettings.bars = index;
                 }
-                acidSettings.variation++;
+                // A new session requires an intentional APPLY before live rewrites;
+                // reopening never automatically overwrites an edited MIDI clip.
+                acidAppliedInSession = false;
+                acidUnappliedChanges = false;
+                if (acidLiveUpdate != null) { acidLiveUpdate.Pause(); acidLiveUpdate = null; }
+                // Preserve the user's complete ACID generation setup.
                 RefreshGeneratorPanel();
                 generatorPanel.style.display = DisplayStyle.Flex;
+                generatorPanel.schedule.Execute(() => SyncAcidKnobTouchTargets()).ExecuteLater(0);
                 return;
             }
             // All generator tracks read the SAME saved project-wide progression/key.
@@ -2296,15 +2801,28 @@ namespace ZPunk.DAW
         }
         private void CloseGenerator()
         {
+            CancelAcidKnobGesture();
+            if (acidLiveUpdate != null) { acidLiveUpdate.Pause(); acidLiveUpdate = null; }
+            bool showNotes = acidAppliedInSession && generatorPanel != null &&
+                generatorPanel.style.display.value == DisplayStyle.Flex &&
+                song != null && song.tracks != null && generatorTargetTrack >= 0 &&
+                generatorTargetTrack < song.tracks.Count &&
+                song.tracks[generatorTargetTrack].kind == TrackKind.Acid;
             if (generatorPanel != null) generatorPanel.style.display = DisplayStyle.None;
+            if (acidKnobTouchLayer != null) acidKnobTouchLayer.style.display = DisplayStyle.None;
+            if (showNotes && content != null && content.kind == ClipKind.Midi) FocusPatternNotes(true);
+            acidAppliedInSession = false;
         }
         private void RefreshGeneratorPanel()
         {
             if (generatorPanel == null || song == null || song.tracks == null ||
                 generatorTargetTrack >= song.tracks.Count) return;
             generatorHeading.text = "GENERATE  /  " + song.tracks[generatorTargetTrack].name.ToUpperInvariant();
-            generatorHint.text = clip == null ?
-                "Creates a new clip. No changes until GENERATE is tapped." :
+            bool isAcidTrack = song.tracks[generatorTargetTrack].kind == TrackKind.Acid;
+            generatorHint.text = isAcidTrack ? (clip == null ?
+                "APPLY creates an ACID clip. The panel remains open for further changes." :
+                "APPLY replaces notes in " + clip.name + ". CLOSE keeps the last applied pattern.") :
+                clip == null ? "Creates a new clip. No changes until GENERATE is tapped." :
                 "REPLACES all notes in " + clip.name + ". Cancel leaves it unchanged." +
                 (string.IsNullOrEmpty(content?.generatedTag) ? "" : "\nCURRENT: " + content.generatedTag);
             bool acidGenerator = song.tracks[generatorTargetTrack].kind == TrackKind.Acid;
@@ -2312,8 +2830,15 @@ namespace ZPunk.DAW
                 normalGeneratorSections.style.display = acidGenerator ? DisplayStyle.None : DisplayStyle.Flex;
             if (acidGeneratorSections != null)
                 acidGeneratorSections.style.display = acidGenerator ? DisplayStyle.Flex : DisplayStyle.None;
+            // Layout is recalculated on the next panel update; the overlay
+            // follows scrolling and face geometry without blocking other UI.
+            SyncAcidKnobTouchTargets();
             if (generatorApplyButton != null)
-                generatorApplyButton.text = acidGenerator ? "GENERATE ACID" : "GENERATE";
+                generatorApplyButton.text = acidGenerator ? (acidAppliedInSession ? "APPLY AGAIN" : "APPLY") : "GENERATE";
+            if (acidLiveButton != null)
+                acidLiveButton.style.display = acidGenerator ? DisplayStyle.Flex : DisplayStyle.None;
+            if (generatorCancelButton != null)
+                generatorCancelButton.text = acidGenerator ? "CLOSE" : "CANCEL";
             if (acidGenerator)
             {
                 RefreshAcidGeneratorPanel();
@@ -2515,13 +3040,17 @@ namespace ZPunk.DAW
         // Applies only after the user confirms the ACID parameter sheet.
         private void GenerateAcidSequence()
         {
+            // Manual APPLY supersedes any pending debounced live rewrite.
+            if (acidLiveUpdate != null) { acidLiveUpdate.Pause(); acidLiveUpdate = null; }
             int bars = ZPunkAcidPatternGenerator.Bars[Mathf.Clamp(acidSettings.bars, 0, 4)];
             if (!PrepareGeneratorContent(bars) || content == null) return;
             ZPunkAcidPatternGenerator.Fill(content, acidSettings);
-            FinishGeneratorContent();
+            acidAppliedInSession = true;
+            acidUnappliedChanges = false;
+            FinishGeneratorContent(true);
         }
 
-        private void FinishGeneratorContent()
+        private void FinishGeneratorContent(bool keepGeneratorOpen = false)
         {
             clip.sourceOffsetTick = 0;
             clip.loopEnabled = false;
@@ -2530,11 +3059,16 @@ namespace ZPunk.DAW
             selectedNote = -1;
             selectedEventRow = -1;
             selectedEventTick = -1;
-            CloseGenerator();
-            Changed(true, false);
-            // GEN and history restoration must reveal the actual generated octave,
-            // even when UI Toolkit finishes scroll geometry a frame after redraw.
-            if (content.kind == ClipKind.Midi) FocusPatternNotes(true);
+            if (!keepGeneratorOpen) CloseGenerator();
+            Changed(true, keepGeneratorOpen);
+            if (keepGeneratorOpen)
+            {
+                // Redraw only rebuilds the step grid, not the modal sheet.
+                // Repeated APPLY/LIVE writes therefore preserve sheet scroll and touch.
+                RefreshGeneratorPanel();
+            }
+            // GEN and history restoration reveal the generated octave after close.
+            else if (content.kind == ClipKind.Midi) FocusPatternNotes(true);
         }
         // Prefer existing PAD or chord-mode SYNTH harmony at the selected clip location.
         // Never read notes from the clip currently being regenerated.
@@ -3050,6 +3584,14 @@ namespace ZPunk.DAW
             if (projects == null) projects = FindObjectOfType<KMusicProjectManager>();
             if (projects == null) return;
             song = projects.GetSongForArrangementEditor();
+            // Retain manually selected ACID key/scale while moving between tabs,
+            // clips and generator opens. A genuinely different project starts
+            // from its own saved song key on the first visit instead.
+            if (acidSettingsProjectSlot != projects.CurrentSlot)
+            {
+                acidSettingsProjectSlot = projects.CurrentSlot;
+                acidSettingsInitialized = false;
+            }
             if (sampleKeyGuideEnabled && sampleKeyGuideProjectSlot != projects.CurrentSlot)
             {
                 sampleKeyGuideEnabled = false;

@@ -173,6 +173,12 @@ namespace ZPunk.DAW
         // Opt-in 303 filter/accent/slide voicing. Old saved projects use the
         // original DSP path until a refreshed factory preset is selected.
         public bool refined303Engine;
+        // Opt-in 1990s acid voicing. Missing in old project JSON => false,
+        // preserving every existing saved project's previous DSP behavior.
+        public bool vintage303Engine;
+        // Optional punchier, asymmetrical 90s circuit-inspired voice. Only new
+        // factory patches enable this; missing in older JSON remains false.
+        public bool circuit303Engine;
         // Optional ACID FX rack. Zero is a strict bypass for all older saves.
         // No existing instrument/track indices or JSON schema are changed.
         public float fxDistortion;  // post-filter distortion drive, 0..1 (0 is bypass)

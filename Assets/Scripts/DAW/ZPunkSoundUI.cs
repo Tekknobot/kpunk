@@ -782,8 +782,11 @@ namespace ZPunk.DAW
                 dial.value.text = dial.label == "TUNE"
                     ? ((Mathf.RoundToInt((amount - .5f) * 24f) >= 0 ? "+" : "") +
                        Mathf.RoundToInt((amount - .5f) * 24f) + "st")
-                    : dial.label == "DECAY" ? (.09f + amount * 1.5f).ToString("0.00") + "s"
-                    : dial.label == "GLIDE" ? Mathf.RoundToInt(25 + amount * 225f) + "ms"
+                    : dial.label == "DECAY" ? (state.vintage303Engine
+                        ? .075f + amount * .69f : .09f + amount * 1.5f).ToString("0.00") + "s"
+                    : dial.label == "GLIDE" ? (state.vintage303Engine
+                        ? Mathf.RoundToInt(28 + amount * 82f)
+                        : Mathf.RoundToInt(25 + amount * 225f)) + "ms"
                     : Mathf.RoundToInt(amount * 100).ToString();
                 float angle = Mathf.Lerp(-135f, 135f, amount) * Mathf.Deg2Rad;
                 dial.marker.style.left = 33f + Mathf.Sin(angle) * 26f;

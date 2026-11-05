@@ -177,6 +177,8 @@ namespace ZPunk.DAW
                 patchOutputTrimSet = state.patchOutputTrimSet,
                 patchOutputTrim = state.patchOutputTrim,
                 refined303Engine = state.refined303Engine,
+                vintage303Engine = state.vintage303Engine,
+                circuit303Engine = state.circuit303Engine,
                 fxDistortion = state.fxDistortion,
                 fxDistControlsInitialized = state.fxDistControlsInitialized,
                 fxDistTone = state.fxDistTone, fxDistMix = state.fxDistMix,
@@ -393,7 +395,13 @@ namespace ZPunk.DAW
             targetFrequency = next;
             if (sliding)
             {
-                portamentoLeft = .025 + Norm(p.glide) * .225;
+                // Vintage 303: the destination note is legato, with a quick
+                // logarithmic slew instead of a long generic synth portamento.
+                // Retain the earlier 25-250ms glide for existing song files.
+                portamentoLeft = p.circuit303Engine
+                    ? .045 + Norm(p.glide) * .105
+                    : p.vintage303Engine ? .028 + Norm(p.glide) * .082
+                    : .025 + Norm(p.glide) * .225;
                 // Constant log-pitch ratio replaces a costly pow per sample.
                 portamentoRatio = Math.Pow(next / Math.Max(1.0, frequency),
                     1.0 / Math.Max(1.0, portamentoLeft * sampleRate));
@@ -407,7 +415,10 @@ namespace ZPunk.DAW
                 filterEnvelope = 1.0;
             }
             activeAccent = (c.flags & 1) != 0;
-            if (activeAccent) filterEnvelope = 1.0;
+            // A destination accent should boost the sweep but not restart the
+            // ongoing envelope during a circuit-voice legato slide.
+            if (activeAccent && (!sliding || !p.circuit303Engine))
+                filterEnvelope = 1.0;
             if (p.refined303Engine)
             {
                 // A slide preserves the running envelopes; an accent adds a
@@ -415,8 +426,13 @@ namespace ZPunk.DAW
                 if (!sliding) vcaAttackPulse = 1.0;
                 if (activeAccent)
                 {
-                    accentSweep = Math.Min(1.5, accentSweep +
-                        (.42 + Norm(p.accent) * .62));
+                    // The accent affects the filter envelope as well as
+                    // amplitude. Consecutive accents accumulate a little
+                    // additional squelch, rather than just boosting velocity.
+                    accentSweep = Math.Min(p.circuit303Engine ? 2.25 :
+                        p.vintage303Engine ? 1.9 : 1.5,
+                        accentSweep + (.42 + Norm(p.accent) *
+                            (p.circuit303Engine ? .94 : p.vintage303Engine ? .82 : .62)));
                     accentPulse = 1.0;
                 }
             }
@@ -460,7 +476,13 @@ namespace ZPunk.DAW
             }
             double now = AudioSettings.dspTime;
             double delta = 1.0 / Math.Max(8000, sampleRate);
-            double decay = .09 + Norm(p.decay) * 1.5;
+            bool vintage303 = p.refined303Engine && p.vintage303Engine;
+            bool circuit303 = vintage303 && p.circuit303Engine;
+            // The original extended filter decay was overly long for fast
+            // repeating 16th-note acid. Keep it intact for old saved songs.
+            double decay = circuit303 ? .075 + Norm(p.decay) * .63 :
+                vintage303 ? .075 + Norm(p.decay) * .69 :
+                .09 + Norm(p.decay) * 1.5;
             double decayFactor = Math.Exp(-delta / decay);
             double releaseFactor = Math.Exp(-delta / .032);
             double drive = 1.0 + Norm(p.drive) * 11.0;
@@ -473,16 +495,29 @@ namespace ZPunk.DAW
             bool refined303 = p.refined303Engine;
             double filterSlew = 1.0 - Math.Exp(-delta / .0035);
             double resonanceSlew = 1.0 - Math.Exp(-delta / .008);
-            double accentSweepFall = Math.Exp(-delta / .160);
-            double accentPulseFall = Math.Exp(-delta / .045);
+            double accentSweepFall = Math.Exp(-delta / (circuit303 ? .260 :
+                vintage303 ? .205 : .160));
+            double accentPulseFall = Math.Exp(-delta / (circuit303 ? .090 :
+                vintage303 ? .072 : .045));
             double vcaTransientFall = Math.Exp(-delta / .060);
             double outputSlew = 1.0 - Math.Exp(-delta / .006);
             // A 16-sample (~0.33ms @48k) filter control update makes 303
             // envelopes smooth while avoiding multiple transcendentals for every
             // PCM sample. The filter poles and VCA still run per sample.
-            double base303Cutoff = 62.0 * Math.Pow(96.0, Norm(p.cutoff));
-            double mod303Depth = Norm(p.envMod) * 3.95;
-            double wanted303Resonance = .22 + Norm(p.resonance) * 2.80;
+            // The vintage branch is darker at the same cutoff knob position,
+            // leaving room for audible envelope sweeps and manual filter moves.
+            // Nonlinear filter and pitch parameters are computed outside the
+            // sample loop; legacy refined sound preserves its old mapping.
+            double base303Cutoff = circuit303
+                ? 43.0 * Math.Pow(112.0, Norm(p.cutoff))
+                : vintage303 ? 50.0 * Math.Pow(86.0, Norm(p.cutoff))
+                : 62.0 * Math.Pow(96.0, Norm(p.cutoff));
+            double mod303Depth = Norm(p.envMod) * (circuit303 ? 4.00 :
+                vintage303 ? 3.55 : 3.95);
+            double wanted303Resonance = circuit303
+                ? .29 + Norm(p.resonance) * 2.25
+                : vintage303 ? .28 + Norm(p.resonance) * 2.90
+                : .22 + Norm(p.resonance) * 2.80;
             double accentFilterDecay = Math.Exp(-delta * .27 / Math.Max(.08, decay));
             double target303Cutoff = Math.Max(35.0, smoothed303Cutoff);
             double a303 = Math.Min(.81, 1.0 - Math.Exp(-2.0 * Math.PI *
@@ -550,6 +585,10 @@ namespace ZPunk.DAW
                                 p.fxDelayRate == 3 ? .75 : .5;
             int delayFrames = Math.Max(1, Math.Min(delayLeft.Length - 2,
                 (int)(beatSeconds * delayBeats * sampleRate)));
+            // Prepare constant circuit parameters once per audio buffer.
+            double circuitInputDrive = 1.22 + Norm(p.drive) * 2.90;
+            double circuitBassComp = 1.0 + Norm(p.resonance) * .10;
+            double pulseWidth = circuit303 ? .465 : .5;
             float peak = 0f;
             int offset = 0;
             for (int frame = 0; frame < data.Length / channels; frame++)
@@ -594,8 +633,11 @@ namespace ZPunk.DAW
                     double dt = Math.Min(.45, frequency * delta);
                     phase += dt;
                     if (phase >= 1.0) phase -= 1.0;
+                    // New circuit voice has a slightly asymmetric square pulse,
+                    // while all earlier patches keep their existing oscillator.
                     double osc = p.square
-                        ? ((phase < .5 ? 1.0 : -1.0) + PolyBlep(phase, dt) - PolyBlep((phase + .5) % 1.0, dt))
+                        ? ((phase < pulseWidth ? 1.0 : -1.0) + PolyBlep(phase, dt) -
+                            PolyBlep((phase + 1.0 - pulseWidth) % 1.0, dt))
                         : (2.0 * phase - 1.0 - PolyBlep(phase, dt));
                     if (!gate) envelope *= releaseFactor;
                     filterEnvelope *= decayFactor;
@@ -616,31 +658,87 @@ namespace ZPunk.DAW
                         if (activeAccent) filterEnvelope *= accentFilterDecay;
                         if ((frame & 15) == 0)
                         {
-                            double envCurve = Math.Pow(Math.Max(0.0, filterEnvelope), .78);
+                            double envCurve = Math.Pow(Math.Max(0.0, filterEnvelope),
+                                circuit303 ? .52 : vintage303 ? .61 : .78);
+                            // Vintage accents open the filter, not merely the VCA;
+                            // accent peaks can spill into the following note.
                             target303Cutoff = base303Cutoff * Math.Exp(
-                                envCurve * mod303Depth + accentSweep * accentStrength * .84);
+                                envCurve * mod303Depth + accentSweep * accentStrength *
+                                (circuit303 ? 1.27 : vintage303 ? 1.18 : .84));
                             target303Cutoff = Math.Max(35.0,
                                 Math.Min(sampleRate * .30, target303Cutoff));
                             if (smoothed303Cutoff <= 0) smoothed303Cutoff = target303Cutoff;
-                            a303 = Math.Min(.81, 1.0 - Math.Exp(
-                                -2.0 * Math.PI * smoothed303Cutoff * delta));
+                            if (!vintage303)
+                                a303 = Math.Min(.81, 1.0 - Math.Exp(
+                                    -2.0 * Math.PI * smoothed303Cutoff * delta));
                         }
                         smoothed303Cutoff +=
                             (target303Cutoff - smoothed303Cutoff) * filterSlew;
                         smoothed303Resonance +=
                             (wanted303Resonance - smoothed303Resonance) * resonanceSlew;
-                        // Three soft-saturating poles with resonant feedback.
-                        // Coefficient updates occur every 16 samples (<0.4ms).
-                        double input303 = FastTanh((osc *
-                            (1.0 + .16 * accentPulse * accentStrength) -
-                            lp3 * smoothed303Resonance) * (1.1 + Norm(p.drive) * 3.9));
-                        lp1 += a303 * (input303 - lp1);
-                        lp2 += a303 * (FastTanh(lp1 * 1.35) - lp2);
-                        lp3 += a303 * (FastTanh(lp2 * 1.35) - lp3);
-                        double transientAmp = .83 + .17 * vcaAttackPulse;
-                        double accentAmp = 1.0 + .38 * accentPulse * accentStrength;
-                        sample = FastTanh(lp3 * 2.05) * transientAmp * accentAmp *
-                            envelope * g * .61;
+                        if (circuit303)
+                        {
+                            // New opt-in 303-inspired topology: three resonant
+                            // nonlinear poles, an asymmetric driven diode-like
+                            // transfer and resonance bass compensation. This is
+                            // original DSP and not a Roland ACB circuit clone.
+                            // The coefficient is capped for numerical stability
+                            // and refreshed at control rate for mobile CPU budgets.
+                            if ((frame & 15) == 0)
+                                a303 = Math.Min(.68, 1.0 - Math.Exp(-2.0 * Math.PI *
+                                    smoothed303Cutoff * delta));
+                            double asymmetric = osc + .085 * (osc * osc - .34);
+                            double feedback = lp3 * smoothed303Resonance;
+                            double saturatedInput = FastTanh((asymmetric - feedback) * circuitInputDrive);
+                            lp1 += a303 * (saturatedInput - lp1);
+                            lp2 += a303 * (FastTanh(lp1 * 1.94 + .025) - lp2);
+                            lp3 += a303 * (FastTanh(lp2 * 1.86 - .018) - lp3);
+                            // Bright resonant squelch, yet some bass remains even
+                            // at high resonance (the 303's characteristic body).
+                            double body = lp3 * 1.76 + lp2 * .30 - lp1 * .08;
+                            double accentAmp = 1.0 + .64 * accentPulse * accentStrength;
+                            sample = FastTanh(body * 1.42) * circuitBassComp *
+                                (.88 + .12 * vcaAttackPulse) * accentAmp *
+                                envelope * g * .50;
+                        }
+                        else if (vintage303)
+                        {
+                            // A mildly asymmetric, nonlinear three-stage
+                            // ladder-style approximation. Resonance feeds back
+                            // before saturation; bass compensation stops high
+                            // resonance from erasing the fundamental. This is
+                            // original DSP, not Roland's circuit model.
+                            if ((frame & 15) == 0)
+                                a303 = Math.Min(.78, 1.0 - Math.Exp(-2.0 * Math.PI *
+                                    smoothed303Cutoff * delta));
+                            double shapedOsc = osc + .11 * osc * osc - .036;
+                            double resonantInput = (shapedOsc *
+                                (1.0 + .10 * accentPulse * accentStrength) -
+                                lp3 * smoothed303Resonance) *
+                                (1.15 + Norm(p.drive) * 2.75);
+                            lp1 += a303 * (FastTanh(resonantInput) - lp1);
+                            lp2 += a303 * (FastTanh(lp1 * 1.62) - lp2);
+                            lp3 += a303 * (FastTanh(lp2 * 1.65) - lp3);
+                            double body = lp3 * 1.72 + lp2 * .20;
+                            double accentAmp = 1.0 + .52 * accentPulse * accentStrength;
+                            sample = FastTanh(body * 1.67) *
+                                (.87 + .13 * vcaAttackPulse) * accentAmp *
+                                envelope * g * .58;
+                        }
+                        else
+                        {
+                            // Earlier refined patch DSP, intentionally unchanged.
+                            double input303 = FastTanh((osc *
+                                (1.0 + .16 * accentPulse * accentStrength) -
+                                lp3 * smoothed303Resonance) * (1.1 + Norm(p.drive) * 3.9));
+                            lp1 += a303 * (input303 - lp1);
+                            lp2 += a303 * (FastTanh(lp1 * 1.35) - lp2);
+                            lp3 += a303 * (FastTanh(lp2 * 1.35) - lp3);
+                            double transientAmp = .83 + .17 * vcaAttackPulse;
+                            double accentAmp = 1.0 + .38 * accentPulse * accentStrength;
+                            sample = FastTanh(lp3 * 2.05) * transientAmp * accentAmp *
+                                envelope * g * .61;
+                        }
                     }
                     else
                     {
