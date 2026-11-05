@@ -498,7 +498,9 @@ namespace ZPunk.DAW
                 state.fxFeedback = state.fxReverb = state.fxRoom = 0f;
                 state.fxDistControlsInitialized = true;
                 state.fxDistTone = .5f;
-                state.fxDistMix = .85f;
+                // RESET FX is a clean starting point: drive is bypassed, but
+                // its wet blend is ready when the user turns DIST DRIVE up.
+                state.fxDistMix = 1f;
                 state.fxDistBite = 0f;
                 state.fxDistType = 0;
                 state.fx303DriveModel = false;
@@ -764,7 +766,9 @@ namespace ZPunk.DAW
             if (state == null) return;
             if (acidWave != null) acidWave.text = "WAVE  /  " + (state.square ? "SQUARE" : "SAWTOOTH");
             if (acidDistortionTypeButton != null)
-                acidDistortionTypeButton.text = "DISTORTION TYPE  /  " + ZPunkAcidPresets.DistortionLabel(state.fxDistType);
+                acidDistortionTypeButton.text = "DIST TYPE  /  " +
+                    ZPunkAcidPresets.DistortionLabel(state.fxDistType) +
+                    (state.fxDistortion <= .0001f ? "  /  OFF" : "  /  ON");
             if (acidDelayModeButton != null)
                 acidDelayModeButton.text = "DELAY STYLE  /  " + ZPunkAcidPresets.DelayModeLabel(state.fxDelayMode);
             if (acidDelayRateButton != null)

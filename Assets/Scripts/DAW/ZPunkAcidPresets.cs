@@ -140,7 +140,10 @@ namespace ZPunk.DAW
             // Different patch families use different grit/tone blends.
             target.fxDistTone = index == 2 || index == 4 || index == 12 ? .76f :
                 index == 7 || index == 8 ? .30f : index == 9 ? .40f : .50f;
-            target.fxDistMix = index == 0 ? .85f :
+            // INIT is clean because rack DRIVE is zero, not because MIX is reduced.
+            // At 100% wet, raising DRIVE immediately reveals the selected
+            // distortion type without an additional MIX adjustment.
+            target.fxDistMix = index == 0 ? 1f :
                 index == 2 || index == 4 || index == 12 ? .92f :
                 index == 5 || index == 7 ? .42f : .70f;
             target.fxDistBite = index == 2 ? .72f : index == 12 ? .36f : index == 4 ? .52f :
