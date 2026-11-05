@@ -23,6 +23,9 @@ namespace ZPunk.DAW
         private VisualElement root, lanes;
         private ScrollView mixerScroll;
         private ScrollView trackFaderScroll, drumFaderScroll;
+        // Presentation-only state. A fresh MIX panel starts with MASTER FX collapsed;
+        // opening or closing it does not edit the song or rebuild the fader banks.
+        private bool masterFxDrawerOpen;
         private Vector2 lockedTrackOffset, lockedDrumOffset;
         private Label masterReadout;
         private VisualElement masterStatusLight;
@@ -624,13 +627,46 @@ namespace ZPunk.DAW
         private void BuildMasterFx(SongData song)
         {
             var panel = Panel();
+            // In the default collapsed state, only the header occupies MIX space.
+            // Keep the existing master bus processing enabled independently of
+            // whether its controls are currently visible.
+            panel.style.paddingTop = 5;
+            panel.style.paddingBottom = masterFxDrawerOpen ? 12 : 5;
+            panel.style.marginBottom = 8;
             var header = new VisualElement();
             header.style.flexDirection = FlexDirection.Row;
             header.style.justifyContent = Justify.SpaceBetween;
             header.style.alignItems = Align.Center;
-            var heading = Text("MASTER FX  /  BUS", 12, Aqua);
-            heading.style.unityFontStyleAndWeight = FontStyle.Bold;
-            header.Add(heading);
+            var drawerContent = new VisualElement();
+            drawerContent.style.display = masterFxDrawerOpen ? DisplayStyle.Flex : DisplayStyle.None;
+            drawerContent.style.flexDirection = FlexDirection.Column;
+            Button drawerButton = null;
+            drawerButton = new Button(() =>
+            {
+                masterFxDrawerOpen = !masterFxDrawerOpen;
+                drawerContent.style.display = masterFxDrawerOpen ? DisplayStyle.Flex : DisplayStyle.None;
+                header.style.marginBottom = masterFxDrawerOpen ? 7 : 0;
+                panel.style.paddingBottom = masterFxDrawerOpen ? 12 : 5;
+                drawerButton.text = masterFxDrawerOpen ? "▼  MASTER FX  /  BUS" : "▶  MASTER FX  /  BUS";
+                drawerButton.style.backgroundColor = masterFxDrawerOpen ? Off : Card;
+            })
+            {
+                text = masterFxDrawerOpen ? "▼  MASTER FX  /  BUS" : "▶  MASTER FX  /  BUS"
+            };
+            drawerButton.style.height = 34;
+            drawerButton.style.flexGrow = 1;
+            drawerButton.style.flexShrink = 1;
+            drawerButton.style.minWidth = 0;
+            drawerButton.style.unityTextAlign = TextAnchor.MiddleLeft;
+            drawerButton.style.fontSize = 12;
+            drawerButton.style.unityFontStyleAndWeight = FontStyle.Bold;
+            drawerButton.style.color = Aqua;
+            drawerButton.style.backgroundColor = masterFxDrawerOpen ? Off : Card;
+            drawerButton.style.paddingLeft = 8;
+            drawerButton.style.marginRight = 8;
+            Round(drawerButton, 5);
+            header.style.marginBottom = masterFxDrawerOpen ? 7 : 0;
+            header.Add(drawerButton);
             Button bypass = null;
             bool initialBypass = song != null && song.masterFxBypassed;
             bypass = Switch(initialBypass ? "FX OFF" : "FX ON", () =>
@@ -647,11 +683,12 @@ namespace ZPunk.DAW
             bypass.style.height = 31;
             header.Add(bypass);
             panel.Add(header);
+            panel.Add(drawerContent);
             var grid = new VisualElement();
             grid.style.flexDirection = FlexDirection.Row;
             grid.style.flexWrap = Wrap.NoWrap;
             grid.style.width = Length.Percent(100);
-            panel.Add(grid);
+            drawerContent.Add(grid);
             float drive = song != null ? song.masterDrive : 0f;
             float glue = song != null ? song.masterGlue : 0f;
             float width = song != null ? song.masterWidthOffset : 0f;
@@ -673,11 +710,11 @@ namespace ZPunk.DAW
             var lowEndHeader = Text("KICK / BASS  ·  CLUB LOW END", 12, Aqua);
             lowEndHeader.style.unityFontStyleAndWeight = FontStyle.Bold;
             lowEndHeader.style.marginTop = 9;
-            panel.Add(lowEndHeader);
+            drawerContent.Add(lowEndHeader);
             var lowEndGrid = new VisualElement();
             lowEndGrid.style.flexDirection = FlexDirection.Row;
             lowEndGrid.style.width = Length.Percent(100);
-            panel.Add(lowEndGrid);
+            drawerContent.Add(lowEndGrid);
             MasterFxKnob(lowEndGrid, "RUMBLE", 0f, 1f, 10, song != null ? song.kickRumble : 0f,
                 v => EditMasterFx(s => s.kickRumble = v),
                 v => Mathf.RoundToInt(v * 100f) + "%");
@@ -687,7 +724,7 @@ namespace ZPunk.DAW
             foreach (var control in lowEndGrid.Children()) control.style.width = Length.Percent(50);
             var detail = Text("Tap L/R or drag to step. Master limiter always on (-1 dBFS sample peak).", 10, Dim);
             detail.style.whiteSpace = WhiteSpace.Normal;
-            panel.Add(detail);
+            drawerContent.Add(detail);
             lanes.Add(panel);
         }
 
