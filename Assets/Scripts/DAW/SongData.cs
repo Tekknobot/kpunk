@@ -156,9 +156,20 @@ namespace ZPunk.DAW
         public float accent = 0.72f;
         public float drive = 0.20f;  // added modern parameter
         public float glide = 0.45f;  // added modern parameter
+        // ACID instrument output level (post FX), independent of the MIX fader.
+        // Older JSON has no flag: false means UNITY GAIN regardless of 0 default.
+        // This avoids silencing projects deserialized without new field defaults.
+        public bool outputLevelSet;
+        public float outputLevel;
         // Optional ACID FX rack. Zero is a strict bypass for all older saves.
         // No existing instrument/track indices or JSON schema are changed.
-        public float fxDistortion;  // extra post-filter saturation, 0..1
+        public float fxDistortion;  // post-filter distortion drive, 0..1 (0 is bypass)
+        // Optional extended distortion rack. When false, legacy 303 patches keep
+        // the exact old wet/soft-clipping behavior, even if old JSON lacks fields.
+        public bool fxDistControlsInitialized;
+        public float fxDistTone;    // 0 dark, 0.5 neutral, 1 bright
+        public float fxDistMix;     // 0 dry, 1 wet (when extended controls enabled)
+        public float fxDistBite;    // 0 soft tanh, 1 aggressive hard clipping
         public float fxChorus;      // stereo chorus mix, 0..1
         public float fxDelay;       // tempo-synced echo mix, 0..1
         public float fxFeedback;    // delay feedback, 0..1 (inaudible when fxDelay=0)

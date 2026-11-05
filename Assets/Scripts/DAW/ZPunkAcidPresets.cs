@@ -81,7 +81,18 @@ namespace ZPunk.DAW
             target.accent = p.accent;
             target.drive = p.drive;
             target.glide = p.glide;
+            target.outputLevelSet = true;
+            target.outputLevel = 1f;
             target.fxDistortion = p.distortion;
+            target.fxDistControlsInitialized = true;
+            // Different patch families use different grit/tone blends.
+            target.fxDistTone = index == 2 || index == 4 ? .76f :
+                index == 7 || index == 8 ? .30f : index == 9 ? .40f : .50f;
+            target.fxDistMix = index == 0 ? .85f :
+                index == 2 || index == 4 ? .92f :
+                index == 5 || index == 7 ? .42f : .70f;
+            target.fxDistBite = index == 2 ? .72f : index == 4 ? .52f :
+                index == 1 || index == 9 ? .28f : .08f;
             target.fxChorus = p.chorus;
             target.fxDelay = p.delay;
             target.fxFeedback = p.feedback;

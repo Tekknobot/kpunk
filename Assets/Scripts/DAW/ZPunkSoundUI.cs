@@ -40,6 +40,9 @@ namespace ZPunk.DAW
         private int activeAcidPointer = -1;
         private float acidStartY, acidStartValue;
         private float acidScrollLockUntil;
+        // Keep the ScrollView mode CONSTANT while adjusting dials. Switching
+        // Vertical -> Horizontal during a drag changes viewport layout/geometry,
+        // making the control grid visibly jump or shift vertically on phones.
         private readonly List<AcidDial> acidDials = new List<AcidDial>();
         private sealed class AcidDial
         {
@@ -473,6 +476,10 @@ namespace ZPunk.DAW
             AddAcidDial(dialGrid, "ACCENT", s => s.accent, (s,v) => s.accent=v);
             AddAcidDial(dialGrid, "DRIVE", s => s.drive, (s,v) => s.drive=v);
             AddAcidDial(dialGrid, "GLIDE", s => s.glide, (s,v) => s.glide=v);
+            // Post-FX instrument output trim. Missing field in pre-patch JSON
+            // means unity gain; explicit zero (with the flag set) means mute.
+            AddAcidDial(dialGrid, "LEVEL", s => s.outputLevelSet ? s.outputLevel : 1f,
+                (s,v) => { s.outputLevel = v; s.outputLevelSet = true; });
 
             // Independent per-track effects, after the 303 filter, not Helm FX.
             var fxHeader = new VisualElement();
@@ -488,6 +495,10 @@ namespace ZPunk.DAW
             {
                 state.fxDistortion = state.fxChorus = state.fxDelay = 0f;
                 state.fxFeedback = state.fxReverb = state.fxRoom = 0f;
+                state.fxDistControlsInitialized = true;
+                state.fxDistTone = .5f;
+                state.fxDistMix = .85f;
+                state.fxDistBite = 0f;
                 state.fxDelayRate = 0;
             }));
             fxReset.style.fontSize = 11;
@@ -500,7 +511,15 @@ namespace ZPunk.DAW
             fxGrid.style.flexDirection = FlexDirection.Row;
             fxGrid.style.flexWrap = Wrap.Wrap;
             panel.Add(fxGrid);
-            AddAcidDial(fxGrid, "FX DRIVE", s => s.fxDistortion, (s,v) => s.fxDistortion=v, true);
+            AddAcidDial(fxGrid, "DIST DRIVE", s => s.fxDistortion,
+                (s,v) => { PrepareAcidDistortion(s); s.fxDistortion=v; }, true);
+            AddAcidDial(fxGrid, "DIST TONE", s => s.fxDistControlsInitialized ? s.fxDistTone : .5f,
+                (s,v) => { PrepareAcidDistortion(s); s.fxDistTone=v; }, true);
+            AddAcidDial(fxGrid, "DIST MIX", s => s.fxDistControlsInitialized ? s.fxDistMix :
+                (s.fxDistortion > .0001f ? Mathf.Clamp01(s.fxDistortion * .85f) : .85f),
+                (s,v) => { PrepareAcidDistortion(s); s.fxDistMix=v; }, true);
+            AddAcidDial(fxGrid, "DIST BITE", s => s.fxDistControlsInitialized ? s.fxDistBite : 0f,
+                (s,v) => { PrepareAcidDistortion(s); s.fxDistBite=v; }, true);
             AddAcidDial(fxGrid, "CHORUS", s => s.fxChorus, (s,v) => s.fxChorus=v, true);
             AddAcidDial(fxGrid, "DELAY MIX", s => s.fxDelay, (s,v) => s.fxDelay=v, true);
             AddAcidDial(fxGrid, "FEEDBACK", s => s.fxFeedback, (s,v) => s.fxFeedback=v, true);
@@ -513,7 +532,7 @@ namespace ZPunk.DAW
             acidDelayRateButton.style.marginBottom = 7;
             acidDelayRateButton.style.backgroundColor = Tile;
             panel.Add(acidDelayRateButton);
-            var fxHint = T("FX DRIVE  /  CHORUS  /  DELAY  /  REVERB. Zero mix is bypass. DELAY follows song BPM; FEEDBACK and ROOM SIZE shape the tail.", 11, Dim);
+            var fxHint = T("DIST DRIVE adds gain; TONE darkens/brightens; MIX blends clean/processed; BITE adds hard clipping. DRIVE 0 bypasses distortion. CHORUS, DELAY and REVERB have independent mixes.", 11, Dim);
             fxHint.style.whiteSpace = WhiteSpace.Normal;
             fxHint.style.marginBottom = 8;
             panel.Add(fxHint);
@@ -524,6 +543,18 @@ namespace ZPunk.DAW
             explanation.style.marginBottom = 14;
             panel.Add(explanation);
             return panel;
+        }
+
+        private static void PrepareAcidDistortion(AcidState state)
+        {
+            if (state == null || state.fxDistControlsInitialized) return;
+            // A legacy patch uses its original distortion until a user touches
+            // one of the extended controls. Preserve sensible neutral defaults.
+            state.fxDistTone = .5f;
+            state.fxDistMix = state.fxDistortion > .0001f
+                ? Mathf.Clamp01(state.fxDistortion * .85f) : .85f;
+            state.fxDistBite = 0f;
+            state.fxDistControlsInitialized = true;
         }
 
         private AcidState CurrentAcidState()
@@ -636,6 +667,8 @@ namespace ZPunk.DAW
             acidStartY = evt.position.y;
             acidDialScrollLock = pageScroll != null ? pageScroll.scrollOffset : Vector2.zero;
             acidDialDragging = true;
+            // Root captures the pointer BEFORE ScrollView's touch manipulator.
+            // Do NOT change pageScroll.mode or any grid/layout style here.
             root.CapturePointer(evt.pointerId);
             evt.StopImmediatePropagation();
         }
@@ -646,8 +679,17 @@ namespace ZPunk.DAW
             float amount = Mathf.Clamp01(acidStartValue + (acidStartY - evt.position.y) / 170f);
             var dial = activeAcidDial;
             ChangeAcidState(state => dial.set(state, amount));
-            if (pageScroll != null) pageScroll.scrollOffset = acidDialScrollLock;
+            LockAcidScroll();
             evt.StopImmediatePropagation();
+        }
+
+        private void LockAcidScroll()
+        {
+            if (pageScroll == null) return;
+            Vector2 now = pageScroll.scrollOffset;
+            if (Mathf.Abs(now.x - acidDialScrollLock.x) > .1f ||
+                Mathf.Abs(now.y - acidDialScrollLock.y) > .1f)
+                pageScroll.scrollOffset = acidDialScrollLock;
         }
 
         private void EndAcidDial(int pointerId)
@@ -657,7 +699,7 @@ namespace ZPunk.DAW
             activeAcidDial = null;
             activeAcidPointer = -1;
             acidScrollLockUntil = Time.unscaledTime + .18f;
-            if (pageScroll != null) pageScroll.scrollOffset = acidDialScrollLock;
+            LockAcidScroll();
             if (root != null && root.HasPointerCapture(pointerId)) root.ReleasePointer(pointerId);
         }
 
@@ -1285,6 +1327,8 @@ namespace ZPunk.DAW
                 }
             }
             if (root == null) return;
+            // Release any dial capture if a tab switch interrupts a drag.
+            if (activeAcidPointer >= 0) EndAcidDial(activeAcidPointer);
             RefreshAuditionHeader();
             FindServices();
             ClearPendingDistortion();
@@ -2089,8 +2133,8 @@ namespace ZPunk.DAW
             FindServices();
             if (root == null || root.resolvedStyle.display == DisplayStyle.None) return;
             if (dragging != null || Time.unscaledTime < scrollLockUntil) LockScroll();
-            if ((acidDialDragging || Time.unscaledTime < acidScrollLockUntil) && pageScroll != null)
-                pageScroll.scrollOffset = acidDialScrollLock;
+            if (acidDialDragging || Time.unscaledTime < acidScrollLockUntil)
+                LockAcidScroll();
             if (Time.unscaledTime < nextRefresh) return;
             nextRefresh = Time.unscaledTime + .25f;
             Refresh();

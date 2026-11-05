@@ -7,8 +7,8 @@ using KMusic;
 namespace ZPunk.DAW
 {
     /// <summary>
-    /// Touch-friendly vertical mixer banks. Only the visible fader handle
-    /// captures dragging; swipes over the rail and empty cells scroll normally.
+    /// Two independent horizontally scrolling fader rows: 5 visible track strips
+    /// and 5 visible drum strips. Only handles capture level drags.
     /// </summary>
     public sealed class ZPunkMixerUI : MonoBehaviour
     {
@@ -22,6 +22,8 @@ namespace ZPunk.DAW
         private static readonly Color Solo = new Color(.45f, .38f, .20f);
         private VisualElement root, lanes;
         private ScrollView mixerScroll;
+        private ScrollView trackFaderScroll, drumFaderScroll;
+        private Vector2 lockedTrackOffset, lockedDrumOffset;
         private Label masterReadout;
         private VisualElement masterStatusLight;
         private float heldMasterPeak, heldGainReduction;
@@ -44,9 +46,10 @@ namespace ZPunk.DAW
         private KMusicDrumSequencer drums;
         private ZPunkSongTransport transport;
         private int displayedSlot = -1;
-        private const float RailTop = 14f;
-        private const float RailHeight = 220f;
-        private const float HandleHeight = 32f;
+        private const float RailTop = 13f;
+        private const float RailHeight = 180f;
+        private const float HandleHeight = 30f;
+        private const int VisibleFaders = 5;
         private readonly Dictionary<int, Tuple<Button, Button>> drumButtons = new Dictionary<int, Tuple<Button, Button>>();
         private readonly List<MeterBinding> liveMeters = new List<MeterBinding>();
         private float nextMeterUpdate;
@@ -101,7 +104,8 @@ namespace ZPunk.DAW
                 }
                 else if (drums != null && binding.trackIndex == 4)
                     peak = drums.GetDAWChopPeak();
-                else if (transport != null && binding.trackIndex >= 1 && binding.trackIndex <= 3)
+                else if (transport != null && ((binding.trackIndex >= 1 && binding.trackIndex <= 3)
+                    || binding.trackIndex == (int)TrackKind.Acid))
                     peak = transport.GetTrackPeak(binding.trackIndex);
                 binding.held = Mathf.Max(peak, binding.held * .72f);
                 int active = binding.held < .0005f ? 0 : Mathf.Clamp(
@@ -241,34 +245,58 @@ namespace ZPunk.DAW
         private VisualElement Bank(string label, Color accent, bool drumsBank)
         {
             var panel = Panel();
+            var header = new VisualElement();
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.alignItems = Align.Center;
+            header.style.justifyContent = Justify.SpaceBetween;
+            header.style.marginBottom = 8;
             var title = Text(label, 12, accent);
             title.style.unityFontStyleAndWeight = FontStyle.Bold;
-            title.style.marginBottom = 12;
-            panel.Add(title);
-            var grid = new VisualElement();
-            grid.style.minWidth = 0;
-            grid.style.flexDirection = FlexDirection.Row;
-            grid.style.flexWrap = Wrap.Wrap;
-            grid.style.width = new Length(100, LengthUnit.Percent);
-            panel.Add(grid);
-            grid.RegisterCallback<GeometryChangedEvent>(evt =>
+            header.Add(title);
+            var hint = Text("SWIPE  ◀  ▶", 10, Dim);
+            header.Add(hint);
+            panel.Add(header);
+
+            // This strip scrolls HORIZONTALLY only; the parent mixerScroll still
+            // scrolls vertically to reach the separate drum row and master FX.
+            var strip = new ScrollView(ScrollViewMode.Horizontal);
+            strip.style.width = Length.Percent(100);
+            strip.style.height = 380;
+            strip.style.flexGrow = 0;
+            strip.style.flexShrink = 0;
+            strip.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            strip.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            var row = strip.contentContainer;
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.flexWrap = Wrap.NoWrap;
+            row.style.flexShrink = 0;
+            row.style.alignItems = Align.FlexStart;
+            strip.contentViewport.RegisterCallback<GeometryChangedEvent>(evt =>
             {
-                float width = evt.newRect.width;
-                if (width <= 1f) return;
-                int cols;
-                // Main console keeps all five strips together, including phones.
-                // Drum submix uses four strips per bank on phones, eight on tablets.
-                cols = drumsBank ? (width >= 690f ? 8 : 4) : (width >= 690f ? 6 : 3);
-                // Percent sizes are recalculated only on viewport resizing, not while dragging.
-                var percent = new Length(100f / cols, LengthUnit.Percent);
-                foreach (var child in grid.Children()) child.style.width = percent;
+                if (evt.newRect.width < 1f) return;
+                float stripWidth = evt.newRect.width / VisibleFaders;
+                int count = 0;
+                foreach (var child in row.Children())
+                {
+                    child.style.width = stripWidth;
+                    child.style.flexShrink = 0;
+                    count++;
+                }
+                // An explicit content width makes the sixth and later strips
+                // reachable even on UI Toolkit versions that shrink row items.
+                row.style.width = Mathf.Max(evt.newRect.width, stripWidth * count);
             });
+            if (drumsBank) drumFaderScroll = strip;
+            else trackFaderScroll = strip;
+            panel.Add(strip);
             lanes.Add(panel);
-            return grid;
+            return row;
         }
         private void RestoreScroll()
         {
             if (mixerScroll != null) mixerScroll.scrollOffset = lockedScroll;
+            if (trackFaderScroll != null) trackFaderScroll.scrollOffset = lockedTrackOffset;
+            if (drumFaderScroll != null) drumFaderScroll.scrollOffset = lockedDrumOffset;
         }
         private void FinishDrag(int pointerId)
         {
@@ -296,6 +324,8 @@ namespace ZPunk.DAW
             activeFader = gesture;
             activePointer = evt.pointerId;
             lockedScroll = mixerScroll != null ? mixerScroll.scrollOffset : Vector2.zero;
+            lockedTrackOffset = trackFaderScroll != null ? trackFaderScroll.scrollOffset : Vector2.zero;
+            lockedDrumOffset = drumFaderScroll != null ? drumFaderScroll.scrollOffset : Vector2.zero;
             root.CapturePointer(evt.pointerId);
             gesture.begin(evt.position);
             RestoreScroll();
@@ -335,9 +365,11 @@ namespace ZPunk.DAW
             Action<float> onChange, bool throttleTrackWrites)
         {
             var cell = new VisualElement();
-            cell.style.width = new Length(50, LengthUnit.Percent);
+            // Bank sizes this to exactly one fifth of the visible viewport.
+            cell.style.width = 62;
+            cell.style.flexShrink = 0;
             cell.style.minWidth = 0;
-            cell.style.height = 415;
+            cell.style.height = 368;
             cell.style.backgroundColor = new Color(.083f, .123f, .175f);
             cell.style.borderLeftWidth = 1;
             cell.style.borderLeftColor = new Color(.17f, .25f, .35f);
@@ -367,7 +399,7 @@ namespace ZPunk.DAW
             hit.style.width = new Length(100, LengthUnit.Percent);
             hit.style.maxWidth = 80;
             hit.style.minWidth = 35;
-            hit.style.height = 255;
+            hit.style.height = 218;
             hit.style.position = Position.Relative;
             hit.style.flexShrink = 0;
             // This container only positions the graphics. It must NOT catch touches:
@@ -445,8 +477,8 @@ namespace ZPunk.DAW
                 show(1f - (y - RailTop) / RailHeight);
                 publish(false);
             };
-            // Only the handle is registered as a fader gesture target. The rail,
-            // meters, fader cell, and empty space remain ScrollView swipe areas.
+            // Only the handle is registered: swiping anywhere else in a strip
+            // moves the horizontal bank. The outer page handles vertical scroll.
             faderTargets[thumb] = new FaderGesture
             {
                 begin = position =>
@@ -698,6 +730,9 @@ namespace ZPunk.DAW
             faderTargets.Clear();
             liveMeters.Clear();
             drumButtons.Clear();
+            float previousTracksX = trackFaderScroll != null ? trackFaderScroll.scrollOffset.x : 0f;
+            float previousDrumsX = drumFaderScroll != null ? drumFaderScroll.scrollOffset.x : 0f;
+            trackFaderScroll = drumFaderScroll = null;
             lanes.Clear();
             displayedSlot = projects != null ? projects.CurrentSlot : -1;
             var song = projects != null ? projects.GetSongForArrangementEditor() : null;
@@ -789,7 +824,14 @@ namespace ZPunk.DAW
                 drumButtons[lane] = Tuple.Create(solo, mute);
                 drumGrid.Add(fader);
             }
-            var note = Text("Drag handles to adjust. Swipe between handles to scroll. Tap M to mute, S to solo.", 10, Dim);
+            // Retain independent scroll positions when the MIX page is rebuilt.
+            if (trackFaderScroll != null)
+                trackFaderScroll.schedule.Execute(() => trackFaderScroll.scrollOffset =
+                    new Vector2(previousTracksX, 0f));
+            if (drumFaderScroll != null)
+                drumFaderScroll.schedule.Execute(() => drumFaderScroll.scrollOffset =
+                    new Vector2(previousDrumsX, 0f));
+            var note = Text("Five slim strips per row. Swipe sideways over the strips for more tracks or drums; drag only the handles to set levels. Drum channels are in their own row.", 10, Dim);
             note.style.whiteSpace = WhiteSpace.Normal;
             note.style.marginBottom = 14;
             lanes.Add(note);

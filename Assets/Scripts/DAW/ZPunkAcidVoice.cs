@@ -29,6 +29,8 @@ namespace ZPunk.DAW
         private double phase, frequency, targetFrequency, phaseStep, portamentoLeft;
         private double envelope, filterEnvelope;
         private double lp1, lp2, lp3, lp4;
+        private double distortionToneLow;
+        private double smoothedOutputLevel = 1.0; // 6ms de-zippered instrument trim
         private bool gate, activeAccent;
         private int currentPitch = -1;
         private float lastPeak;
@@ -74,7 +76,11 @@ namespace ZPunk.DAW
                 square = state.square, tune = state.tune, cutoff = state.cutoff,
                 resonance = state.resonance, envMod = state.envMod, decay = state.decay,
                 accent = state.accent, drive = state.drive, glide = state.glide,
-                fxDistortion = state.fxDistortion, fxChorus = state.fxChorus,
+                outputLevelSet = state.outputLevelSet, outputLevel = state.outputLevel,
+                fxDistortion = state.fxDistortion,
+                fxDistControlsInitialized = state.fxDistControlsInitialized,
+                fxDistTone = state.fxDistTone, fxDistMix = state.fxDistMix,
+                fxDistBite = state.fxDistBite, fxChorus = state.fxChorus,
                 fxDelay = state.fxDelay, fxFeedback = state.fxFeedback,
                 fxReverb = state.fxReverb, fxRoom = state.fxRoom,
                 fxDelayRate = state.fxDelayRate
@@ -173,6 +179,7 @@ namespace ZPunk.DAW
                 gate = false; envelope = filterEnvelope = 0;
                 currentPitch = -1;
                 lp1 = lp2 = lp3 = lp4 = 0;
+                distortionToneLow = 0;
             }
             lock (queueLock)
             {
@@ -188,11 +195,19 @@ namespace ZPunk.DAW
             double res = Norm(p.resonance) * 3.55;
             double envDepth = Norm(p.envMod) * 4.5;
             double accentStrength = Norm(p.accent);
+            double outputLevel = p.outputLevelSet ? Norm(p.outputLevel) : 1.0;
+            double outputSlew = 1.0 - Math.Exp(-delta / .006);
             // All new rack amounts default to zero in existing song JSON:
             // with every FX at zero, original DSP output is bit-identical.
             double fxDistortion = Norm(p.fxDistortion);
             double distortionGain = 1.0 + fxDistortion * 10.0;
             double distortionNormal = fxDistortion > .0001 ? 1.0 / Math.Tanh(distortionGain) : 1.0;
+            bool advancedDistortion = p.fxDistControlsInitialized;
+            double distortionTone = advancedDistortion ? Norm(p.fxDistTone) : .5;
+            double distortionMix = advancedDistortion ? Norm(p.fxDistMix) : fxDistortion * .85;
+            double distortionBite = advancedDistortion ? Norm(p.fxDistBite) : 0.0;
+            // One-pole tone reference at 2 kHz; the neutral midpoint is unchanged.
+            double tonePole = 1.0 - Math.Exp(-2.0 * Math.PI * 2000.0 * delta);
             double fxChorus = Norm(p.fxChorus);
             double fxDelay = Norm(p.fxDelay);
             double fxFeedback = .14 + Norm(p.fxFeedback) * .73;
@@ -243,12 +258,20 @@ namespace ZPunk.DAW
                 lp4 += a * (Clip(lp3 * 1.4) - lp4);
                 double sample = Clip(lp4 * 2.0) * envelope * g * .62;
                 double left = sample, right = sample;
-                // Post-filter warm overdrive. Pure bypass at 0.
+                // Post-filter distortion. With an old save/patch, this is
+                // numerically the same soft drive/mix path as the previous build.
+                // Extended controls provide genuine tone, wet/dry and bite.
                 if (fxDistortion > .0001)
                 {
                     double saturated = Math.Tanh(sample * distortionGain) * distortionNormal;
-                    left = right = sample * (1.0 - fxDistortion * .85) +
-                        saturated * fxDistortion * .85;
+                    if (advancedDistortion)
+                    {
+                        double hard = Math.Max(-1.0, Math.Min(1.0, sample * distortionGain));
+                        saturated = saturated * (1.0 - distortionBite) + hard * distortionBite;
+                        distortionToneLow += tonePole * (saturated - distortionToneLow);
+                        saturated += (saturated - distortionToneLow) * (distortionTone - .5) * 1.5;
+                    }
+                    left = right = sample * (1.0 - distortionMix) + saturated * distortionMix;
                 }
                 // Stereo chorus: two fractional modulated taps of the MONO input,
                 // opposed in phase to widen the ACID track without extra voices.
@@ -307,6 +330,12 @@ namespace ZPunk.DAW
                     left = Math.Max(-1.0, Math.Min(1.0, left));
                     right = Math.Max(-1.0, Math.Min(1.0, right));
                 }
+                // ACID LEVEL is an output trim, applied after distortion,
+                // chorus, delay, reverb and safety limiting. Changing it must
+                // not change filter response or distortion drive.
+                smoothedOutputLevel += (outputLevel - smoothedOutputLevel) * outputSlew;
+                left *= smoothedOutputLevel;
+                right *= smoothedOutputLevel;
                 peak = (float)Math.Max(peak, Math.Max(Math.Abs(left), Math.Abs(right)));
                 int baseIndex = frame * channels;
                 if (channels == 1) data[baseIndex] = (float)((left + right) * .5);
