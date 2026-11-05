@@ -161,6 +161,18 @@ namespace ZPunk.DAW
         // This avoids silencing projects deserialized without new field defaults.
         public bool outputLevelSet;
         public float outputLevel;
+        // LEVEL is the user's persistent post-effects trim: changing a factory
+        // patch must not reset it. New sessions receive a conservative default
+        // on first preset selection; old project values are preserved.
+        public bool outputLevelUserAdjusted;
+        // Independent factory-patch loudness calibration, so a heavily driven
+        // patch can be quieter without changing the user's LEVEL knob.
+        // Missing in older JSON => unity gain, preserving existing projects.
+        public bool patchOutputTrimSet;
+        public float patchOutputTrim;
+        // Opt-in 303 filter/accent/slide voicing. Old saved projects use the
+        // original DSP path until a refreshed factory preset is selected.
+        public bool refined303Engine;
         // Optional ACID FX rack. Zero is a strict bypass for all older saves.
         // No existing instrument/track indices or JSON schema are changed.
         public float fxDistortion;  // post-filter distortion drive, 0..1 (0 is bypass)
@@ -170,12 +182,26 @@ namespace ZPunk.DAW
         public float fxDistTone;    // 0 dark, 0.5 neutral, 1 bright
         public float fxDistMix;     // 0 dry, 1 wet (when extended controls enabled)
         public float fxDistBite;    // 0 soft tanh, 1 aggressive hard clipping
+        // Zero retains the existing CLASSIC distortion algorithm in older saves.
+        // 1=OVERDRIVE, 2=DISTORTION, 3=FUZZ, 4=METAL, 5=DIODE,
+        // 6=HARD CLIP, 7=COMPRESSOR, 8=DRIVE. Existing IDs never change.
+        public int fxDistType;
+        // Explicitly opt in to the newer 303-inspired pedal models. Missing in
+        // old JSON => false, retaining the exact previous distortion transfer.
+        public bool fx303DriveModel;
         public float fxChorus;      // stereo chorus mix, 0..1
         public float fxDelay;       // tempo-synced echo mix, 0..1
         public float fxFeedback;    // delay feedback, 0..1 (inaudible when fxDelay=0)
         public float fxReverb;      // stereo room mix, 0..1
         public float fxRoom;        // reverb tail, 0..1 (inaudible when fxReverb=0)
         public int fxDelayRate;     // 0=1/8, 1=1/16, 2=1/4, 3=3/16
+        // 0=ORIGINAL (bit-for-bit legacy path), 1=PING-PONG,
+        // 2=DUB (darker feedback), 3=STEREO. Missing in old JSON => 0.
+        public int fxDelayMode;
+        // 4=TAPE ECHO, 5=PAN DELAY, 6=DIGITAL. Legacy modes retain IDs.
+        // Missing in older JSON => false, preserving previous delay voicing.
+        public bool fx303DelayModel;
+        public float fxDelayTone;  // 0 dark ... 1 bright, used by enhanced modes
         public string patchName;   // optional factory ID; null means a legacy/custom patch
         public bool patchModified;
     }

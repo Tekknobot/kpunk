@@ -28,7 +28,7 @@ namespace ZPunk.DAW
         private static readonly string[] SyncModes = { "FREE", "SYNC", "DOTTED", "TRIPLET" };
 
         private VisualElement root, moduleLayout, trackBar, presetCard, acidPanel;
-        private Button acidWave, acidDelayRateButton;
+        private Button acidWave, acidDelayRateButton, acidDistortionTypeButton, acidDelayModeButton;
         private bool acidDialDragging;
         private Vector2 acidDialScrollLock;
         // Capture the gesture on the SOUND root during trickle-down, BEFORE
@@ -251,7 +251,7 @@ namespace ZPunk.DAW
             macros.Clear(); switches.Clear(); moduleCells.Clear();
             selectors.Clear(); knobTargets.Clear(); acidDials.Clear(); acidDialTargets.Clear();
             activeAcidDial = null; activeAcidPointer = -1; acidScrollLockUntil = 0f;
-            acidDelayRateButton = null;
+            acidDelayRateButton = acidDistortionTypeButton = acidDelayModeButton = null;
             acidDialDragging = false;
             auditionKeys.Clear();
             keyboardOpen = false;
@@ -479,7 +479,8 @@ namespace ZPunk.DAW
             // Post-FX instrument output trim. Missing field in pre-patch JSON
             // means unity gain; explicit zero (with the flag set) means mute.
             AddAcidDial(dialGrid, "LEVEL", s => s.outputLevelSet ? s.outputLevel : 1f,
-                (s,v) => { s.outputLevel = v; s.outputLevelSet = true; });
+                (s,v) => { s.outputLevel = v; s.outputLevelSet = true;
+                    s.outputLevelUserAdjusted = true; });
 
             // Independent per-track effects, after the 303 filter, not Helm FX.
             var fxHeader = new VisualElement();
@@ -499,6 +500,11 @@ namespace ZPunk.DAW
                 state.fxDistTone = .5f;
                 state.fxDistMix = .85f;
                 state.fxDistBite = 0f;
+                state.fxDistType = 0;
+                state.fx303DriveModel = false;
+                state.fxDelayMode = 0;
+                state.fx303DelayModel = false;
+                state.fxDelayTone = .5f;
                 state.fxDelayRate = 0;
             }));
             fxReset.style.fontSize = 11;
@@ -506,25 +512,65 @@ namespace ZPunk.DAW
             fxHeader.Add(fxReset);
             panel.Add(fxHeader);
 
-            var fxGrid = new VisualElement();
-            fxGrid.style.width = Length.Percent(100);
-            fxGrid.style.flexDirection = FlexDirection.Row;
-            fxGrid.style.flexWrap = Wrap.Wrap;
-            panel.Add(fxGrid);
-            AddAcidDial(fxGrid, "DIST DRIVE", s => s.fxDistortion,
-                (s,v) => { PrepareAcidDistortion(s); s.fxDistortion=v; }, true);
-            AddAcidDial(fxGrid, "DIST TONE", s => s.fxDistControlsInitialized ? s.fxDistTone : .5f,
-                (s,v) => { PrepareAcidDistortion(s); s.fxDistTone=v; }, true);
-            AddAcidDial(fxGrid, "DIST MIX", s => s.fxDistControlsInitialized ? s.fxDistMix :
+            // Tap to choose a pedal colour; knobs keep the same pointer-capture
+            // handlers as the existing ACID dials (no ScrollView mode changes).
+            acidDistortionTypeButton = Action("DISTORTION  /  CLASSIC", () => ChangeAcidState(state =>
+            {
+                PrepareAcidDistortion(state);
+                state.fxDistType = (Mathf.Clamp(state.fxDistType, 0, 8) + 1) % 9;
+                state.fx303DriveModel = state.fxDistType != 0;
+            }));
+            acidDistortionTypeButton.style.height = 44;
+            acidDistortionTypeButton.style.backgroundColor = Tile;
+            panel.Add(acidDistortionTypeButton);
+            var distGrid = new VisualElement();
+            distGrid.style.width = Length.Percent(100);
+            distGrid.style.flexDirection = FlexDirection.Row;
+            distGrid.style.flexWrap = Wrap.Wrap;
+            panel.Add(distGrid);
+            AddAcidDial(distGrid, "DIST DRIVE", s => s.fxDistortion,
+                (s,v) => { PrepareAcidDistortion(s); s.fxDistortion=v;
+                    if (s.fxDistType != 0) s.fx303DriveModel = true; }, true);
+            AddAcidDial(distGrid, "DIST TONE", s => s.fxDistControlsInitialized ? s.fxDistTone : .5f,
+                (s,v) => { PrepareAcidDistortion(s); s.fxDistTone=v;
+                    if (s.fxDistType != 0) s.fx303DriveModel = true; }, true);
+            AddAcidDial(distGrid, "DIST MIX", s => s.fxDistControlsInitialized ? s.fxDistMix :
                 (s.fxDistortion > .0001f ? Mathf.Clamp01(s.fxDistortion * .85f) : .85f),
-                (s,v) => { PrepareAcidDistortion(s); s.fxDistMix=v; }, true);
-            AddAcidDial(fxGrid, "DIST BITE", s => s.fxDistControlsInitialized ? s.fxDistBite : 0f,
-                (s,v) => { PrepareAcidDistortion(s); s.fxDistBite=v; }, true);
-            AddAcidDial(fxGrid, "CHORUS", s => s.fxChorus, (s,v) => s.fxChorus=v, true);
-            AddAcidDial(fxGrid, "DELAY MIX", s => s.fxDelay, (s,v) => s.fxDelay=v, true);
-            AddAcidDial(fxGrid, "FEEDBACK", s => s.fxFeedback, (s,v) => s.fxFeedback=v, true);
-            AddAcidDial(fxGrid, "REVERB", s => s.fxReverb, (s,v) => s.fxReverb=v, true);
-            AddAcidDial(fxGrid, "ROOM SIZE", s => s.fxRoom, (s,v) => s.fxRoom=v, true);
+                (s,v) => { PrepareAcidDistortion(s); s.fxDistMix=v;
+                    if (s.fxDistType != 0) s.fx303DriveModel = true; }, true);
+            AddAcidDial(distGrid, "DIST BITE", s => s.fxDistControlsInitialized ? s.fxDistBite : 0f,
+                (s,v) => { PrepareAcidDistortion(s); s.fxDistBite=v;
+                    if (s.fxDistType != 0) s.fx303DriveModel = true; }, true);
+
+            var echoHeader = T("MODULATION  /  ECHO", 14, Aqua);
+            echoHeader.style.unityFontStyleAndWeight = FontStyle.Bold;
+            echoHeader.style.marginTop = 14;
+            echoHeader.style.marginBottom = 8;
+            panel.Add(echoHeader);
+            acidDelayModeButton = Action("DELAY STYLE  /  ORIGINAL", () => ChangeAcidState(state =>
+            {
+                int oldMode = Mathf.Clamp(state.fxDelayMode, 0, 6);
+                state.fxDelayMode = (oldMode + 1) % 7;
+                state.fx303DelayModel = state.fxDelayMode != 0;
+                if (oldMode == 0 && state.fxDelayTone == 0f) state.fxDelayTone = .5f;
+            }));
+            acidDelayModeButton.style.height = 44;
+            acidDelayModeButton.style.backgroundColor = Tile;
+            panel.Add(acidDelayModeButton);
+            var echoGrid = new VisualElement();
+            echoGrid.style.width = Length.Percent(100);
+            echoGrid.style.flexDirection = FlexDirection.Row;
+            echoGrid.style.flexWrap = Wrap.Wrap;
+            panel.Add(echoGrid);
+            AddAcidDial(echoGrid, "CHORUS", s => s.fxChorus, (s,v) => s.fxChorus=v, true);
+            AddAcidDial(echoGrid, "DELAY MIX", s => s.fxDelay, (s,v) => s.fxDelay=v, true);
+            AddAcidDial(echoGrid, "FEEDBACK", s => s.fxFeedback, (s,v) => s.fxFeedback=v, true);
+            AddAcidDial(echoGrid, "DELAY TONE", s => s.fxDelayMode == 0 && s.fxDelayTone == 0f ? .5f : s.fxDelayTone,
+                (s,v) => { s.fxDelayTone = v;
+                    if (s.fxDelayMode == 0) s.fxDelayMode = 1;
+                    s.fx303DelayModel = true; }, true);
+            AddAcidDial(echoGrid, "REVERB", s => s.fxReverb, (s,v) => s.fxReverb=v, true);
+            AddAcidDial(echoGrid, "ROOM SIZE", s => s.fxRoom, (s,v) => s.fxRoom=v, true);
             acidDelayRateButton = Action("DELAY  /  1/8", () => ChangeAcidState(state =>
                 state.fxDelayRate = (Mathf.Clamp(state.fxDelayRate, 0, 3) + 1) % 4));
             acidDelayRateButton.style.height = 44;
@@ -532,16 +578,6 @@ namespace ZPunk.DAW
             acidDelayRateButton.style.marginBottom = 7;
             acidDelayRateButton.style.backgroundColor = Tile;
             panel.Add(acidDelayRateButton);
-            var fxHint = T("DIST DRIVE adds gain; TONE darkens/brightens; MIX blends clean/processed; BITE adds hard clipping. DRIVE 0 bypasses distortion. CHORUS, DELAY and REVERB have independent mixes.", 11, Dim);
-            fxHint.style.whiteSpace = WhiteSpace.Normal;
-            fxHint.style.marginBottom = 8;
-            panel.Add(fxHint);
-            var explanation = T("DRAG A DIAL UP/DOWN  /  Tap WAVE to switch saw and square. In CREATE, select an ACID note to enable ACCENT or SLIDE. Both are stored per note.", 11, Dim);
-            explanation.style.whiteSpace = WhiteSpace.Normal;
-            explanation.style.marginLeft = 6;
-            explanation.style.marginTop = 8;
-            explanation.style.marginBottom = 14;
-            panel.Add(explanation);
             return panel;
         }
 
@@ -727,6 +763,10 @@ namespace ZPunk.DAW
             var state = CurrentAcidState();
             if (state == null) return;
             if (acidWave != null) acidWave.text = "WAVE  /  " + (state.square ? "SQUARE" : "SAWTOOTH");
+            if (acidDistortionTypeButton != null)
+                acidDistortionTypeButton.text = "DISTORTION TYPE  /  " + ZPunkAcidPresets.DistortionLabel(state.fxDistType);
+            if (acidDelayModeButton != null)
+                acidDelayModeButton.text = "DELAY STYLE  /  " + ZPunkAcidPresets.DelayModeLabel(state.fxDelayMode);
             if (acidDelayRateButton != null)
                 acidDelayRateButton.text = "DELAY RATE  /  " + ZPunkAcidPresets.RateLabel(state.fxDelayRate) + "  ·  BPM SYNC";
             if (presetName != null)
