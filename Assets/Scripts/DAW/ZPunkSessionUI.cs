@@ -21,6 +21,8 @@ namespace ZPunk.DAW
         private const int GoWidth = 52;
         private const int ColumnGap = 4;
         private const int TileHeight = 52;
+        private const int PlaybackHeight = 34;
+        private const int VisibleSceneRows = 5;
         private const int MixButtonHeight = 36;
         private const int MixButtonGap = 4;
         private const int MixRowHeight = MixButtonHeight * 2 + MixButtonGap;
@@ -65,7 +67,12 @@ namespace ZPunk.DAW
         private readonly List<Button> stopButtons = new List<Button>();
         private readonly List<Button> muteButtons = new List<Button>();
         private readonly List<Button> soloButtons = new List<Button>();
+        // Progress is a visual readout of the currently launched clip's loop
+        // position; it does not modify transport or quantized launch timing.
+        private readonly List<VisualElement> playbackFills = new List<VisualElement>();
+        private readonly List<Label> playbackCaptions = new List<Label>();
         private VisualElement page;
+        private ScrollView contentScroll;
         private Label status;
         private Button reloadButton;
         private Button quantizeButton;
@@ -578,6 +585,21 @@ namespace ZPunk.DAW
             page.style.flexGrow = 1;
             page.style.minHeight = 0;
             page.style.minWidth = 0;
+            // Make the complete Session workspace vertically scrollable. The
+            // grid gets its own stable height, independent of the FX drawer.
+            // Expanding FX below it therefore cannot crush the launch rows.
+            contentScroll = new ScrollView(ScrollViewMode.Vertical);
+            contentScroll.name = "ZPunkSessionPageScroll";
+            contentScroll.style.flexGrow = 1;
+            contentScroll.style.flexShrink = 1;
+            contentScroll.style.minHeight = 0;
+            contentScroll.style.minWidth = 0;
+            contentScroll.style.width = Length.Percent(100);
+            contentScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            contentScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            contentScroll.contentContainer.style.flexDirection = FlexDirection.Column;
+            contentScroll.contentContainer.style.flexShrink = 0;
+            page.Add(contentScroll);
             // MASTER / SCOPE belongs exclusively to ARRANGE; Session uses
             // this space for performance controls and the clip grid.
             var intro = new VisualElement();
@@ -595,30 +617,28 @@ namespace ZPunk.DAW
             reloadButton = ActionButton("RELOAD", ShowCurrentProject, 63);
             reloadButton.tooltip = "Refresh clip slots from ARRANGE when Session is stopped";
             intro.Add(reloadButton);
-            var effects = ActionButton(effectsExpanded ? "HIDE FX" : "FILTERS / FX",
-                () => ToggleEffects(), 91);
-            effects.name = "ZPunkSessionFxToggle";
-            effects.tooltip = "Open the same MUSIC/DRUMS filters and MASTER performance FX as ARRANGE";
-            intro.Add(effects);
-            page.Add(intro);
+            contentScroll.Add(intro);
             status = Caption("TAP A CLIP OR A SCENE TO START", 12, Muted);
             status.style.height = 31;
             status.style.unityTextAlign = TextAnchor.MiddleLeft;
             status.style.whiteSpace = WhiteSpace.NoWrap;
             status.style.overflow = Overflow.Hidden;
             status.style.textOverflow = TextOverflow.Ellipsis;
-            page.Add(status);
+            contentScroll.Add(status);
             clipButtons.Clear();
             stopButtons.Clear();
             muteButtons.Clear();
             soloButtons.Clear();
+            playbackFills.Clear();
+            playbackCaptions.Clear();
             if (scenes.Count == 0 || !scenes.Exists(scene =>
                 Array.Exists(scene.patterns, pattern => pattern != null)))
             {
                 var empty = Caption("NO ARRANGEMENT CLIPS YET.\nCREATE CLIPS, THEN TAP RELOAD.", 14, Muted);
                 empty.style.whiteSpace = WhiteSpace.Normal;
                 empty.style.marginTop = 28;
-                page.Add(empty);
+                contentScroll.Add(empty);
+                AddPerformanceToggle();
                 AddPerformanceDrawer();
                 LayoutRebuilt?.Invoke();
                 return;
@@ -627,13 +647,21 @@ namespace ZPunk.DAW
             scroller.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             scroller.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             scroller.name = "ZPunkSessionGridScroll";
-            scroller.style.flexGrow = 1;
-            scroller.style.flexShrink = 1;
-            scroller.style.minHeight = 0;
+            // Exactly the same launch-grid viewport when FX is open or shut.
+            // Beyond five scenes the grid scrolls internally; on short phones
+            // the whole page also scrolls, keeping every control accessible.
+            int visibleScenes = Math.Min(scenes.Count, VisibleSceneRows);
+            int gridHeight = 35 + visibleScenes * (TileHeight + ColumnGap) +
+                PlaybackHeight + ColumnGap + MixRowHeight + ColumnGap +
+                TileHeight + ColumnGap + 6;
+            scroller.style.height = gridHeight;
+            scroller.style.minHeight = gridHeight;
+            scroller.style.flexGrow = 0;
+            scroller.style.flexShrink = 0;
             scroller.style.minWidth = 0;
             scroller.style.width = Length.Percent(100);
             scroller.contentContainer.style.flexDirection = FlexDirection.Column;
-            page.Add(scroller);
+            contentScroll.Add(scroller);
 
             var headings = new VisualElement();
             headings.style.flexDirection = FlexDirection.Row;
@@ -723,6 +751,61 @@ namespace ZPunk.DAW
                 scroller.Add(row);
             }
 
+            // Per-track Ableton-style clip position, directly above M/S.
+            // This row has precisely the same Column() wrappers as the clips.
+            var playback = new VisualElement();
+            playback.style.flexDirection = FlexDirection.Row;
+            playback.style.height = PlaybackHeight + ColumnGap;
+            playback.style.flexShrink = 0;
+            var playbackHead = Column(SceneWidth);
+            playbackHead.Add(RowBadge("PLAY", PlaybackHeight));
+            playback.Add(playbackHead);
+            for (int t = 0; t < initialSlots.Length; t++)
+            {
+                var column = Column(TrackWidth);
+                var cell = new VisualElement();
+                cell.style.width = Length.Percent(100);
+                cell.style.height = PlaybackHeight;
+                cell.style.flexShrink = 0;
+                cell.style.backgroundColor = new Color(.10f, .14f, .19f);
+                cell.style.borderTopLeftRadius = 5;
+                cell.style.borderTopRightRadius = 5;
+                cell.style.borderBottomLeftRadius = 5;
+                cell.style.borderBottomRightRadius = 5;
+                cell.style.justifyContent = Justify.Center;
+                var readout = Caption("—", 11, Muted);
+                readout.style.height = 18;
+                readout.style.unityFontStyleAndWeight = FontStyle.Bold;
+                readout.tooltip = "Current clip's bar and progress through its loop";
+                cell.Add(readout);
+                var rail = new VisualElement();
+                rail.style.height = 4;
+                rail.style.marginTop = 1;
+                rail.style.marginLeft = 7;
+                rail.style.marginRight = 7;
+                rail.style.backgroundColor = new Color(.18f, .23f, .29f);
+                rail.style.borderTopLeftRadius = 2;
+                rail.style.borderTopRightRadius = 2;
+                rail.style.borderBottomLeftRadius = 2;
+                rail.style.borderBottomRightRadius = 2;
+                var fill = new VisualElement();
+                fill.style.height = Length.Percent(100);
+                fill.style.width = Length.Percent(0);
+                fill.style.backgroundColor = TrackColor(t);
+                fill.style.borderTopLeftRadius = 2;
+                fill.style.borderTopRightRadius = 2;
+                fill.style.borderBottomLeftRadius = 2;
+                fill.style.borderBottomRightRadius = 2;
+                fill.pickingMode = PickingMode.Ignore;
+                rail.Add(fill);
+                cell.Add(rail);
+                column.Add(cell);
+                playback.Add(column);
+                playbackCaptions.Add(readout);
+                playbackFills.Add(fill);
+            }
+            scroller.Add(playback);
+
             // Keep M and S stacked inside the *same* column wrapper as clips.
             var controls = new VisualElement();
             controls.style.flexDirection = FlexDirection.Row;
@@ -776,10 +859,44 @@ namespace ZPunk.DAW
             var stopAll = ActionButton("STOP ALL", StopAll, 92);
             stopAll.style.color = Accent;
             footer.Add(stopAll);
-            page.Add(footer);
+            contentScroll.Add(footer);
+            AddPerformanceToggle();
             AddPerformanceDrawer();
             RefreshButtons();
             LayoutRebuilt?.Invoke();
+        }
+
+        // The toggle lives AFTER the complete grid and footer. Opening the
+        // drawer adds content below this point, never above or over the grid.
+        private void AddPerformanceToggle()
+        {
+            var button = ActionButton("", ToggleEffects, 100);
+            button.name = "ZPunkSessionFxToggle";
+            button.style.width = Length.Percent(100);
+            button.style.minWidth = 0;
+            button.style.marginTop = 10;
+            button.style.marginBottom = 5;
+            button.style.height = 42;
+            button.style.fontSize = 13;
+            button.style.unityFontStyleAndWeight = FontStyle.Bold;
+            button.style.color = Accent;
+            button.style.backgroundColor = new Color(.10f, .17f, .20f);
+            SetEffectsButtonIcon(button);
+            button.tooltip = "Expand or collapse shared MUSIC / DRUMS filters and MASTER FX below the Session grid";
+            contentScroll.Add(button);
+        }
+
+        private void SetEffectsButtonIcon(Button button)
+        {
+            if (button == null) return;
+            // Rendered arrows, not font glyphs, for consistent iOS/Android UI.
+            ZPunkUIIcons.Apply(button, effectsExpanded ? "down" : "right",
+                "FILTERS / FX", 15f, false);
+            var icon = button.Q<Image>("ZPunkIcon");
+            if (icon != null) icon.tintColor = Accent;
+            var caption = button.Q<Label>("ZPunkIconCaption");
+            if (caption != null) caption.style.color = Accent;
+            button.tooltip = "Expand or collapse the shared filters and FX below Session";
         }
 
         private void ToggleEffects()
@@ -787,8 +904,7 @@ namespace ZPunk.DAW
             effectsExpanded = !effectsExpanded;
             var drawer = page?.Q<VisualElement>("ZPunkSessionPerformanceDrawer");
             if (drawer != null) drawer.style.display = effectsExpanded ? DisplayStyle.Flex : DisplayStyle.None;
-            var button = page?.Q<Button>("ZPunkSessionFxToggle");
-            if (button != null) button.text = effectsExpanded ? "HIDE FX" : "FILTERS / FX";
+            SetEffectsButtonIcon(page?.Q<Button>("ZPunkSessionFxToggle"));
         }
 
         private void AddPerformanceDrawer()
@@ -810,7 +926,7 @@ namespace ZPunk.DAW
             host.style.minWidth = 0;
             host.style.flexShrink = 0;
             drawer.Add(host);
-            page.Add(drawer);
+            if (contentScroll != null) contentScroll.Add(drawer);
         }
 
         private void RefreshButtons()
@@ -844,6 +960,33 @@ namespace ZPunk.DAW
                         mostRecent = launch.at;
                         active = launch.scene;
                     }
+                // The active slot has a known launch tick and a source clip
+                // length. Calculate loop phase from the same transport tick
+                // used for the selected/queued clip colors, including after
+                // 1/8-note quantized changes and the 64-bar cycle restart.
+                if (t < playbackCaptions.Count && t < playbackFills.Count)
+                {
+                    Label readout = playbackCaptions[t];
+                    VisualElement fill = playbackFills[t];
+                    if (isRunning && active >= 0 && active < scenes.Count &&
+                        scenes[active].patterns[t] != null)
+                    {
+                        long length = Math.Max(1L, scenes[active].patterns[t].lengthTicks);
+                        long start = Math.Max(0L, mostRecent);
+                        long phase = Math.Max(0L, now - start) % length;
+                        int totalBars = Math.Max(1, (int)Math.Ceiling(length / (double)BarTicks));
+                        int currentBar = Math.Min(totalBars, 1 + (int)(phase / BarTicks));
+                        readout.text = currentBar.ToString("00") + " / " + totalBars.ToString("00");
+                        readout.style.color = TrackColor(t);
+                        fill.style.width = Length.Percent((float)(phase * 100.0 / length));
+                    }
+                    else
+                    {
+                        readout.text = "—";
+                        readout.style.color = Muted;
+                        fill.style.width = Length.Percent(0);
+                    }
+                }
                 if (clipButtons.TryGetValue(t, out var buttons))
                     for (int s = 0; s < buttons.Count; s++)
                     {
