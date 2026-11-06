@@ -1209,6 +1209,18 @@ namespace ZPunk.DAW
                     sessionPlaybackSnapshot.tracks[i].volume = updated.tracks[i].volume;
                     sessionPlaybackSnapshot.tracks[i].pan = updated.tracks[i].pan;
                 }
+                // SESSION plays a separate, temporary song. The shared
+                // PERFORMANCE FX controls edit the persistent project, so the
+                // temporary song must receive those values before
+                // ApplyAllTrackGains() publishes the master DSP settings.
+                // Otherwise the old session values immediately overwrite the
+                // knobs and DRIVE/GATE/CRUSH/REPEAT appear to do nothing.
+                sessionPlaybackSnapshot.performanceDrive = updated.performanceDrive;
+                sessionPlaybackSnapshot.performanceGate = updated.performanceGate;
+                sessionPlaybackSnapshot.performanceCrush = updated.performanceCrush;
+                sessionPlaybackSnapshot.performanceRepeat = updated.performanceRepeat;
+                sessionPlaybackSnapshot.performanceGateRate = updated.performanceGateRate;
+                sessionPlaybackSnapshot.performanceRepeatRate = updated.performanceRepeatRate;
                 song = sessionPlaybackSnapshot;
             }
             else if (updated != null) song = updated;

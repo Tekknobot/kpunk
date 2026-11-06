@@ -746,12 +746,15 @@ namespace ZPunk.DAW
             edit(song);
             // Changes in ARRANGEMENT do not rebuild MIDI notes or sample queues.
             projects.AcceptArrangementEdit(song);
-            ZPunkMasterAudioTap.ApplySongSettings(song);
-            if (transport != null) transport.ApplyLiveMix(song);
-            // Session builds temporary clips from a copied project snapshot;
-            // mirror only master FX settings so the next queued launch cannot
-            // restore stale effects while performance playback is running.
+            // Keep future scene launches in sync with the edited project.
             GetComponent<ZPunkSessionUI>()?.MirrorPerformanceSettings(song);
+            // ApplyLiveMix also publishes master DSP settings. During SESSION
+            // it first copies the edited amounts into the active performance
+            // snapshot, so only that snapshot reaches the audio processor.
+            // Publishing the project song first would swap audio FX sources
+            // twice on each drag and could reset tempo-synced effect buffers.
+            if (transport != null) transport.ApplyLiveMix(song);
+            else ZPunkMasterAudioTap.ApplySongSettings(song);
         }
 
         private void SetPerformanceAmount(int index, float value)
