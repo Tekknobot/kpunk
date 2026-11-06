@@ -34,6 +34,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
     // Arrangement-only master scope. The trigger and drawer live inside the
     // Arrangement page's own vertical ScrollView, never above the other pages.
     private VisualElement scopeDrawer;
+    private VisualElement scopeBar;
+    private VisualElement arrangementScopeContainer;
     private ZPunkMasterWaveformView masterWaveform;
     private ZPunkMasterAudioTap masterAudioTap;
     private Button scopeToggle;
@@ -162,6 +164,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         arrangement.Initialize(pageArrangement);
         session=GetComponent<ZPunkSessionUI>();
         if(session==null)session=gameObject.AddComponent<ZPunkSessionUI>();
+        session.LayoutRebuilt = MountScopeInCurrentWorkspace;
         session.Initialize(pageSession);
         editor=GetComponent<ZPunkClipEditorUI>();
         if(editor==null)editor=gameObject.AddComponent<ZPunkClipEditorUI>();
@@ -371,6 +374,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
         sessionToggle.style.paddingLeft=0;
         sessionToggle.style.paddingRight=0;
         sessionToggle.style.marginRight=4;
+        sessionToggle.style.borderTopWidth=1;
+        sessionToggle.style.borderBottomWidth=1;
+        sessionToggle.style.borderLeftWidth=1;
+        sessionToggle.style.borderRightWidth=1;
+        sessionToggle.style.borderTopColor=Dim;
+        sessionToggle.style.borderBottomColor=Dim;
+        sessionToggle.style.borderLeftColor=Dim;
+        sessionToggle.style.borderRightColor=Dim;
         var iconGrid=new VisualElement();
         iconGrid.style.width=20;
         iconGrid.style.height=20;
@@ -617,7 +628,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
             return;
         }
 
-        var scopeBar = new VisualElement { name = "ZPunkMasterScopeBar" };
+        scopeBar = new VisualElement { name = "ZPunkMasterScopeBar" };
+        arrangementScopeContainer = arrangementScroll.contentContainer;
         scopeBar.style.height = 54;
         scopeBar.style.flexDirection = FlexDirection.Row;
         scopeBar.style.alignItems = Align.Center;
@@ -705,6 +717,21 @@ public sealed class KMusicTabsUI : MonoBehaviour
         RefreshScopeToggle();
     }
 
+    // One master audio scope shared by ARRANGE and SESSION. Never create
+    // duplicate waveform/tap instances. Reparent only the visual controls.
+    private void MountScopeInCurrentWorkspace()
+    {
+        if (scopeBar == null || scopeDrawer == null) return;
+        VisualElement target = workspace == "session" && pageSession != null
+            ? pageSession.Q<VisualElement>("ZPunkSessionScopeHost") : arrangementScopeContainer;
+        if (target == null) return;
+        if (scopeBar.parent == target && scopeDrawer.parent == target) return;
+        scopeBar.RemoveFromHierarchy();
+        scopeDrawer.RemoveFromHierarchy();
+        target.Insert(0, scopeBar);
+        target.Insert(1, scopeDrawer);
+    }
+
     private void ToggleScope() { SetScopeOpen(!scopeIsOpen); }
 
     private void RefreshScopeToggle()
@@ -721,7 +748,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         scopeIsOpen = open;
         RefreshScopeToggle();
         if (scopeAnimation != null) { StopCoroutine(scopeAnimation); scopeAnimation = null; }
-        if (open && workspace == "arrange")
+        if (open && (workspace == "arrange" || workspace == "session"))
         {
             nextTapSearch = 0f;
             nextScopeFrame = 0f;
@@ -764,7 +791,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
 
     private void EnsureMasterTap()
     {
-        if (!scopeIsOpen || workspace != "arrange") return;
+        if (!scopeIsOpen || (workspace != "arrange" && workspace != "session")) return;
         if (masterAudioTap == null || !masterAudioTap.isActiveAndEnabled)
         {
             // Match the existing WAV export capture point: listen to the master
@@ -1349,7 +1376,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
                     arrangement!=null?arrangement.SelectedClipId:null);
             else editor.OnShown();
         }
-        else if(target=="session")session?.OnShown();
+        else if(target=="session") { session?.OnShown(); MountScopeInCurrentWorkspace(); }
         else if(target=="sound")sound.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:-1);
         else if(target=="mix")mixer.OnShown();
     }
@@ -1369,12 +1396,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(heading!=null)heading.text=workspace=="session"?"SESSION":workspace=="arrange"?"ARRANGE":workspace=="create"?"CREATE":workspace=="sound"?"SOUND":"MIX";
         if(subheading!=null)subheading.text=workspace=="session"?"  /  CLIP LAUNCH":workspace=="arrange"?"  /  SONG TIMELINE":
             workspace=="create"?"  /  NOTE EDITOR":workspace=="sound"?"  /  PRESET SHAPER":"  /  LEVELS";
+        if(headerBrand!=null)headerBrand.style.display=workspace=="session"?DisplayStyle.None:DisplayStyle.Flex;
         if(sessionToggle!=null)
         {
             sessionToggle.style.backgroundColor=workspace=="session"?Selected:NavBg;
-            sessionToggle.style.borderBottomWidth=workspace=="session"?2:0;
-            sessionToggle.style.borderBottomColor=Accent;
+            sessionToggle.style.borderBottomWidth=1;
+            sessionToggle.style.borderBottomColor=workspace=="session"?Accent:Dim;
         }
+        MountScopeInCurrentWorkspace();
         StyleNav(arrangeButton,workspace=="arrange" || workspace=="session");
         StyleNav(createButton,workspace=="create");
         StyleNav(soundButton,workspace=="sound");
@@ -1382,8 +1411,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
         // Scope belongs exclusively to the ARRANGE page. Preserve its expanded
         // state between tabs, but stop sampling while another page is visible.
         if (masterAudioTap != null)
-            masterAudioTap.CaptureEnabled = scopeIsOpen && workspace == "arrange";
-        if (scopeIsOpen && workspace == "arrange")
+            masterAudioTap.CaptureEnabled = scopeIsOpen && (workspace == "arrange" || workspace == "session");
+        if (scopeIsOpen && (workspace == "arrange" || workspace == "session"))
         {
             nextScopeFrame = 0f;
             nextTapSearch = 0f;
@@ -1467,7 +1496,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private void Update()
     {
         if(!isReady)return;
-        if (workspace == "arrange" && scopeIsOpen && masterWaveform != null && Time.unscaledTime >= nextScopeFrame)
+        if ((workspace == "arrange" || workspace == "session") && scopeIsOpen && masterWaveform != null && Time.unscaledTime >= nextScopeFrame)
         {
             nextScopeFrame = Time.unscaledTime + 1f / 20f;
             if (scopeAnimation == null && scopeDrawer != null)

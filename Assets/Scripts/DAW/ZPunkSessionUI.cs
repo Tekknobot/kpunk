@@ -64,6 +64,7 @@ namespace ZPunk.DAW
         private float nextRefresh;
         private bool initialized;
         public Action<int> CreateRequested;
+        public Action LayoutRebuilt;
 
         public void Initialize(VisualElement target)
         {
@@ -462,6 +463,13 @@ namespace ZPunk.DAW
             page.style.flexGrow = 1;
             page.style.minHeight = 0;
             page.style.minWidth = 0;
+            // Reserve the same inline MASTER / SCOPE module used by ARRANGE.
+            // KMusicTabsUI moves the existing module here when SESSION is visible.
+            var scopeHost = new VisualElement { name = "ZPunkSessionScopeHost" };
+            scopeHost.style.flexDirection = FlexDirection.Column;
+            scopeHost.style.flexShrink = 0;
+            scopeHost.style.minWidth = 0;
+            page.Add(scopeHost);
             var intro = new VisualElement();
             intro.style.flexDirection = FlexDirection.Row;
             intro.style.alignItems = Align.Center;
@@ -493,9 +501,13 @@ namespace ZPunk.DAW
                 empty.style.whiteSpace = WhiteSpace.Normal;
                 empty.style.marginTop = 28;
                 page.Add(empty);
+                LayoutRebuilt?.Invoke();
                 return;
             }
             var scroller = new ScrollView(ScrollViewMode.VerticalAndHorizontal);
+            // Maintain touch/swipe scrolling without the native bright scrollbars.
+            scroller.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            scroller.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             scroller.name = "ZPunkSessionGridScroll";
             scroller.style.flexGrow = 1;
             scroller.style.flexShrink = 1;
@@ -510,6 +522,7 @@ namespace ZPunk.DAW
             var sceneLabel = Caption("SCENE", 11, Muted);
             sceneLabel.style.width = 61;
             sceneLabel.style.minWidth = 61;
+            sceneLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
             headings.Add(sceneLabel);
             for (int t = 0; t < initialSlots.Length; t++)
             {
@@ -536,11 +549,33 @@ namespace ZPunk.DAW
                 var row = new VisualElement();
                 row.style.flexDirection = FlexDirection.Row;
                 row.style.height = 57;
+                // Scene tiles match the arrangement's tidy track-header treatment.
+                var sceneCell = new VisualElement();
+                sceneCell.style.width = 58;
+                sceneCell.style.minWidth = 58;
+                sceneCell.style.height = 51;
+                sceneCell.style.marginRight = 3;
+                sceneCell.style.marginBottom = 3;
+                sceneCell.style.flexDirection = FlexDirection.Row;
+                sceneCell.style.alignItems = Align.Center;
+                sceneCell.style.backgroundColor = new Color(.10f,.14f,.19f);
+                sceneCell.style.borderTopLeftRadius = 5;
+                sceneCell.style.borderBottomLeftRadius = 5;
+                sceneCell.style.borderTopRightRadius = 5;
+                sceneCell.style.borderBottomRightRadius = 5;
+                var sceneStripe = new VisualElement();
+                sceneStripe.style.width = 3;
+                sceneStripe.style.height = 35;
+                sceneStripe.style.marginLeft = 2;
+                sceneStripe.style.backgroundColor = Accent;
+                sceneStripe.pickingMode = PickingMode.Ignore;
+                sceneCell.Add(sceneStripe);
                 var rowLabel = Caption((s + 1).ToString("00"), 13, Ink);
-                rowLabel.style.width = 61;
-                rowLabel.style.minWidth = 61;
+                rowLabel.style.flexGrow = 1;
+                rowLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
                 rowLabel.tooltip = "ARRANGE bar " + (scenes[s].sourceTick / BarTicks + 1);
-                row.Add(rowLabel);
+                sceneCell.Add(rowLabel);
+                row.Add(sceneCell);
                 for (int t = 0; t < initialSlots.Length; t++)
                 {
                     int track = t;
@@ -565,9 +600,11 @@ namespace ZPunk.DAW
                 row.Add(go);
                 scroller.Add(row);
             }
+            // M and S are stacked, giving every lane a single full-width tile
+            // aligned exactly with the clip pads above (no cramped half-width row).
             var controls = new VisualElement();
             controls.style.flexDirection = FlexDirection.Row;
-            controls.style.height = 51;
+            controls.style.height = 59;
             var mixLabel = Caption("M / S", 10, Muted);
             mixLabel.style.width = 61;
             mixLabel.style.minWidth = 61;
@@ -576,11 +613,15 @@ namespace ZPunk.DAW
             {
                 int track = t;
                 var group = new VisualElement();
-                group.style.flexDirection = FlexDirection.Row;
-                group.style.width = 76;
-                var mute = ActionButton("M", () => ToggleMute(track), 34);
-                var solo = ActionButton("S", () => ToggleSolo(track), 34);
-                mute.style.height = solo.style.height = 37;
+                group.style.flexDirection = FlexDirection.Column;
+                group.style.width = 73;
+                group.style.minWidth = 73;
+                group.style.marginRight = 3;
+                var mute = ActionButton("M", () => ToggleMute(track), 73);
+                var solo = ActionButton("S", () => ToggleSolo(track), 73);
+                mute.style.height = solo.style.height = 26;
+                mute.style.marginBottom = solo.style.marginBottom = 2;
+                mute.style.marginRight = solo.style.marginRight = 0;
                 muteButtons.Add(mute);
                 soloButtons.Add(solo);
                 group.Add(mute);
@@ -590,7 +631,7 @@ namespace ZPunk.DAW
             scroller.Add(controls);
             var stops = new VisualElement();
             stops.style.flexDirection = FlexDirection.Row;
-            stops.style.height = 49;
+            stops.style.height = 53;
             var stopLabel = Caption("STOP", 10, Muted);
             stopLabel.style.width = 61;
             stopLabel.style.minWidth = 61;
@@ -599,8 +640,12 @@ namespace ZPunk.DAW
             {
                 int track = t;
                 var button = ActionButton("", () => QueueClip(track, -1), 73);
-                button.style.height = 40;
-                ZPunkUIIcons.Apply(button, "stop", "", 16f);
+                button.style.height = 47;
+                // The stock 'stop' icon is an outline. A solid square is more
+                // recognizable and matches the transport's filled stop icon.
+                button.text = "■";
+                button.style.fontSize = 23;
+                button.style.color = Ink;
                 button.tooltip = "Stop this lane on the next bar";
                 stops.Add(button);
                 stopButtons.Add(button);
@@ -617,6 +662,7 @@ namespace ZPunk.DAW
             footer.Add(stopAll);
             page.Add(footer);
             RefreshButtons();
+            LayoutRebuilt?.Invoke();
         }
 
         private void RefreshButtons()
