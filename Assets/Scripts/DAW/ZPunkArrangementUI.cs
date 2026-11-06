@@ -67,6 +67,7 @@ namespace ZPunk.DAW
         private readonly Dictionary<VisualElement, FilterKnob> filterKnobs =
             new Dictionary<VisualElement, FilterKnob>();
         private readonly Button[] performanceRateButtons = new Button[4];
+        private VisualElement filterStrip, performanceFxSection, filterPointerRoot, sessionInputRoot;
         private FilterKnob activeFilter;
         private int filterPointer = -1;
         private float filterStartY, filterStartAmount;
@@ -166,6 +167,76 @@ namespace ZPunk.DAW
             page.RegisterCallback<PointerCancelEvent>(OnClipPointerCancel, TrickleDown.TrickleDown);
             page.RegisterCallback<PointerCaptureOutEvent>(OnClipCaptureLost);
             initialized = true;
+        }
+
+        /// <summary>Allow the same knob instances to work inside Session.
+        /// Pointer capture belongs to whichever workspace received the touch.</summary>
+        public void AttachPerformanceInputRoot(VisualElement root)
+        {
+            if (sessionInputRoot == root) return;
+            if (sessionInputRoot != null)
+            {
+                sessionInputRoot.UnregisterCallback<PointerDownEvent>(OnFilterDown, TrickleDown.TrickleDown);
+                sessionInputRoot.UnregisterCallback<PointerMoveEvent>(OnFilterMove, TrickleDown.TrickleDown);
+                sessionInputRoot.UnregisterCallback<PointerUpEvent>(OnFilterUp, TrickleDown.TrickleDown);
+                sessionInputRoot.UnregisterCallback<PointerCancelEvent>(OnFilterCancel, TrickleDown.TrickleDown);
+                sessionInputRoot.UnregisterCallback<PointerCaptureOutEvent>(OnFilterCaptureLost);
+            }
+            sessionInputRoot = root;
+            if (root == null) return;
+            root.RegisterCallback<PointerDownEvent>(OnFilterDown, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerMoveEvent>(OnFilterMove, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerUpEvent>(OnFilterUp, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerCancelEvent>(OnFilterCancel, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerCaptureOutEvent>(OnFilterCaptureLost);
+        }
+
+        /// <summary>Move the existing UI Toolkit controls without duplicating
+        /// DSP/knob state. A null host restores them below ARRANGE's timeline.</summary>
+        public void MountPerformanceControls(VisualElement host)
+        {
+            if (filterStrip == null || performanceFxSection == null || arrangementPageScroll == null) return;
+            if (activeFilter != null && filterPointerRoot != null && filterPointer >= 0 &&
+                filterPointerRoot.HasPointerCapture(filterPointer))
+                filterPointerRoot.ReleasePointer(filterPointer);
+            activeFilter = null;
+            filterPointer = -1;
+            filterPointerRoot = null;
+            if (host == null) host = arrangementPageScroll.contentContainer;
+            if (filterStrip.parent != host || performanceFxSection.parent != host)
+            {
+                filterStrip.RemoveFromHierarchy();
+                performanceFxSection.RemoveFromHierarchy();
+                if (host == arrangementPageScroll.contentContainer && details != null)
+                {
+                    int i = 0;
+                    foreach (var child in host.Children())
+                    {
+                        if (child == details) break;
+                        i++;
+                    }
+                    host.Insert(i, filterStrip);
+                    host.Insert(i + 1, performanceFxSection);
+                }
+                else
+                {
+                    host.Add(filterStrip);
+                    host.Add(performanceFxSection);
+                }
+            }
+            RefreshFilterKnobs();
+        }
+
+        public void RefreshSharedPerformanceControls()
+        {
+            if (projects != null && projects.CurrentSong != null &&
+                (!ReferenceEquals(song,projects.CurrentSong) || projectSlot != projects.CurrentSlot))
+            {
+                song = projects.CurrentSong;
+                ownsSong = true;
+                projectSlot = projects.CurrentSlot;
+            }
+            RefreshFilterKnobs();
         }
 
         public void OnShown()
@@ -520,6 +591,7 @@ namespace ZPunk.DAW
         {
             // One horizontal strip under the arrangement: MUSIC LP/HP | DRUMS LP/HP.
             var banks = new VisualElement { name = "ZPunkArrangementFilterStrip" };
+            filterStrip = banks;
             banks.style.flexDirection = FlexDirection.Row;
             banks.style.width = new Length(100, LengthUnit.Percent);
             banks.style.flexShrink = 0;
@@ -536,6 +608,7 @@ namespace ZPunk.DAW
         private void BuildArrangementPerformanceFx()
         {
             var section = new VisualElement { name = "ZPunkArrangementPerformanceFx" };
+            performanceFxSection = section;
             section.style.width = new Length(100, LengthUnit.Percent);
             section.style.flexShrink = 0;
             section.style.backgroundColor = new Color(.092f, .125f, .17f);
@@ -675,6 +748,10 @@ namespace ZPunk.DAW
             projects.AcceptArrangementEdit(song);
             ZPunkMasterAudioTap.ApplySongSettings(song);
             if (transport != null) transport.ApplyLiveMix(song);
+            // Session builds temporary clips from a copied project snapshot;
+            // mirror only master FX settings so the next queued launch cannot
+            // restore stale effects while performance playback is running.
+            GetComponent<ZPunkSessionUI>()?.MirrorPerformanceSettings(song);
         }
 
         private void SetPerformanceAmount(int index, float value)
@@ -839,7 +916,8 @@ namespace ZPunk.DAW
             filterStartAmount = knob.fxIndex >= 0 ? ReadPerformanceAmount(knob.fxIndex) :
                 ZPunkArrangementFilters.Get(knob.drums, knob.lowPass);
             lockedFilterScroll = arrangementPageScroll != null ? arrangementPageScroll.scrollOffset : Vector2.zero;
-            page.CapturePointer(evt.pointerId);
+            filterPointerRoot = evt.currentTarget as VisualElement ?? page;
+            filterPointerRoot.CapturePointer(evt.pointerId);
             evt.StopPropagation();
         }
 
@@ -860,7 +938,9 @@ namespace ZPunk.DAW
             if (activeFilter == null || filterPointer != pointerId) return;
             activeFilter = null;
             filterPointer = -1;
-            if (page.HasPointerCapture(pointerId)) page.ReleasePointer(pointerId);
+            if (filterPointerRoot != null && filterPointerRoot.HasPointerCapture(pointerId))
+                filterPointerRoot.ReleasePointer(pointerId);
+            filterPointerRoot = null;
         }
 
         private void OnFilterUp(PointerUpEvent evt)
@@ -878,7 +958,7 @@ namespace ZPunk.DAW
         private void OnFilterCaptureLost(PointerCaptureOutEvent evt)
         {
             if (activeFilter != null && filterPointer == evt.pointerId)
-            { activeFilter = null; filterPointer = -1; }
+            { activeFilter = null; filterPointer = -1; filterPointerRoot = null; }
         }
 
         private Button CommandButton(string label, Action action)

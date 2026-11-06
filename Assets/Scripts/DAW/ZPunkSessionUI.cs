@@ -16,6 +16,11 @@ namespace ZPunk.DAW
         // replanning on mobile doesn't compile a huge hour-long event list.
         private const int PerformanceBars = 64;
         private const int MaxScenes = 48;
+        private const int SceneWidth = 64;
+        private const int TrackWidth = 80;
+        private const int GoWidth = 52;
+        private const int ColumnGap = 4;
+        private const int TileHeight = 52;
         private const long BarTicks = SongData.TicksPerBar4;
         private const long PerformanceTicks = PerformanceBars * BarTicks;
         private static readonly Color Bg = new Color(.075f, .092f, .125f);
@@ -52,6 +57,7 @@ namespace ZPunk.DAW
         private readonly List<Button> soloButtons = new List<Button>();
         private VisualElement page;
         private Label status;
+        private Button reloadButton;
         private SongData source;
         private SongData sourceDocument;
         private KMusicProjectManager projects;
@@ -65,6 +71,8 @@ namespace ZPunk.DAW
         private bool initialized;
         public Action<int> CreateRequested;
         public Action LayoutRebuilt;
+        public Action BeforeLayoutRebuild;
+        private bool effectsExpanded;
 
         public void Initialize(VisualElement target)
         {
@@ -131,6 +139,19 @@ namespace ZPunk.DAW
             previousTick = 0;
             BuildScenes();
             BuildLayout();
+        }
+
+        /// <summary>Share persisted master FX with performance snapshots without
+        /// modifying the temporary scene/clip launches or stopping playback.</summary>
+        public void MirrorPerformanceSettings(SongData edited)
+        {
+            if (source == null || edited == null) return;
+            source.performanceDrive = edited.performanceDrive;
+            source.performanceGate = edited.performanceGate;
+            source.performanceCrush = edited.performanceCrush;
+            source.performanceRepeat = edited.performanceRepeat;
+            source.performanceGateRate = edited.performanceGateRate;
+            source.performanceRepeatRate = edited.performanceRepeatRate;
         }
 
         private void BuildScenes()
@@ -433,14 +454,48 @@ namespace ZPunk.DAW
             button.style.fontSize = 12;
             button.style.color = Ink;
             button.style.backgroundColor = Surface;
-            button.style.marginRight = 3;
-            button.style.marginBottom = 3;
+            // Explicit zero margins/padding: Unity's default Button margins
+            // otherwise make M/S and STOP start several pixels to the right.
+            button.style.marginLeft = 0;
+            button.style.marginRight = 0;
+            button.style.marginTop = 0;
+            button.style.marginBottom = 0;
+            button.style.paddingLeft = 0;
+            button.style.paddingRight = 0;
             button.style.borderTopLeftRadius = 5;
             button.style.borderTopRightRadius = 5;
             button.style.borderBottomLeftRadius = 5;
             button.style.borderBottomRightRadius = 5;
             return button;
         }
+        // Every heading, clip, M/S pair and stop uses the identical column
+        // wrapper. The column width includes no button margins.
+        private static VisualElement Column(int width)
+        {
+            var column = new VisualElement();
+            column.style.width = width;
+            column.style.minWidth = width;
+            column.style.flexShrink = 0;
+            column.style.marginRight = ColumnGap;
+            column.style.paddingLeft = 0;
+            column.style.paddingRight = 0;
+            column.style.justifyContent = Justify.Center;
+            return column;
+        }
+
+        private static void FillColumn(Button button, int height)
+        {
+            button.style.width = Length.Percent(100);
+            button.style.minWidth = 0;
+            button.style.height = height;
+            button.style.flexGrow = 0;
+            button.style.flexShrink = 0;
+            button.style.marginLeft = 0;
+            button.style.marginRight = 0;
+            button.style.marginTop = 0;
+            button.style.marginBottom = 0;
+        }
+
         private Color TrackColor(int track)
         {
             if (source != null && source.tracks != null && track < source.tracks.Count &&
@@ -453,6 +508,8 @@ namespace ZPunk.DAW
         private void BuildLayout()
         {
             if (page == null) return;
+            // Shared scope/FX live instances must be moved out before Clear.
+            BeforeLayoutRebuild?.Invoke();
             page.Clear();
             page.style.backgroundColor = Bg;
             page.style.paddingLeft = 8;
@@ -475,13 +532,18 @@ namespace ZPunk.DAW
             intro.style.alignItems = Align.Center;
             intro.style.justifyContent = Justify.SpaceBetween;
             intro.style.marginBottom = 7;
-            var title = Caption("LIVE CLIPS  /  1 BAR QUANTIZE", 12, Accent);
+            var title = Caption("1 BAR QUANTIZE", 12, Accent);
             title.style.unityTextAlign = TextAnchor.MiddleLeft;
             title.style.flexShrink = 1;
             intro.Add(title);
-            var refresh = ActionButton("SYNC", ShowCurrentProject, 59);
-            refresh.tooltip = "Reload clip slots from ARRANGE; stops the current session";
-            intro.Add(refresh);
+            reloadButton = ActionButton("RELOAD", ShowCurrentProject, 63);
+            reloadButton.tooltip = "Refresh clip slots from ARRANGE when Session is stopped";
+            intro.Add(reloadButton);
+            var effects = ActionButton(effectsExpanded ? "HIDE FX" : "FILTERS / FX",
+                () => ToggleEffects(), 91);
+            effects.name = "ZPunkSessionFxToggle";
+            effects.tooltip = "Open the same MUSIC/DRUMS filters and MASTER performance FX as ARRANGE";
+            intro.Add(effects);
             page.Add(intro);
             status = Caption("TAP A CLIP OR A SCENE TO START", 12, Muted);
             status.style.height = 31;
@@ -501,11 +563,11 @@ namespace ZPunk.DAW
                 empty.style.whiteSpace = WhiteSpace.Normal;
                 empty.style.marginTop = 28;
                 page.Add(empty);
+                AddPerformanceDrawer();
                 LayoutRebuilt?.Invoke();
                 return;
             }
             var scroller = new ScrollView(ScrollViewMode.VerticalAndHorizontal);
-            // Maintain touch/swipe scrolling without the native bright scrollbars.
             scroller.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             scroller.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             scroller.name = "ZPunkSessionGridScroll";
@@ -513,49 +575,48 @@ namespace ZPunk.DAW
             scroller.style.flexShrink = 1;
             scroller.style.minHeight = 0;
             scroller.style.minWidth = 0;
-            scroller.style.width = new Length(100, LengthUnit.Percent);
+            scroller.style.width = Length.Percent(100);
             scroller.contentContainer.style.flexDirection = FlexDirection.Column;
             page.Add(scroller);
+
             var headings = new VisualElement();
             headings.style.flexDirection = FlexDirection.Row;
             headings.style.height = 35;
+            headings.style.flexShrink = 0;
+            var sceneHead = Column(SceneWidth);
             var sceneLabel = Caption("SCENE", 11, Muted);
-            sceneLabel.style.width = 61;
-            sceneLabel.style.minWidth = 61;
             sceneLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-            headings.Add(sceneLabel);
+            sceneHead.Add(sceneLabel);
+            headings.Add(sceneHead);
             for (int t = 0; t < initialSlots.Length; t++)
             {
-                int track = t;
-                TrackData lane = source.tracks[track];
+                TrackData lane = source.tracks[t];
                 string text = lane == null ? "TRACK" : string.IsNullOrEmpty(lane.name)
                     ? lane.kind.ToString().ToUpperInvariant() : lane.name.ToUpperInvariant();
-                var caption = Caption(text, 11, TrackColor(track));
-                caption.style.width = 73;
-                caption.style.minWidth = 73;
-                caption.style.marginRight = 3;
+                var head = Column(TrackWidth);
+                var caption = Caption(text, 11, TrackColor(t));
                 caption.style.whiteSpace = WhiteSpace.NoWrap;
                 caption.style.textOverflow = TextOverflow.Ellipsis;
-                headings.Add(caption);
-                clipButtons[track] = new List<Button>();
+                head.Add(caption);
+                headings.Add(head);
+                clipButtons[t] = new List<Button>();
             }
-            var launchLabel = Caption("GO", 11, Accent);
-            launchLabel.style.width = 45;
-            headings.Add(launchLabel);
+            var launchHead = Column(GoWidth);
+            launchHead.Add(Caption("GO", 11, Accent));
+            headings.Add(launchHead);
             scroller.Add(headings);
+
             for (int s = 0; s < scenes.Count; s++)
             {
                 int scene = s;
                 var row = new VisualElement();
                 row.style.flexDirection = FlexDirection.Row;
-                row.style.height = 57;
-                // Scene tiles match the arrangement's tidy track-header treatment.
+                row.style.height = TileHeight + ColumnGap;
+                row.style.flexShrink = 0;
+                var sceneColumn = Column(SceneWidth);
                 var sceneCell = new VisualElement();
-                sceneCell.style.width = 58;
-                sceneCell.style.minWidth = 58;
-                sceneCell.style.height = 51;
-                sceneCell.style.marginRight = 3;
-                sceneCell.style.marginBottom = 3;
+                sceneCell.style.width = Length.Percent(100);
+                sceneCell.style.height = TileHeight;
                 sceneCell.style.flexDirection = FlexDirection.Row;
                 sceneCell.style.alignItems = Align.Center;
                 sceneCell.style.backgroundColor = new Color(.10f,.14f,.19f);
@@ -563,19 +624,20 @@ namespace ZPunk.DAW
                 sceneCell.style.borderBottomLeftRadius = 5;
                 sceneCell.style.borderTopRightRadius = 5;
                 sceneCell.style.borderBottomRightRadius = 5;
-                var sceneStripe = new VisualElement();
-                sceneStripe.style.width = 3;
-                sceneStripe.style.height = 35;
-                sceneStripe.style.marginLeft = 2;
-                sceneStripe.style.backgroundColor = Accent;
-                sceneStripe.pickingMode = PickingMode.Ignore;
-                sceneCell.Add(sceneStripe);
-                var rowLabel = Caption((s + 1).ToString("00"), 13, Ink);
-                rowLabel.style.flexGrow = 1;
-                rowLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-                rowLabel.tooltip = "ARRANGE bar " + (scenes[s].sourceTick / BarTicks + 1);
-                sceneCell.Add(rowLabel);
-                row.Add(sceneCell);
+                var stripe = new VisualElement();
+                stripe.style.width = 3;
+                stripe.style.height = 36;
+                stripe.style.marginLeft = 3;
+                stripe.style.backgroundColor = Accent;
+                stripe.pickingMode = PickingMode.Ignore;
+                sceneCell.Add(stripe);
+                var number = Caption((s + 1).ToString("00"), 13, Ink);
+                number.style.flexGrow = 1;
+                number.style.unityFontStyleAndWeight = FontStyle.Bold;
+                number.tooltip = "ARRANGE bar " + (scenes[s].sourceTick / BarTicks + 1);
+                sceneCell.Add(number);
+                sceneColumn.Add(sceneCell);
+                row.Add(sceneColumn);
                 for (int t = 0; t < initialSlots.Length; t++)
                 {
                     int track = t;
@@ -583,71 +645,69 @@ namespace ZPunk.DAW
                     string label = available ? "▶  " + (Math.Max(1,
                         (int)Math.Ceiling(scenes[scene].patterns[track].lengthTicks /
                             (double)BarTicks))).ToString() + "B" : "·";
-                    var clipButton = ActionButton(label, () => QueueClip(track, scene), 73);
-                    clipButton.style.height = 51;
+                    var column = Column(TrackWidth);
+                    var clipButton = ActionButton(label, () => QueueClip(track, scene), TrackWidth);
+                    FillColumn(clipButton, TileHeight);
                     if (available) ZPunkUIIcons.Apply(clipButton, "play", label.Replace("▶", "").Trim(), 14f, false);
                     clipButton.SetEnabled(available);
                     clipButton.tooltip = available ? "Queue " + source.tracks[track].name +
                         " clip from arrangement bar " + (scenes[scene].sourceTick / BarTicks + 1)
                         : "No clip on this track in this scene";
-                    row.Add(clipButton);
+                    column.Add(clipButton);
+                    row.Add(column);
                     clipButtons[track].Add(clipButton);
                 }
-                var go = ActionButton("", () => LaunchScene(scene), 45);
-                go.style.height = 51;
+                var goColumn = Column(GoWidth);
+                var go = ActionButton("", () => LaunchScene(scene), GoWidth);
+                FillColumn(go, TileHeight);
                 ZPunkUIIcons.Apply(go, "play", "", 19f);
                 go.tooltip = "Queue all filled clips in scene " + (scene + 1) + "; empty cells keep playing";
-                row.Add(go);
+                goColumn.Add(go);
+                row.Add(goColumn);
                 scroller.Add(row);
             }
-            // M and S are stacked, giving every lane a single full-width tile
-            // aligned exactly with the clip pads above (no cramped half-width row).
+
+            // Keep M and S stacked inside the *same* column wrapper as clips.
             var controls = new VisualElement();
             controls.style.flexDirection = FlexDirection.Row;
-            controls.style.height = 59;
-            var mixLabel = Caption("M / S", 10, Muted);
-            mixLabel.style.width = 61;
-            mixLabel.style.minWidth = 61;
-            controls.Add(mixLabel);
+            controls.style.height = TileHeight + ColumnGap;
+            controls.style.flexShrink = 0;
+            var mixHead = Column(SceneWidth);
+            mixHead.Add(Caption("M / S", 10, Muted));
+            controls.Add(mixHead);
             for (int t = 0; t < initialSlots.Length; t++)
             {
                 int track = t;
-                var group = new VisualElement();
-                group.style.flexDirection = FlexDirection.Column;
-                group.style.width = 73;
-                group.style.minWidth = 73;
-                group.style.marginRight = 3;
-                var mute = ActionButton("M", () => ToggleMute(track), 73);
-                var solo = ActionButton("S", () => ToggleSolo(track), 73);
-                mute.style.height = solo.style.height = 26;
-                mute.style.marginBottom = solo.style.marginBottom = 2;
-                mute.style.marginRight = solo.style.marginRight = 0;
+                var column = Column(TrackWidth);
+                var mute = ActionButton("M", () => ToggleMute(track), TrackWidth);
+                var solo = ActionButton("S", () => ToggleSolo(track), TrackWidth);
+                FillColumn(mute, (TileHeight - 2) / 2);
+                FillColumn(solo, (TileHeight - 2) / 2);
+                solo.style.marginTop = 2;
                 muteButtons.Add(mute);
                 soloButtons.Add(solo);
-                group.Add(mute);
-                group.Add(solo);
-                controls.Add(group);
+                column.Add(mute);
+                column.Add(solo);
+                controls.Add(column);
             }
             scroller.Add(controls);
             var stops = new VisualElement();
             stops.style.flexDirection = FlexDirection.Row;
-            stops.style.height = 53;
-            var stopLabel = Caption("STOP", 10, Muted);
-            stopLabel.style.width = 61;
-            stopLabel.style.minWidth = 61;
-            stops.Add(stopLabel);
+            stops.style.height = TileHeight + ColumnGap;
+            stops.style.flexShrink = 0;
+            var stopHead = Column(SceneWidth);
+            stopHead.Add(Caption("STOP", 10, Muted));
+            stops.Add(stopHead);
             for (int t = 0; t < initialSlots.Length; t++)
             {
                 int track = t;
-                var button = ActionButton("", () => QueueClip(track, -1), 73);
-                button.style.height = 47;
-                // The stock 'stop' icon is an outline. A solid square is more
-                // recognizable and matches the transport's filled stop icon.
-                button.text = "■";
+                var column = Column(TrackWidth);
+                var button = ActionButton("■", () => QueueClip(track, -1), TrackWidth);
+                FillColumn(button, TileHeight);
                 button.style.fontSize = 23;
-                button.style.color = Ink;
                 button.tooltip = "Stop this lane on the next bar";
-                stops.Add(button);
+                column.Add(button);
+                stops.Add(column);
                 stopButtons.Add(button);
             }
             scroller.Add(stops);
@@ -661,14 +721,48 @@ namespace ZPunk.DAW
             stopAll.style.color = Accent;
             footer.Add(stopAll);
             page.Add(footer);
+            AddPerformanceDrawer();
             RefreshButtons();
             LayoutRebuilt?.Invoke();
+        }
+
+        private void ToggleEffects()
+        {
+            effectsExpanded = !effectsExpanded;
+            var drawer = page?.Q<VisualElement>("ZPunkSessionPerformanceDrawer");
+            if (drawer != null) drawer.style.display = effectsExpanded ? DisplayStyle.Flex : DisplayStyle.None;
+            var button = page?.Q<Button>("ZPunkSessionFxToggle");
+            if (button != null) button.text = effectsExpanded ? "HIDE FX" : "FILTERS / FX";
+        }
+
+        private void AddPerformanceDrawer()
+        {
+            var drawer = new ScrollView(ScrollViewMode.Vertical) { name = "ZPunkSessionPerformanceDrawer" };
+            drawer.style.flexShrink = 0;
+            // Preserve enough launch-grid space even on short phones.
+            // Both existing controls scroll inside this compact drawer.
+            drawer.style.height = 232;
+            drawer.style.minHeight = 0;
+            drawer.style.width = Length.Percent(100);
+            drawer.style.display = effectsExpanded ? DisplayStyle.Flex : DisplayStyle.None;
+            drawer.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            drawer.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+            drawer.contentContainer.style.flexDirection = FlexDirection.Column;
+            var host = new VisualElement { name = "ZPunkSessionPerformanceControlsHost" };
+            host.style.flexDirection = FlexDirection.Column;
+            host.style.width = Length.Percent(100);
+            host.style.minWidth = 0;
+            host.style.flexShrink = 0;
+            drawer.Add(host);
+            page.Add(drawer);
         }
 
         private void RefreshButtons()
         {
             if (source == null || status == null) return;
             bool isRunning = transport != null && transport.IsPlaying && transport.IsSessionArmed;
+            // Reloading reparses the arrangement and would otherwise stop a live set.
+            if (reloadButton != null) reloadButton.SetEnabled(!isRunning);
             long now = isRunning ? transport.CurrentTick : 0;
             long nearest = long.MaxValue;
             int pendingCount = 0;

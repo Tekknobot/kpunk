@@ -17,9 +17,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private VisualElement uiRoot, pages, shell, header, headerRow, menu, menuBody, dock;
     private VisualElement pageArrangement, pageSession, pageEditor, pageSound, pageMixer;
     private VisualElement context, content;
-    private Label heading, subheading, projectInfo, headerTitle, headerVersion, headerSignature;
-    private VisualElement headerBrand;
-    private Image headerLogo;
+    private Label heading, subheading, projectInfo, headerSignature;
     private Label tempoDisplay;
     private Coroutine menuAnimation;
     private Coroutine wavExportRoutine;
@@ -164,7 +162,11 @@ public sealed class KMusicTabsUI : MonoBehaviour
         arrangement.Initialize(pageArrangement);
         session=GetComponent<ZPunkSessionUI>();
         if(session==null)session=gameObject.AddComponent<ZPunkSessionUI>();
-        session.LayoutRebuilt = MountScopeInCurrentWorkspace;
+        // Session rebuilds its UI when SYNC reloads clips. Park live shared
+        // controls first, then return the same instances to the rebuilt host.
+        session.BeforeLayoutRebuild = ParkSharedControlsInArrangement;
+        session.LayoutRebuilt = MountSharedControlsInCurrentWorkspace;
+        arrangement.AttachPerformanceInputRoot(pageSession);
         session.Initialize(pageSession);
         editor=GetComponent<ZPunkClipEditorUI>();
         if(editor==null)editor=gameObject.AddComponent<ZPunkClipEditorUI>();
@@ -263,61 +265,12 @@ public sealed class KMusicTabsUI : MonoBehaviour
         headerRow.style.alignItems=Align.Center;
         headerRow.style.width=new Length(100,LengthUnit.Percent);
         headerRow.style.minWidth=0;
+        headerRow.style.justifyContent=Justify.SpaceBetween;
         header.Add(headerRow);
-        headerBrand=new VisualElement{name="ZPunkHeaderBrand"};
-        headerBrand.style.flexDirection=FlexDirection.Row;
-        headerBrand.style.alignItems=Align.Center;
-        headerBrand.style.flexGrow=1;
-        headerBrand.style.flexShrink=1;
-        headerBrand.style.minWidth=0;
-        headerBrand.style.overflow=Overflow.Hidden;
-        headerRow.Add(headerBrand);
-        // Use the existing app logo, included as a tiny Resources sprite so
-        // phones can load it without a scene/Inspector reference.
-        var logoSprite=Resources.Load<Sprite>("ZPunkHeaderLogo");
-        if(logoSprite!=null)
-        {
-            headerLogo=new Image{name="ZPunkHeaderLogo",sprite=logoSprite};
-            headerLogo.scaleMode=ScaleMode.ScaleToFit;
-            headerLogo.style.width=24;
-            headerLogo.style.height=24;
-            headerLogo.style.flexShrink=0;
-            headerLogo.style.marginRight=5;
-            headerLogo.pickingMode=PickingMode.Ignore;
-            headerBrand.Add(headerLogo);
-        }
-        var brandWords=new VisualElement{name="ZPunkBrandWords"};
-        brandWords.style.flexDirection=FlexDirection.Column;
-        brandWords.style.flexGrow=0;
-        brandWords.style.flexShrink=1;
-        brandWords.style.minWidth=0;
-        headerBrand.Add(brandWords);
-        headerTitle=existingTitle!=null?existingTitle:Label("ZPUNK",18);
-        headerTitle.text="ZPUNK";
-        headerTitle.style.fontSize=18;
-        headerTitle.style.unityFontStyleAndWeight=FontStyle.Bold;
-        headerTitle.style.color=Ink;
-        headerTitle.style.height=21;
-        headerTitle.style.flexShrink=1;
-        headerTitle.style.minWidth=0;
-        headerTitle.style.overflow=Overflow.Hidden;
-        headerTitle.style.whiteSpace=WhiteSpace.NoWrap;
-        headerTitle.style.textOverflow=TextOverflow.Ellipsis;
-        brandWords.Add(headerTitle);
-        // Show Player Settings > Version automatically, so the UI stays in
-        // sync with future releases without hardcoding old ZPUNK labels.
-        string appVersion=Application.version;
-        headerVersion=new Label(string.IsNullOrEmpty(appVersion)?"2.3.8":appVersion);
-        headerVersion.name="ZPunkVersion";
-        headerVersion.style.fontSize=12;
-        headerVersion.style.height=15;
-        headerVersion.style.color=Dim;
-        headerVersion.style.whiteSpace=WhiteSpace.NoWrap;
-        headerVersion.style.textOverflow=TextOverflow.Ellipsis;
-        headerVersion.style.overflow=Overflow.Hidden;
-        headerVersion.style.flexShrink=1;
-        headerVersion.style.minWidth=0;
-        brandWords.Add(headerVersion);
+        // Phone transport space is reserved for transport/project actions.
+        // The old UXML title was already detached above; never re-add a
+        // truncated brand or app version in any workspace.
+        if(existingTitle!=null)existingTitle.style.display=DisplayStyle.None;
 
         headerPlay=play;
         headerStop=stop;
@@ -730,6 +683,27 @@ public sealed class KMusicTabsUI : MonoBehaviour
         scopeDrawer.RemoveFromHierarchy();
         target.Insert(0, scopeBar);
         target.Insert(1, scopeDrawer);
+    }
+
+    private void ParkSharedControlsInArrangement()
+    {
+        if(scopeBar!=null && scopeDrawer!=null && arrangementScopeContainer!=null)
+        {
+            scopeBar.RemoveFromHierarchy();
+            scopeDrawer.RemoveFromHierarchy();
+            arrangementScopeContainer.Insert(0,scopeBar);
+            arrangementScopeContainer.Insert(1,scopeDrawer);
+        }
+        arrangement?.MountPerformanceControls(null);
+    }
+
+    private void MountSharedControlsInCurrentWorkspace()
+    {
+        MountScopeInCurrentWorkspace();
+        VisualElement host = workspace=="session" && pageSession!=null
+            ? pageSession.Q<VisualElement>("ZPunkSessionPerformanceControlsHost") : null;
+        arrangement?.MountPerformanceControls(host);
+        if(workspace=="session") arrangement?.RefreshSharedPerformanceControls();
     }
 
     private void ToggleScope() { SetScopeOpen(!scopeIsOpen); }
@@ -1376,7 +1350,14 @@ public sealed class KMusicTabsUI : MonoBehaviour
                     arrangement!=null?arrangement.SelectedClipId:null);
             else editor.OnShown();
         }
-        else if(target=="session") { session?.OnShown(); MountScopeInCurrentWorkspace(); }
+        else if(target=="session")
+        {
+            // Ensure the performance knobs read the same current project as
+            // ARRANGE, even when a project was changed in another workspace.
+            arrangement?.OnShown();
+            session?.OnShown();
+            MountSharedControlsInCurrentWorkspace();
+        }
         else if(target=="sound")sound.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:-1);
         else if(target=="mix")mixer.OnShown();
     }
@@ -1396,20 +1377,20 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(heading!=null)heading.text=workspace=="session"?"SESSION":workspace=="arrange"?"ARRANGE":workspace=="create"?"CREATE":workspace=="sound"?"SOUND":"MIX";
         if(subheading!=null)subheading.text=workspace=="session"?"  /  CLIP LAUNCH":workspace=="arrange"?"  /  SONG TIMELINE":
             workspace=="create"?"  /  NOTE EDITOR":workspace=="sound"?"  /  PRESET SHAPER":"  /  LEVELS";
-        if(headerBrand!=null)headerBrand.style.display=workspace=="session"?DisplayStyle.None:DisplayStyle.Flex;
+        // No brand/version labels in any workspace; the transport stays unclipped.
         if(sessionToggle!=null)
         {
             sessionToggle.style.backgroundColor=workspace=="session"?Selected:NavBg;
             sessionToggle.style.borderBottomWidth=1;
             sessionToggle.style.borderBottomColor=workspace=="session"?Accent:Dim;
         }
-        MountScopeInCurrentWorkspace();
+        MountSharedControlsInCurrentWorkspace();
         StyleNav(arrangeButton,workspace=="arrange" || workspace=="session");
         StyleNav(createButton,workspace=="create");
         StyleNav(soundButton,workspace=="sound");
         StyleNav(mixButton,workspace=="mix");
-        // Scope belongs exclusively to the ARRANGE page. Preserve its expanded
-        // state between tabs, but stop sampling while another page is visible.
+        // Scope is shared by ARRANGE and SESSION. Preserve its expanded
+        // state between tabs, but stop sampling on unrelated pages.
         if (masterAudioTap != null)
             masterAudioTap.CaptureEnabled = scopeIsOpen && (workspace == "arrange" || workspace == "session");
         if (scopeIsOpen && (workspace == "arrange" || workspace == "session"))
@@ -1441,17 +1422,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
         compact=Screen.height>Screen.width || width<720;
         bool shortViewport=previousHeight>0 && previousHeight<760;
 
-        // Keep the header legible and single-line down to narrow phone widths.
-        // Only the low-value signature disappears; the title and core actions stay.
+        // Keep transport/project actions single-line on narrow phone widths.
         bool narrow=width<400;
-        if(headerTitle!=null)headerTitle.style.fontSize=narrow?15:18;
-        if(headerVersion!=null)headerVersion.style.fontSize=narrow?9:10;
-        if(headerLogo!=null)
-        {
-            headerLogo.style.width=narrow?21:24;
-            headerLogo.style.height=narrow?21:24;
-            headerLogo.style.marginRight=narrow?3:5;
-        }
         if(headerSignature!=null)
             headerSignature.style.display=width<440?DisplayStyle.None:DisplayStyle.Flex;
         if(headerPlay!=null)headerPlay.style.width=narrow?43:47;
