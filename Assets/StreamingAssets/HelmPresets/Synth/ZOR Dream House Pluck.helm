@@ -140,12 +140,12 @@
       {
         "source": "amp_envelope",
         "destination": "osc_1_volume",
-        "amount": -1
+        "amount": -0.2
       },
       {
         "source": "amp_envelope",
         "destination": "osc_2_volume",
-        "amount": -1
+        "amount": -0.2
       }
     ],
     "distortion_on": 0

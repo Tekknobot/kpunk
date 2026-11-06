@@ -845,7 +845,7 @@ namespace ZPunk.DAW
                 var column = Column(TrackWidth);
                 var button = ActionButton("■", () => QueueClip(track, -1), TrackWidth);
                 FillColumn(button, TileHeight);
-                button.style.fontSize = 23;
+                button.style.fontSize = 22;
                 button.tooltip = "Stop this lane at the next safe quantized boundary";
                 column.Add(button);
                 stops.Add(column);
