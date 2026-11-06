@@ -78,6 +78,12 @@ namespace ZPunk.DAW
             {
                 case "plus": drawing.Line(16, 6, 16, 26); drawing.Line(6, 16, 26, 16); break;
                 case "minus": drawing.Line(6, 16, 26, 16); break;
+                case "play":
+                    drawing.Line(10, 5, 25, 16, 2.8f);
+                    drawing.Line(25, 16, 10, 27, 2.8f);
+                    drawing.Line(10, 27, 10, 5, 2.8f);
+                    break;
+                case "stop": drawing.Box(8, 8, 24, 24); break;
                 case "left": drawing.Line(20, 6, 10, 16); drawing.Line(10, 16, 20, 26); break;
                 case "right": drawing.Line(12, 6, 22, 16); drawing.Line(22, 16, 12, 26); break;
                 case "up": drawing.Line(16, 5, 16, 27); drawing.Line(7, 14, 16, 5); drawing.Line(25, 14, 16, 5); break;

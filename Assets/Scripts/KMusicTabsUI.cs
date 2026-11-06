@@ -15,7 +15,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
 {
     [SerializeField] private UIDocument doc;
     private VisualElement uiRoot, pages, shell, header, headerRow, menu, menuBody, dock;
-    private VisualElement pageArrangement, pageEditor, pageSound, pageMixer;
+    private VisualElement pageArrangement, pageSession, pageEditor, pageSound, pageMixer;
     private VisualElement context, content;
     private Label heading, subheading, projectInfo, headerTitle, headerVersion, headerSignature;
     private VisualElement headerBrand;
@@ -42,8 +42,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private bool scopeIsOpen;
     private float nextScopeFrame;
     private float nextTapSearch;
-    private Button arrangeButton, createButton, soundButton, mixButton, menuToggle, headerSave, headerPlay, headerStop;
+    private Button arrangeButton, createButton, soundButton, mixButton, menuToggle, sessionToggle, headerSave, headerPlay, headerStop;
     private ZPunkArrangementUI arrangement;
+    private ZPunkSessionUI session;
     private ZPunkClipEditorUI editor;
     private ZPunkSoundUI sound;
     private ZPunkMixerUI mixer;
@@ -148,6 +149,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
             pageArrangement=new VisualElement{name="PageArrangement"};
             pages.Insert(0,pageArrangement);
         }
+        pageSession=pages.Q<VisualElement>("ZPunkSessionPage");
+        if(pageSession==null){pageSession=new VisualElement{name="ZPunkSessionPage"};pages.Add(pageSession);}
         pageEditor=pages.Q<VisualElement>("ZPunkClipPage");
         if(pageEditor==null){pageEditor=new VisualElement{name="ZPunkClipPage"};pages.Add(pageEditor);}
         pageMixer=pages.Q<VisualElement>("ZPunkMixerPage");
@@ -157,6 +160,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
         arrangement=GetComponent<ZPunkArrangementUI>();
         if(arrangement==null)arrangement=gameObject.AddComponent<ZPunkArrangementUI>();
         arrangement.Initialize(pageArrangement);
+        session=GetComponent<ZPunkSessionUI>();
+        if(session==null)session=gameObject.AddComponent<ZPunkSessionUI>();
+        session.Initialize(pageSession);
         editor=GetComponent<ZPunkClipEditorUI>();
         if(editor==null)editor=gameObject.AddComponent<ZPunkClipEditorUI>();
         editor.Initialize(pageEditor);
@@ -352,6 +358,53 @@ public sealed class KMusicTabsUI : MonoBehaviour
         // channel controls and other workspaces untouched.
         ZPunkUIIcons.Apply(headerSave,"save","SAVE",17f);
         headerRow.Add(headerSave);
+
+        // Performance mode is a separate, deliberate button rather than a
+        // fifth destination that crowds the existing four-tab dock.
+        sessionToggle=Button("",()=>Navigate(workspace=="session"?"arrange":"session"));
+        sessionToggle.name="ZPunkSessionToggle";
+        sessionToggle.tooltip="Switch between ARRANGE and quantized SESSION clip launch";
+        sessionToggle.style.width=42;
+        sessionToggle.style.minWidth=0;
+        sessionToggle.style.height=46;
+        sessionToggle.style.flexShrink=0;
+        sessionToggle.style.paddingLeft=0;
+        sessionToggle.style.paddingRight=0;
+        sessionToggle.style.marginRight=4;
+        var iconGrid=new VisualElement();
+        iconGrid.style.width=20;
+        iconGrid.style.height=20;
+        iconGrid.style.flexDirection=FlexDirection.Column;
+        iconGrid.pickingMode=PickingMode.Ignore;
+        for(int r=0;r<2;r++)
+        {
+            var iconRow=new VisualElement();
+            iconRow.style.flexDirection=FlexDirection.Row;
+            iconRow.pickingMode=PickingMode.Ignore;
+            for(int c=0;c<2;c++)
+            {
+                var cell=new VisualElement();
+                cell.style.width=7;
+                cell.style.height=7;
+                cell.style.marginRight=3;
+                cell.style.marginBottom=3;
+                cell.style.borderTopWidth=1;
+                cell.style.borderBottomWidth=1;
+                cell.style.borderLeftWidth=1;
+                cell.style.borderRightWidth=1;
+                cell.style.borderTopColor=Accent;
+                cell.style.borderBottomColor=Accent;
+                cell.style.borderLeftColor=Accent;
+                cell.style.borderRightColor=Accent;
+                cell.pickingMode=PickingMode.Ignore;
+                iconRow.Add(cell);
+            }
+            iconGrid.Add(iconRow);
+        }
+        sessionToggle.style.alignItems=Align.Center;
+        sessionToggle.style.justifyContent=Justify.Center;
+        sessionToggle.Add(iconGrid);
+        headerRow.Add(sessionToggle);
 
         menuToggle=Button("",ToggleMenu);
         menuToggle.name="ZPunkMenuToggle";
@@ -1057,6 +1110,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
         // Normal transport playback could contaminate listener-based stems.
         if (headerPlay != null) headerPlay.SetEnabled(!busy);
         if (headerSave != null) headerSave.SetEnabled(!busy);
+        if (sessionToggle != null) sessionToggle.SetEnabled(!busy);
         if (collectGuardNew != null) collectGuardNew.SetEnabled(!busy);
         if (collectGuardOpen != null) collectGuardOpen.SetEnabled(!busy);
         if (collectGuardSave != null) collectGuardSave.SetEnabled(!busy);
@@ -1269,6 +1323,10 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private void Navigate(string target)
     {
         string previousWorkspace = workspace;
+        // Leaving the performance view for the arrangement restores normal
+        // song playback. SOUND/MIX may still be used while a session runs.
+        if(target=="arrange" && session!=null && transport!=null && transport.IsSessionArmed)
+            session.Disarm();
         workspace=target;
         ApplyPages();
         if(target=="arrange")
@@ -1291,6 +1349,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
                     arrangement!=null?arrangement.SelectedClipId:null);
             else editor.OnShown();
         }
+        else if(target=="session")session?.OnShown();
         else if(target=="sound")sound.OnShown(arrangement!=null?arrangement.SelectedTrackIndex:-1);
         else if(target=="mix")mixer.OnShown();
     }
@@ -1303,13 +1362,20 @@ public sealed class KMusicTabsUI : MonoBehaviour
         foreach(var child in pages.Children())
             child.style.display=DisplayStyle.None;
         if(pageArrangement!=null)pageArrangement.style.display=workspace=="arrange"?DisplayStyle.Flex:DisplayStyle.None;
+        if(pageSession!=null)pageSession.style.display=workspace=="session"?DisplayStyle.Flex:DisplayStyle.None;
         if(pageEditor!=null)pageEditor.style.display=workspace=="create"?DisplayStyle.Flex:DisplayStyle.None;
         if(pageSound!=null)pageSound.style.display=workspace=="sound"?DisplayStyle.Flex:DisplayStyle.None;
         if(pageMixer!=null)pageMixer.style.display=workspace=="mix"?DisplayStyle.Flex:DisplayStyle.None;
-        if(heading!=null)heading.text=workspace=="arrange"?"ARRANGE":workspace=="create"?"CREATE":workspace=="sound"?"SOUND":"MIX";
-        if(subheading!=null)subheading.text=workspace=="arrange"?"  /  SONG TIMELINE":
+        if(heading!=null)heading.text=workspace=="session"?"SESSION":workspace=="arrange"?"ARRANGE":workspace=="create"?"CREATE":workspace=="sound"?"SOUND":"MIX";
+        if(subheading!=null)subheading.text=workspace=="session"?"  /  CLIP LAUNCH":workspace=="arrange"?"  /  SONG TIMELINE":
             workspace=="create"?"  /  NOTE EDITOR":workspace=="sound"?"  /  PRESET SHAPER":"  /  LEVELS";
-        StyleNav(arrangeButton,workspace=="arrange");
+        if(sessionToggle!=null)
+        {
+            sessionToggle.style.backgroundColor=workspace=="session"?Selected:NavBg;
+            sessionToggle.style.borderBottomWidth=workspace=="session"?2:0;
+            sessionToggle.style.borderBottomColor=Accent;
+        }
+        StyleNav(arrangeButton,workspace=="arrange" || workspace=="session");
         StyleNav(createButton,workspace=="create");
         StyleNav(soundButton,workspace=="sound");
         StyleNav(mixButton,workspace=="mix");
@@ -1367,7 +1433,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
             headerSave.style.paddingLeft=narrow?6:9;
             headerSave.style.paddingRight=narrow?6:9;
         }
-        if(menuToggle!=null)menuToggle.style.width=narrow?43:46;
+        if(menuToggle!=null)menuToggle.style.width=narrow?40:46;
+        if(sessionToggle!=null)sessionToggle.style.width=narrow?36:42;
         if(header!=null)
         {
             header.style.height=shortViewport?56:61;
@@ -1429,7 +1496,10 @@ public sealed class KMusicTabsUI : MonoBehaviour
             pendingLiveEdit=false;
             nextLiveEditApply=Time.unscaledTime+0.06f;
             if(transport==null)transport=FindObjectOfType<ZPunkSongTransport>();
-            if(transport!=null)transport.ApplyLiveSong(projects.CurrentSong);
+            // Editor changes still belong to the saved arrangement. They
+            // must not overwrite an armed, unsaved session performance.
+            if(transport!=null && !transport.IsSessionArmed)
+                transport.ApplyLiveSong(projects.CurrentSong);
         }
         var live=projects.CurrentSong;
         if(live!=null && tempoDisplay!=null)
@@ -1443,6 +1513,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
             var current=projects.GetSongForArrangementEditor();
             if(current!=null && tempoDisplay!=null)tempoDisplay.text=Mathf.RoundToInt(current.bpm)+" BPM";
             if(workspace=="arrange")arrangement.OnShown();
+            else if(workspace=="session")session?.OnShown();
             else if(workspace=="create")editor.OnShown();
             else if(workspace=="sound")sound.OnShown();
             else if(workspace=="mix")mixer.OnShown();

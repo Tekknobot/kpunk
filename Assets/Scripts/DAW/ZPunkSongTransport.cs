@@ -137,6 +137,56 @@ namespace ZPunk.DAW
         private bool paused;
         private bool exportingOneShot;
         private SongData pendingExportSnapshot;
+        // Session launches run an unsaved performance copy. Never replace the
+        // editable project song with the session's temporary clip arrangement.
+        private SongData sessionPlaybackSnapshot;
+        private long sessionFutureLaunchTick = -1;
+        public bool IsSessionArmed => sessionPlaybackSnapshot != null;
+        public float SessionBpm => Mathf.Max(1f, bpm);
+        public double SessionPreciseTick => !playing ? 0.0 : Math.Max(0.0,
+            AudioSettings.dspTime < anchorDsp ? startTick :
+            startTick + (AudioSettings.dspTime - anchorDsp) / secondsPerTick);
+
+        // A launch request must be installed BEFORE audio lookahead reaches its
+        // bar boundary. If the upcoming bar is too close, use the following one.
+        public long NextSafeSessionBar()
+        {
+            double phase = SessionPreciseTick;
+            double margin = (Math.Max(audioLookahead, 0.32f) + 0.16) *
+                SessionBpm * SongData.TicksPerQuarter / 60.0;
+            long bar = SongData.TicksPerBar4;
+            return Math.Max(bar, (long)Math.Ceiling((phase + margin) / bar) * bar);
+        }
+
+        public void ArmSessionPlayback(SongData performanceSong)
+        {
+            if (exportingOneShot || performanceSong == null) return;
+            sessionPlaybackSnapshot = performanceSong;
+        }
+
+        public void ApplySessionPlayback(SongData performanceSong, long futureLaunchTick = -1)
+        {
+            if (exportingOneShot || performanceSong == null) return;
+            sessionPlaybackSnapshot = performanceSong;
+            if (playing)
+            {
+                // The new clip isn't due yet. A running native synth may have
+                // a held note; preserve it and let the replacement event plan's
+                // explicit NoteOff release it instead of cutting at tap time.
+                sessionFutureLaunchTick = futureLaunchTick;
+                try { ApplyLiveSong(performanceSong); }
+                finally { sessionFutureLaunchTick = -1; }
+            }
+        }
+
+        public void DisarmSessionPlayback(bool stopSession = true)
+        {
+            if (sessionPlaybackSnapshot == null) return;
+            // Changing back to the song arrangement must not let a performance
+            // copy bleed into regular playback or saving.
+            if (stopSession && playing) StopSong();
+            sessionPlaybackSnapshot = null;
+        }
         private int isolatedExportTrack = -1;
         private long pausedAtTick;
         private int prefetchedLoopSamples;
@@ -501,8 +551,18 @@ namespace ZPunk.DAW
                 // The native note-off ownership has ended. Recreate only notes
                 // held *right now* from the new pattern (if any), and dispatch
                 // all following events from the moving song playhead.
-                controller.AllNotesOff();
-                if (afterStart) RestoreHeldMidi(position + 1, track);
+                if (sessionPlaybackSnapshot != null &&
+                    sessionFutureLaunchTick > position && afterStart)
+                {
+                    // Future-only clip launches retain the outgoing native
+                    // voice. The live fallback contains its original NoteOff
+                    // before the launch boundary, so the held note can finish.
+                }
+                else
+                {
+                    controller.AllNotesOff();
+                    if (afterStart) RestoreHeldMidi(position + 1, track);
+                }
                 if (verbose)
                     Debug.Log($"[ZPUNK MIDI] Track {track} switched to live dispatch " +
                         $"at tick {position}; other native sequencers unaffected.");
@@ -1002,7 +1062,9 @@ namespace ZPunk.DAW
             // Live groove edits become a temporary preview, without requiring SAVE.
             // Authored DAW arrangements are returned unchanged by the project manager.
             try { song = pendingExportSnapshot != null && oneShotExport
-                ? pendingExportSnapshot : projects.GetSongForPlayback();
+                ? pendingExportSnapshot :
+                (!oneShotExport && sessionPlaybackSnapshot != null
+                    ? sessionPlaybackSnapshot : projects.GetSongForPlayback());
                 pendingExportSnapshot = null; }
             catch (Exception e)
             {
@@ -1128,7 +1190,23 @@ namespace ZPunk.DAW
         public void ApplyLiveMix(SongData updated, bool stopSustains = false)
         {
             if (exportingOneShot) return;
-            if (updated != null) song = updated;
+            if (updated != null && sessionPlaybackSnapshot != null &&
+                !ReferenceEquals(updated, sessionPlaybackSnapshot))
+            {
+                // SOUND and MIX must be usable while SESSION plays. Their
+                // editable project document may update instrument/mixer state;
+                // do not replace the session clip plan with project arrangement.
+                for (int i = 0; i < sessionPlaybackSnapshot.tracks.Count &&
+                    i < updated.tracks.Count; i++)
+                {
+                    if (sessionPlaybackSnapshot.tracks[i] == null || updated.tracks[i] == null)
+                        continue;
+                    sessionPlaybackSnapshot.tracks[i].volume = updated.tracks[i].volume;
+                    sessionPlaybackSnapshot.tracks[i].pan = updated.tracks[i].pan;
+                }
+                song = sessionPlaybackSnapshot;
+            }
+            else if (updated != null) song = updated;
             // Unity AudioMixer attenuation affects active/held Helm voices immediately.
             // Do not kill sustained notes just to update the fader.
             if (trackControllers.Count == 0) ResolveControllers();
@@ -1240,7 +1318,9 @@ namespace ZPunk.DAW
             {
                 // Changing the pattern/loop may intentionally replace its held
                 // note. Tempo-only edits must NOT restart a sounding 303 voice.
-                if (loopChanged || acidNotesEdited) acid?.AllNotesOff();
+                if (loopChanged || (acidNotesEdited &&
+                    !(sessionPlaybackSnapshot != null && sessionFutureLaunchTick > position)))
+                    acid?.AllNotesOff();
                 else acid?.RetimestampPendingNotes();
                 acidCursor = acidPrefetchCursor = 0;
                 double acidFromTick = tempoChanged && !loopChanged && !acidNotesEdited
