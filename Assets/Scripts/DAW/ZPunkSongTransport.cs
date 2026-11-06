@@ -193,8 +193,10 @@ namespace ZPunk.DAW
                 }
             }
         }
-        private readonly HashSet<ScheduledSampleKey> scheduledSamples =
-            new HashSet<ScheduledSampleKey>();
+        private readonly Dictionary<ScheduledSampleKey, double> scheduledSamples =
+            new Dictionary<ScheduledSampleKey, double>();
+        private readonly List<ScheduledSampleKey> obsoleteScheduledSamples =
+            new List<ScheduledSampleKey>();
         private float bpm;
         // An edited song can replace the active plan without resetting the transport.
         // DSP voices already queued within the lookahead interval cannot be recalled.
@@ -748,11 +750,34 @@ namespace ZPunk.DAW
                 (anchorDsp - AudioHelmClock.GetLastSampledTime()) / 60.0;
         }
 
-        private void ResetFutureSamples(double atTick)
+        private void ResetFutureSamples(double atTick, double oldSecondsPerTick = -1.0)
         {
-            kickDuckingStarts.Clear();
-            if (drums != null) drums.CancelFutureDAWVoices();
-            scheduledSamples.Clear();
+            // A PlayScheduled hit inside the next audio callback is already
+            // committed. Cancel only voices beyond that guard and KEEP the
+            // committed event keys so rebuilding the cursor cannot double-hit.
+            double protectedThrough = AudioSettings.dspTime +
+                Math.Max(.025, minSampleScheduleLead * 1.5);
+            double tempoTimeScale = oldSecondsPerTick > 0.0
+                ? secondsPerTick / oldSecondsPerTick : 1.0;
+            if (drums != null)
+                drums.CancelFutureDAWVoices(protectedThrough, tempoTimeScale);
+            obsoleteScheduledSamples.Clear();
+            foreach (var entry in scheduledSamples)
+                if (entry.Value > protectedThrough)
+                    obsoleteScheduledSamples.Add(entry.Key);
+            foreach (var key in obsoleteScheduledSamples)
+                scheduledSamples.Remove(key);
+            obsoleteScheduledSamples.Clear();
+            // Kick ducking uses the same future DSP reservations. A kick too
+            // close to cancel must keep its scheduled pump; discard only
+            // ducking events from kicks that WILL be rescheduled.
+            int queuedKickDucks = kickDuckingStarts.Count;
+            for (int i = 0; i < queuedKickDucks; ++i)
+            {
+                double hitAt = kickDuckingStarts.Dequeue();
+                if (hitAt <= protectedThrough)
+                    kickDuckingStarts.Enqueue(hitAt);
+            }
             sampleCursor = 0;
             prefetchedLoopSamples = 0;
             // The live BPM cursor can be mid-tick. Skipping to its floored
@@ -1079,6 +1104,7 @@ namespace ZPunk.DAW
             bool beforeStart = now < anchorDsp;
             double exactTick = beforeStart ? startTick :
                 startTick + (now - anchorDsp) / secondsPerTick;
+            double oldSecondsPerTick = secondsPerTick;
             bpm = Mathf.Clamp(nextBpm, 1f, 400f);
             acid?.SetTempo(bpm);
             // Drum Designer ECHO uses musical eighths. The previous code kept
@@ -1089,7 +1115,7 @@ namespace ZPunk.DAW
                 anchorDsp = now - (exactTick - startTick) * secondsPerTick;
             PublishPerformanceFxClock();
             if (clock != null) clock.bpm = bpm;
-            ResetFutureSamples(Math.Max(0.0, exactTick));
+            ResetFutureSamples(Math.Max(0.0, exactTick), oldSecondsPerTick);
             // Requeue only upcoming ACID commands; never retrigger the note
             // already playing at a fractional tick or reset the synth's DSP.
             acid?.RetimestampPendingNotes();
@@ -1138,6 +1164,7 @@ namespace ZPunk.DAW
             bool midiChanged = !MidiPlanEquals(plan, next);
             bool samplesChanged = !SamplePlanEquals(plan, next);
             bool tempoChanged = Math.Abs(updated.bpm - bpm) > .01f;
+            double oldSecondsPerTick = secondsPerTick;
             long length = Math.Max(1L, next.lengthTicks);
             long requestedLoopStart = updated.arrangementLoopEnabled ?
                 Math.Max(0L, Math.Min(length - 1, updated.loopStartTick)) : 0L;
@@ -1196,7 +1223,8 @@ namespace ZPunk.DAW
                         plan.samples.Exists(e => e.type == SongEventPlanner.EventType.Chop),
                         plan.samples, bpm, activeLoopEnabled ? loopStart : 0,
                         activeLoopEnabled ? loopEnd : 0, audioLookahead);
-                ResetFutureSamples(tempoChanged ? exactTick : position);
+                ResetFutureSamples(tempoChanged ? exactTick : position,
+                    tempoChanged ? oldSecondsPerTick : -1.0);
             }
             ResolveControllers();
             ApplyAllTrackGains();
@@ -1643,7 +1671,13 @@ namespace ZPunk.DAW
                     CurrentTick = loopStart;
                     PublishPerformanceFxClock();
                     cycle++;
-                    scheduledSamples.RemoveWhere(e => e.cycleId < cycle);
+                    obsoleteScheduledSamples.Clear();
+                    foreach (var entry in scheduledSamples)
+                        if (entry.Key.cycleId < cycle)
+                            obsoleteScheduledSamples.Add(entry.Key);
+                    foreach (var key in obsoleteScheduledSamples)
+                        scheduledSamples.Remove(key);
+                    obsoleteScheduledSamples.Clear();
                     sampleCursor = prefetchedLoopSamples;
                     midiCursor = 0;
                     acidCursor = acidPrefetchCursor;
@@ -1751,7 +1785,7 @@ namespace ZPunk.DAW
                 return; // Too old: playing it now would cause an obvious flam.
             }
             var key = new ScheduledSampleKey(eventCycle, e);
-            if (!scheduledSamples.Add(key)) return;
+            if (scheduledSamples.ContainsKey(key)) return;
             // Track volume already runs through ApplyDAWTrackMix's PCM gain stage.
             // The AudioSource must receive only note velocity, never track gain twice.
             float velocity = Mathf.Clamp01(e.velocity / 127f);
@@ -1759,6 +1793,7 @@ namespace ZPunk.DAW
             // On-time events retain their exact DSP timestamps.
             double scheduledAt = lateness > 0.0
                 ? now + minSampleScheduleLead : Math.Max(now + minSampleScheduleLead, target);
+            scheduledSamples.Add(key, scheduledAt);
             if (lateness > 0.020) recoveredSampleEvents++;
             if (e.type == SongEventPlanner.EventType.Drum)
             {

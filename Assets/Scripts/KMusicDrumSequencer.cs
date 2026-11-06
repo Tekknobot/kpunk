@@ -193,6 +193,20 @@ public class KMusicDrumSequencer : MonoBehaviour
     // repeats audible with both very short Resources and long Audio kits.
     private float _drumFxBpm = 120f;
 
+    // Record queued ECHO voices independently of the dry hit. If the dry hit
+    // has already sounded when the tempo changes, its future musical repeats
+    // must survive the sample lookahead replan (and must never restart the dry
+    // hit). All DSP times are in the same clock used by PlayScheduled.
+    private struct PendingDrumEcho
+    {
+        public int drumId;
+        public float level;
+        public double dryDsp;
+        public double repeatDsp;
+    }
+    private readonly List<PendingDrumEcho> _pendingDrumEchoes = new List<PendingDrumEcho>();
+    private readonly List<PendingDrumEcho> _echoesToRetimestamp = new List<PendingDrumEcho>();
+
     public void SetDrumFxTempo(float bpm)
     {
         _drumFxBpm = Mathf.Clamp(bpm, 1f, 400f);
@@ -217,6 +231,11 @@ public class KMusicDrumSequencer : MonoBehaviour
     {
         var shape = _dawDrumShapes[drumId - 1];
         if (!DrumEchoActive(shape)) return;
+        // Keep this ledger bounded even on a long-running, continuously
+        // looping session. Past repeats have already been heard.
+        double expiredBefore = AudioSettings.dspTime - .04;
+        _pendingDrumEchoes.RemoveAll(e => e.repeatDsp < expiredBefore);
+
         float amount = Mathf.Clamp01(shape.characterAmount);
         double eighth = 30.0 / Math.Max(1.0, _drumFxBpm);
         // Two repeats at 1/8 and 1/4-note offsets, musically useful for
@@ -225,9 +244,19 @@ public class KMusicDrumSequencer : MonoBehaviour
         float firstLevel = amount * .55f;
         float secondLevel = amount * amount * .27f;
         if (firstLevel >= .025f)
-            ScheduleSingleDrum(drumId, dspTime + eighth, velocity * firstLevel, true);
+            QueueDrumEcho(drumId, dspTime, dspTime + eighth, velocity * firstLevel);
         if (secondLevel >= .025f)
-            ScheduleSingleDrum(drumId, dspTime + eighth * 2.0, velocity * secondLevel, true);
+            QueueDrumEcho(drumId, dspTime, dspTime + eighth * 2.0, velocity * secondLevel);
+    }
+
+    private void QueueDrumEcho(int drumId, double dryDsp, double repeatDsp, float level)
+    {
+        // A failed voice reservation must not enter the retiming ledger.
+        if (!ScheduleSingleDrum(drumId, repeatDsp, level, true)) return;
+        _pendingDrumEchoes.Add(new PendingDrumEcho
+        {
+            drumId = drumId, level = level, dryDsp = dryDsp, repeatDsp = repeatDsp
+        });
     }
 
     private readonly List<AudioSource> _rumbleVoices = new List<AudioSource>();
@@ -460,27 +489,60 @@ public class KMusicDrumSequencer : MonoBehaviour
         return (int)Math.Min(MaxDrumVoicesPerLane, baseline + maxExtra);
     }
 
-    /// <summary>Discard only events which have NOT started yet when edits/tempo
-    /// changes invalidate committed times. Playing audio tails are preserved.</summary>
-    public void CancelFutureDAWVoices()
+    /// <summary>
+    /// Replan only safely cancellable future voices. The narrow DSP guard is
+    /// the audio callback's point of no return: leave hits already due/very
+    /// near their start alone, otherwise a rapid tempo drag can double-trigger
+    /// or swallow a kick. ECHO repeats belonging to a committed dry hit are
+    /// separately requeued at the new musical tempo.
+    /// </summary>
+    public void CancelFutureDAWVoices(double protectedThroughDsp = 0.0,
+        double remainingBeatTimeScale = 1.0)
     {
         double now = AudioSettings.dspTime;
+        double cutoff = Math.Max(now, protectedThroughDsp > 0.0
+            ? protectedThroughDsp : now + .03);
+        remainingBeatTimeScale = Math.Max(.01, Math.Min(100.0, remainingBeatTimeScale));
+
+        _echoesToRetimestamp.Clear();
+        // Decide ownership BEFORE cancelling the old AudioSources. Echoes
+        // from dry hits that are being replanned are discarded: the transport
+        // will recreate those when it queues their dry hit at the new tempo.
+        // Echoes from committed hits cannot be recreated by the transport.
+        for (int i = _pendingDrumEchoes.Count - 1; i >= 0; --i)
+        {
+            var echo = _pendingDrumEchoes[i];
+            if (echo.repeatDsp <= now) // already started: preserve its real tail
+                _pendingDrumEchoes.RemoveAt(i);
+            else if (echo.repeatDsp <= cutoff)
+                continue;            // too close to safely cancel: let it play
+            else
+            {
+                if (echo.dryDsp <= cutoff)
+                    _echoesToRetimestamp.Add(echo);
+                _pendingDrumEchoes.RemoveAt(i);
+            }
+        }
+
+        // AudioSource.isPlaying does not reliably report a queued PlayScheduled
+        // start. Use the absolute timestamps recorded at scheduling time.
         foreach (var item in _dawDrumVoiceStartsAt)
         {
             AudioSource src = item.Key;
-            if (src == null || item.Value <= now) continue;
+            if (src == null || item.Value <= cutoff) continue;
             src.Stop();
             _dawDrumVoiceBusyUntil.Remove(src);
         }
         _dawDrumVoiceStartsAt.Clear();
+
         foreach (var item in _dawChopVoiceStartsAt)
         {
-            if (item.Key == null || item.Value <= now) continue;
+            if (item.Key == null || item.Value <= cutoff) continue;
             item.Key.Stop();
             _dawChopVoiceBusyUntil.Remove(item.Key);
             _dawChopVoiceNaturalEnd.Remove(item.Key);
         }
-        // An earlier chop may have been truncated at the cancelled future hit.
+        // An earlier chop may have been truncated at a cancelled future hit.
         // Restore its natural end rather than leaving a phantom choke behind.
         foreach (var entry in _dawChopVoiceNaturalEnd)
         {
@@ -492,11 +554,27 @@ public class KMusicDrumSequencer : MonoBehaviour
             }
             catch (Exception) { /* expired or no longer scheduled */ }
         }
-        // Preserve busy times for already-playing tails. Only cancel reservations
-        // that have not started and can safely be rescheduled.
         _dawChopVoiceStartsAt.Clear();
-        // The old sampler fallback does not expose individual PlayScheduled
-        // reservations. Route-to-mixer mode is the supported precise DAW path.
+
+        // The phase is continuous across BPM changes. Scale the time still
+        // remaining until each echo by new-seconds-per-beat / old-seconds-per-beat.
+        // Clamp only starts inside the unsafe DSP buffer; never retrigger an
+        // already heard echo or pull a queued event into the past.
+        for (int i = _echoesToRetimestamp.Count - 1; i >= 0; --i)
+        {
+            var echo = _echoesToRetimestamp[i];
+            // If the original dry hit has not started but is already inside
+            // the protected DSP window, measure the repeat from that unchanged
+            // dry onset. Otherwise follow the live clock from the present beat.
+            double retimed = echo.dryDsp > now
+                ? echo.dryDsp + (echo.repeatDsp - echo.dryDsp) * remainingBeatTimeScale
+                : now + (echo.repeatDsp - now) * remainingBeatTimeScale;
+            retimed = Math.Max(cutoff + .002, retimed);
+            QueueDrumEcho(echo.drumId, echo.dryDsp, retimed, echo.level);
+        }
+        _echoesToRetimestamp.Clear();
+        // The sampler fallback does not expose individual PlayScheduled
+        // reservations. Precise retiming requires routeDrumsToMixer mode.
     }
 
     private KMusicApp _app;
@@ -959,6 +1037,8 @@ public class KMusicDrumSequencer : MonoBehaviour
     public void StopDAWVoices()
     {
         _dawDrumVoiceBusyUntil.Clear();
+        _pendingDrumEchoes.Clear();
+        _echoesToRetimestamp.Clear();
         foreach (var pool in _drumVoicePools.Values)
             foreach (AudioSource source in pool)
                 if (source != null) source.Stop();
