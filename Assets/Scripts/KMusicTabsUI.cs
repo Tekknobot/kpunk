@@ -1435,8 +1435,10 @@ public sealed class KMusicTabsUI : MonoBehaviour
         if(b==null)return;
         b.style.backgroundColor=active?Selected:NavBg;
         b.style.color=active?Accent:Ink;
-        b.style.borderBottomWidth=active?3:0;
-        b.style.borderBottomColor=Accent;
+        // Keep a visible bottom edge on inactive workspace tabs.
+        // The active destination retains its thicker accent underline.
+        b.style.borderBottomWidth=active?3:1;
+        b.style.borderBottomColor=active?Accent:new Color(.22f,.32f,.42f);
     }
     private void GeometryChanged(GeometryChangedEvent evt)
     {
