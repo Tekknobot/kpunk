@@ -73,6 +73,264 @@ public sealed class KMusicProjectManager : MonoBehaviour
         CurrentSong = edited;
     }
 
+    // In-memory project undo: no disk writes, project slot changes or save-format changes.
+    // Captures both the arrangement document and the live Helm/legacy edit state.
+    private int undoRestoreRevision;
+    private int undoPreviewSlot = -1;
+    private SongData undoPreview;
+
+    public string CaptureUndoSnapshot()
+    {
+        FindRuntimeRefs();
+        // Legacy preview conversion generates new clip IDs; cache it until the
+        // first edit promotes a native song, or history would see phantom edits.
+        SongData live = CurrentSong;
+        if (live == null)
+        {
+            if (undoPreview == null || undoPreviewSlot != CurrentSlot)
+            {
+                undoPreviewSlot = CurrentSlot;
+                undoPreview = GetSongForArrangementEditor();
+            }
+            live = undoPreview;
+        }
+        else { undoPreview = null; undoPreviewSlot = CurrentSlot; }
+        var data = new ProjectData { slot = CurrentSlot, song = live };
+        // Authored DAW edits live in SongData; avoid treating a running legacy
+        // sequencer's transient display/step changes as new history entries.
+        bool authored = live != null && live.arrangementAuthored;
+        if (!authored)
+        {
+            if (_drums != null)
+            {
+                byte[] mask = _drums.CaptureDrumMask();
+                byte[] velocity = _drums.CaptureDrumVelocityData();
+                data.drums.stepMaskB64 = mask == null ? "" : Convert.ToBase64String(mask);
+                data.drums.stepVelocityB64 = velocity == null ? "" : Convert.ToBase64String(velocity);
+                data.drums.sampleSteps = _drums.CaptureSampleStepsFlat();
+                data.drums.mutes = _drums.CaptureDrumMutes();
+                data.drums.kitIndex = _drums.CaptureKitIndex();
+                data.drums.kitId = _drums.CaptureKitId();
+            }
+            if (_samplerUi != null) data.sampler.stepGrid = _samplerUi.CaptureSampleStepsFlat();
+            if (_keys != null) { data.seq.stepGrid = _keys.CaptureSeqStepsFlat(); data.seq.runs = _keys.CaptureSeqRunsFlat(); }
+            if (_pad != null)
+            {
+                data.pad.stepGrid = _pad.CapturePadStepsFlat();
+                data.pad.runs = _pad.CapturePadRunsFlat();
+                data.pad.chordMode = _pad.CaptureChordMode();
+            }
+        }
+        if (_app != null && _app.Bus != null)
+            foreach (var value in _app.Bus.All)
+                if (!IsSynthBusId(value.Id))
+                    data.bus.Add(new BusPair { id = value.Id, v = value.Value });
+        if (_rack != null && _rack.BassPresetsReady)
+        {
+            data.bass.presetRelPath = _rack.CurrentBassPresetRelPath;
+            data.bass.nativeSound = CaptureNativeSound(_rack.BassController);
+        }
+        if (_helm != null && !string.IsNullOrEmpty(_helm.LastAppliedPresetRelPath))
+        {
+            data.synth.presetRelPath = _helm.LastAppliedPresetRelPath;
+            data.synth.presetIndex = _helm.CurrentPresetIndex;
+            data.synth.nativeSound = CaptureNativeSound(_helm.ActiveHelmController);
+        }
+        if (_padSynthRuntime != null && !string.IsNullOrEmpty(_padSynthRuntime.LastAppliedPresetRelPath))
+        {
+            data.pad.presetRelPath = _padSynthRuntime.LastAppliedPresetRelPath;
+            data.pad.presetIndex = _padSynthRuntime.CurrentPresetIndex;
+            data.pad.nativeSound = CaptureNativeSound(_padSynthRuntime.ActiveHelmController);
+        }
+        if (_player != null)
+        {
+            data.player.lastTrackId = KMusicPlayerUI.CanonicalSampleId(_player.GetLastTrackId());
+            data.warp = _player.CaptureProjectWarpState();
+        }
+        if (KMusicChopState.TryLoadApplied(out string sampleId, out var starts, out var ends))
+        {
+            data.chops.resourcesPath = KMusicPlayerUI.CanonicalSampleId(sampleId);
+            data.chops.sliceStart01 = starts;
+            data.chops.sliceEnd01 = ends;
+            if (KMusicChopState.TryLoadAppliedMarkerPositions(out var markers, out bool lastIsEndOnly))
+            {
+                data.chops.markerPositions01 = markers;
+                data.chops.lastMarkerIsEndOnly = lastIsEndOnly;
+            }
+        }
+        if (!authored)
+        {
+            data.patterns = PatternBank.ExportAll();
+            data.chain = ChainStateSave.From(ChainState.LoadOrCreate());
+        }
+        return JsonUtility.ToJson(data);
+    }
+
+    public bool RestoreUndoSnapshot(string json)
+    {
+        if (string.IsNullOrEmpty(json))
+        {
+            Debug.LogWarning("[ZPUNK Undo] Restore rejected: empty snapshot.");
+            return false;
+        }
+        ProjectData state;
+        try { state = JsonUtility.FromJson<ProjectData>(json); }
+        catch (Exception ex) { Debug.LogWarning("[ZPUNK Undo] Invalid snapshot: " + ex.Message); return false; }
+        if (state == null || state.slot != CurrentSlot || state.song == null)
+        {
+            Debug.LogWarning("[ZPUNK Undo] Restore rejected: " +
+                (state == null ? "snapshot was null" :
+                state.song == null ? "song data was missing" :
+                "slot " + state.slot + " does not match active slot " + CurrentSlot));
+            return false;
+        }
+        try
+        {
+            FindRuntimeRefs();
+            undoRestoreRevision++;
+            // Restore exactly the project mode that was captured. The previous
+            // undo patch forcibly promoted every state to an authored DAW song.
+            // Undoing a legacy-pattern edit therefore broke the live legacy
+            // sequencers and could make further edits look ineffective.
+            SongData restoredSong = SongData.FromJson(JsonUtility.ToJson(state.song));
+            bool authored = restoredSong.arrangementAuthored ||
+                (!restoredSong.migratedFromLegacy && SongEventPlanner.HasEvents(restoredSong));
+            CurrentSong = authored ? restoredSong : null;
+            // A cached legacy preview belongs to the old edit state. Rebuild
+            // it only after restoring the actual pattern grids and banks.
+            undoPreview = null;
+            undoPreviewSlot = -1;
+            if (state.bus != null) ApplyBusPairs(state.bus);
+            if (state.chops != null && !string.IsNullOrEmpty(state.chops.resourcesPath))
+                KMusicChopState.SetAppliedRaw(state.chops.resourcesPath,
+                    state.chops.sliceStart01, state.chops.sliceEnd01,
+                    state.chops.markerPositions01, state.chops.lastMarkerIsEndOnly);
+            else KMusicChopState.ClearApplied();
+            if (_player != null)
+            {
+                string sampleId = state.chops != null && !string.IsNullOrEmpty(state.chops.resourcesPath)
+                    ? state.chops.resourcesPath : state.player != null ? state.player.lastTrackId : null;
+                _player.SetLastTrackId(sampleId);
+                _player.SetProjectWarpState(state.warp, sampleId);
+                _player.RefreshAppliedMarkersFromState();
+            }
+            if (!state.song.arrangementAuthored)
+            {
+                if (state.patterns != null) PatternBank.ImportAll(state.patterns);
+                if (state.chain != null) state.chain.ApplyToPrefs();
+                if (_drums != null && state.drums != null)
+                {
+                    byte[] mask = string.IsNullOrEmpty(state.drums.stepMaskB64) ? null : Convert.FromBase64String(state.drums.stepMaskB64);
+                    byte[] vel = string.IsNullOrEmpty(state.drums.stepVelocityB64) ? null : Convert.FromBase64String(state.drums.stepVelocityB64);
+                    _drums.ApplyDrumMask(mask);
+                    _drums.ApplyDrumVelocityData(vel);
+                    _drums.ApplySampleStepsFlat(state.drums.sampleSteps);
+                    _drums.ApplyDrumMutes(state.drums.mutes);
+                    _drums.ApplyKitSelection(state.drums.kitIndex, state.drums.kitId);
+                }
+                if (_samplerUi != null) _samplerUi.ApplySampleStepsFlat(state.sampler.stepGrid);
+                if (_keys != null)
+                {
+                    _keys.ApplySeqStepsFlat(state.seq.stepGrid, state.seq.runs);
+                    _keys.RebuildSynthSequenceNow();
+                }
+                if (_pad != null)
+                {
+                    _pad.ApplyPadStepsFlat(state.pad.stepGrid, state.pad.runs);
+                    _pad.ApplyChordMode(state.pad.chordMode);
+                    _pad.RebuildPadSequenceNow();
+                }
+            }
+            SongData playbackSong = CurrentSong ?? GetSongForPlayback();
+            if (playbackSong != null && playbackSong.tracks != null &&
+                playbackSong.tracks.Count > 0 && _drums != null)
+            {
+                var inst = playbackSong.tracks[0] != null ? playbackSong.tracks[0].instrument : null;
+                if (inst != null)
+                {
+                    _drums.ApplyKitSelection(inst.drumKitIndex, inst.drumKitId);
+                    _drums.ApplyDAWDrumDesign(inst.drumDesign);
+                    _drums.SetDrumFxTempo(playbackSong.bpm);
+                }
+            }
+            int revision = undoRestoreRevision;
+            if (state.bass != null && state.bass.nativeSound != null && state.bass.nativeSound.Count > 0)
+                StartCoroutine(RestoreUndoBass(revision, state.bass.presetRelPath, state.bass.nativeSound));
+            if (state.synth != null && state.synth.nativeSound != null && state.synth.nativeSound.Count > 0)
+                StartCoroutine(RestoreUndoSynth(revision, state.synth.presetIndex, state.synth.presetRelPath, state.synth.nativeSound));
+            if (state.pad != null && state.pad.nativeSound != null && state.pad.nativeSound.Count > 0)
+                StartCoroutine(RestoreUndoPads(revision, state.pad.presetIndex, state.pad.presetRelPath, state.pad.nativeSound));
+            var transport = FindObjectOfType<ZPunkSongTransport>();
+            if (transport != null)
+            {
+                if (transport.IsSessionArmed) transport.ApplyLiveMix(playbackSong);
+                else transport.ApplyLiveSong(playbackSong);
+            }
+            ZPunkMasterAudioTap.ApplySongSettings(playbackSong);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError("[ZPUNK Undo] Restore failed: " + ex);
+            return false;
+        }
+    }
+
+    private System.Collections.IEnumerator RestoreUndoBass(int revision, string preset,
+        List<NativeSoundValue> values)
+    {
+        if (_rack == null) yield break;
+        if (!string.IsNullOrEmpty(preset) && !PresetMatches(preset, _rack.CurrentBassPresetRelPath))
+            _rack.RequestProjectBassPreset(preset);
+        for (int i = 0; i < 90 && revision == undoRestoreRevision; i++)
+        {
+            if (_rack.BassController != null && PresetMatches(preset, _rack.CurrentBassPresetRelPath)) break;
+            yield return null;
+        }
+        yield return null;
+        if (revision == undoRestoreRevision && PresetMatches(preset, _rack.CurrentBassPresetRelPath))
+            ApplyNativeSound(_rack.BassController, values);
+    }
+    private System.Collections.IEnumerator RestoreUndoSynth(int revision, int presetIndex,
+        string preset, List<NativeSoundValue> values)
+    {
+        if (_helm == null) yield break;
+        if (!PresetMatches(preset, _helm.LastAppliedPresetRelPath))
+            _helm.ApplyPresetChoice(presetIndex, preset);
+        for (int i = 0; i < 90 && revision == undoRestoreRevision; i++)
+        {
+            if (PresetMatches(preset, _helm.LastAppliedPresetRelPath)) break;
+            yield return null;
+        }
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        if (revision == undoRestoreRevision && PresetMatches(preset, _helm.LastAppliedPresetRelPath))
+        {
+            ApplyNativeSound(_helm.ActiveHelmController, values);
+            var binder = FindObjectOfType<KMusicHelmSynthBinder>();
+            if (binder != null) binder.RequestPullFromHelm();
+        }
+    }
+    private System.Collections.IEnumerator RestoreUndoPads(int revision, int presetIndex,
+        string preset, List<NativeSoundValue> values)
+    {
+        if (_padSynthRuntime == null) yield break;
+        if (!PresetMatches(preset, _padSynthRuntime.LastAppliedPresetRelPath))
+            _padSynthRuntime.ApplyPresetChoice(presetIndex, preset);
+        for (int i = 0; i < 90 && revision == undoRestoreRevision; i++)
+        {
+            if (PresetMatches(preset, _padSynthRuntime.LastAppliedPresetRelPath)) break;
+            yield return null;
+        }
+        yield return null;
+        yield return new WaitForEndOfFrame();
+        if (revision == undoRestoreRevision && PresetMatches(preset, _padSynthRuntime.LastAppliedPresetRelPath))
+        {
+            ApplyNativeSound(_padSynthRuntime.ActiveHelmController, values);
+            _padSynthRuntime.RequestPullFromHelm();
+        }
+    }
+
     public int CurrentSlot { get; private set; }
     private string ProjectsDir => Path.Combine(Application.persistentDataPath, "Projects");
 
@@ -2012,6 +2270,9 @@ public sealed class KMusicProjectManager : MonoBehaviour
             if (_keys != null) _keys.SetAllowSaving(true);
             if (_pad != null) _pad.SetAllowSaving(true);
         }
+        // A re-open of the same slot must also invalidate its previous history.
+        var history = FindObjectOfType<ZPunkUndoHistory>();
+        if (history != null) history.ResetToCurrent();
     }
 
 

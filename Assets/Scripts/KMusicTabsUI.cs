@@ -49,6 +49,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private ZPunkSoundUI sound;
     private ZPunkMixerUI mixer;
     private ZPunkSongTransport transport;
+    private ZPunkUndoHistory undoHistory;
+    private Button undoMenuButton, redoMenuButton;
     private KMusicProjectManager projects;
     private string workspace="arrange";
     private bool isReady, compact;
@@ -182,6 +184,12 @@ public sealed class KMusicTabsUI : MonoBehaviour
         // Coalesce rapid step edits/velocity drags. Rebuilding the entire event
         // plan per pointer event competes with audio scheduling and UI rendering.
         editor.OnClipChanged=()=>{pendingLiveEdit=true;};
+        undoHistory = GetComponent<ZPunkUndoHistory>();
+        if (undoHistory == null) undoHistory = gameObject.AddComponent<ZPunkUndoHistory>();
+        undoHistory.Initialize(projects, doc, RefreshAfterUndo);
+        undoHistory.HistoryChanged -= UpdateHistoryButtons;
+        undoHistory.HistoryChanged += UpdateHistoryButtons;
+        UpdateHistoryButtons();
         BuildShell();
         isReady=true;
         Navigate("arrange");
@@ -464,6 +472,25 @@ public sealed class KMusicTabsUI : MonoBehaviour
             projectActions.Add(open);
         }
         menuBody.Add(projectActions);
+        // Shared history belongs to the project, not to a particular editing tab.
+        // Keep it out of the already-full transport header.
+        var historyRow = new VisualElement { name = "ZPunkHistoryActions" };
+        historyRow.style.flexDirection = FlexDirection.Row;
+        historyRow.style.height = 46;
+        historyRow.style.minHeight = 46;
+        historyRow.style.marginBottom = 7;
+        undoMenuButton = Button("↶ UNDO", () => ExecuteHistoryMenuAction(false));
+        redoMenuButton = Button("↷ REDO", () => ExecuteHistoryMenuAction(true));
+        StyleMenuItem(undoMenuButton); StyleMenuItem(redoMenuButton);
+        undoMenuButton.style.flexGrow = 1;
+        redoMenuButton.style.flexGrow = 1;
+        undoMenuButton.style.minWidth = 0;
+        redoMenuButton.style.minWidth = 0;
+        undoMenuButton.style.marginRight = 5;
+        historyRow.Add(undoMenuButton);
+        historyRow.Add(redoMenuButton);
+        menuBody.Add(historyRow);
+        UpdateHistoryButtons();
         var saveItem=Button("SAVE PROJECT",()=>{Save();SetMenuOpen(false);});
         collectGuardSave = saveItem;
         StyleMenuItem(saveItem);menuBody.Add(saveItem);
@@ -1467,6 +1494,63 @@ public sealed class KMusicTabsUI : MonoBehaviour
             button.style.fontSize=13;
         }
     }
+    private void ExecuteHistoryMenuAction(bool redo)
+    {
+        // Close the menu before restoring the workspace. UI Toolkit may still
+        // have the button's pointer captured while ClickEvent is dispatched;
+        // scheduling the edit for the next panel update avoids that race.
+        SetMenuOpen(false);
+        if (uiRoot == null || undoHistory == null) return;
+        uiRoot.schedule.Execute(() =>
+        {
+            if (undoHistory == null) return;
+            if (redo) undoHistory.Redo();
+            else undoHistory.Undo();
+            UpdateHistoryButtons();
+        }).ExecuteLater(0);
+    }
+
+    private void UpdateHistoryButtons()
+    {
+        // The counts make it clear whether an edit reached the history stack;
+        // unlike disabled buttons alone, they expose capture timing problems.
+        if (undoMenuButton != null)
+        {
+            undoMenuButton.text = "↶ UNDO (" + (undoHistory != null ? undoHistory.UndoCount : 0) + ")";
+            undoMenuButton.SetEnabled(undoHistory != null && undoHistory.CanUndo);
+        }
+        if (redoMenuButton != null)
+        {
+            redoMenuButton.text = "↷ REDO (" + (undoHistory != null ? undoHistory.RedoCount : 0) + ")";
+            redoMenuButton.SetEnabled(undoHistory != null && undoHistory.CanRedo);
+        }
+    }
+
+    private void RefreshAfterUndo()
+    {
+        if (!isReady) return;
+        // A clip editor write may still be waiting for the deferred transport
+        // update. Never let a pre-undo pending edit reapply stale state.
+        pendingLiveEdit = false;
+        // Each editor must discard cached TrackData/ClipContentData references.
+        // Never rebuild a running Session's launch grid while performing.
+        if (workspace == "arrange") arrangement?.OnShown();
+        else if (workspace == "create") editor?.OnShown();
+        else if (workspace == "sound") sound?.OnShown();
+        else if (workspace == "mix") mixer?.OnShown();
+        else if (workspace == "session")
+        {
+            if (transport == null || !transport.IsSessionArmed) session?.OnShown();
+            arrangement?.RefreshSharedPerformanceControls();
+        }
+        if (projects != null && tempoDisplay != null)
+        {
+            var restored = projects.CurrentSong ?? projects.GetSongForPlayback();
+            if (restored != null)
+                tempoDisplay.text = Mathf.RoundToInt(restored.bpm) + " BPM";
+        }
+    }
+
     private void Update()
     {
         if(!isReady)return;
