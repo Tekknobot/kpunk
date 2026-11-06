@@ -843,9 +843,19 @@ namespace ZPunk.DAW
             {
                 int track = t;
                 var column = Column(TrackWidth);
-                var button = ActionButton("■", () => QueueClip(track, -1), TrackWidth);
+                var button = ActionButton("", () => QueueClip(track, -1), TrackWidth);
                 FillColumn(button, TileHeight);
-                button.style.fontSize = 22;
+
+                button.style.alignItems = Align.Center;
+                button.style.justifyContent = Justify.Center;
+
+                var stopIcon = new VisualElement();
+                stopIcon.style.width = 13;
+                stopIcon.style.height = 13;
+                stopIcon.style.backgroundColor = Ink;
+                stopIcon.pickingMode = PickingMode.Ignore;
+
+                button.Add(stopIcon);
                 button.tooltip = "Stop this lane at the next safe quantized boundary";
                 column.Add(button);
                 stops.Add(column);
