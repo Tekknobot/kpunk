@@ -147,20 +147,28 @@ namespace ZPunk.DAW
             AudioSettings.dspTime < anchorDsp ? startTick :
             startTick + (AudioSettings.dspTime - anchorDsp) / secondsPerTick);
 
-        // A launch request must be installed BEFORE audio lookahead reaches its
-        // bar boundary. If the upcoming bar is too close, use the following one.
+        // Session changes can cancel/replan upcoming drum/chop voices beyond
+        // ResetFutureSamples' narrow DSP protection interval. They do not need
+        // an additional FULL sample-prefetch window before the next beat.
+        // Keep normal song playback's 0.32s lookahead untouched.
         public long NextSafeSessionBar() => NextSafeSessionLaunch(SongData.TicksPerBar4);
 
-        /// <summary>Choose the first rhythmic boundary beyond the DSP scheduling
-        /// lookahead and a guard interval. For 4/4: bar=1920, half=960,
-        /// quarter=480, eighth=240 ticks. Never launch early or in the past.</summary>
+        /// <summary>Choose the first musical boundary with a short, positive
+        /// time budget for the Session edit/replan and at least two PCM callbacks.
+        /// 4/4: bar=1920, half=960, quarter=480, eighth=240 ticks.
+        /// Never launches early or into an already committed audio callback.</summary>
         public long NextSafeSessionLaunch(long quantumTicks)
         {
             double phase = SessionPreciseTick;
-            double margin = (Math.Max(audioLookahead, 0.32f) + 0.16) *
-                SessionBpm * SongData.TicksPerQuarter / 60.0;
+            // Previously this was audioLookahead + .16 (usually 480ms), which
+            // skipped *multiple* short quantization boundaries on every tap.
+            // A 135ms baseline gives mobile Update and a live-plan rebuild time
+            // while allowing an eighth-note launch at ordinary house tempos.
+            double safeLeadSeconds = Math.Max(0.135, minSampleScheduleLead * 2.0 + 0.075);
+            double leadTicks = safeLeadSeconds * SessionBpm *
+                SongData.TicksPerQuarter / 60.0;
             long step = Math.Max(1L, quantumTicks);
-            return Math.Max(step, (long)Math.Ceiling((phase + margin) / step) * step);
+            return Math.Max(step, (long)Math.Ceiling((phase + leadTicks) / step) * step);
         }
 
         public void ArmSessionPlayback(SongData performanceSong)

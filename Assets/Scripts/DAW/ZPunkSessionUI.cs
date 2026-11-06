@@ -504,6 +504,71 @@ namespace ZPunk.DAW
             button.style.borderBottomRightRadius = 5;
             return button;
         }
+        // Clip/scene/stop buttons can respond to a deliberate stationary touch
+        // before finger-up, without turning scroll swipes into accidental hits.
+        // Quick taps and keyboard/mouse input still use normal Button.clicked.
+        private static Button LaunchButton(string label, Action launch, int width)
+        {
+            bool held = false;
+            bool moved = false;
+            bool fired = false;
+            int pointer = -1;
+            int generation = 0;
+            Vector2 down = Vector2.zero;
+            var button = ActionButton(label, () =>
+            {
+                // Unity also sends clicked on finger-up after our early action.
+                if (!fired && !moved) launch();
+                fired = false;
+                moved = false;
+            }, width);
+            button.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                // Mouse/keyboard clicks use the standard, release-based path.
+                fired = false;
+                moved = false;
+                held = false;
+                generation++;
+                if (evt.pointerType != UnityEngine.UIElements.PointerType.touch || evt.button != 0) return;
+                pointer = evt.pointerId;
+                down = new Vector2(evt.position.x, evt.position.y);
+                held = true;
+                int thisPress = generation;
+                // A real swipe travels beyond the slop before this timer fires.
+                // This is intentionally NOT an immediate PointerDown launch.
+                button.schedule.Execute(() =>
+                {
+                    if (generation != thisPress || !held || moved || fired ||
+                        button.panel == null || !button.enabledInHierarchy) return;
+                    fired = true;
+                    launch();
+                }).StartingIn(75);
+            }, TrickleDown.TrickleDown);
+            button.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (!held || evt.pointerId != pointer) return;
+                Vector2 here = new Vector2(evt.position.x, evt.position.y);
+                if ((here - down).sqrMagnitude <= 100f) return; // 10px slop
+                moved = true;
+                held = false;
+                generation++;
+            }, TrickleDown.TrickleDown);
+            button.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (evt.pointerId == pointer) { held = false; generation++; }
+            }, TrickleDown.TrickleDown);
+            button.RegisterCallback<PointerCancelEvent>(evt =>
+            {
+                if (evt.pointerId == pointer) { held = false; moved = true; generation++; }
+            }, TrickleDown.TrickleDown);
+            button.RegisterCallback<PointerCaptureOutEvent>(evt =>
+            {
+                held = false;
+                generation++;
+            });
+            return button;
+        }
+
         // Every heading, clip, M/S pair and stop uses the identical column
         // wrapper. The column width includes no button margins.
         private static VisualElement Column(int width)
@@ -732,7 +797,7 @@ namespace ZPunk.DAW
                         (int)Math.Ceiling(scenes[scene].patterns[track].lengthTicks /
                             (double)BarTicks))).ToString() + "B" : "·";
                     var column = Column(TrackWidth);
-                    var clipButton = ActionButton(label, () => QueueClip(track, scene), TrackWidth);
+                    var clipButton = LaunchButton(label, () => QueueClip(track, scene), TrackWidth);
                     FillColumn(clipButton, TileHeight);
                     if (available) ZPunkUIIcons.Apply(clipButton, "play", label.Replace("▶", "").Trim(), 14f, false);
                     clipButton.SetEnabled(available);
@@ -744,7 +809,7 @@ namespace ZPunk.DAW
                     clipButtons[track].Add(clipButton);
                 }
                 var goColumn = Column(GoWidth);
-                var go = ActionButton("", () => LaunchScene(scene), GoWidth);
+                var go = LaunchButton("", () => LaunchScene(scene), GoWidth);
                 FillColumn(go, TileHeight);
                 ZPunkUIIcons.Apply(go, "play", "", 19f);
                 go.tooltip = "Queue all filled clips in scene " + (scene + 1) + "; empty cells keep playing";
@@ -843,7 +908,7 @@ namespace ZPunk.DAW
             {
                 int track = t;
                 var column = Column(TrackWidth);
-                var button = ActionButton("", () => QueueClip(track, -1), TrackWidth);
+                var button = LaunchButton("", () => QueueClip(track, -1), TrackWidth);
                 FillColumn(button, TileHeight);
 
                 button.style.alignItems = Align.Center;
@@ -868,7 +933,7 @@ namespace ZPunk.DAW
             footer.style.justifyContent = Justify.SpaceBetween;
             footer.style.marginTop = 8;
             footer.Add(Caption("EMPTY SLOTS KEEP PLAYING", 11, Muted));
-            var stopAll = ActionButton("STOP ALL", StopAll, 92);
+            var stopAll = LaunchButton("STOP ALL", StopAll, 92);
             stopAll.style.color = Accent;
             footer.Add(stopAll);
             contentScroll.Add(footer);
