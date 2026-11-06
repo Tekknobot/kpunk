@@ -748,14 +748,17 @@ namespace ZPunk.DAW
                 (anchorDsp - AudioHelmClock.GetLastSampledTime()) / 60.0;
         }
 
-        private void ResetFutureSamples(long atTick)
+        private void ResetFutureSamples(double atTick)
         {
             kickDuckingStarts.Clear();
             if (drums != null) drums.CancelFutureDAWVoices();
             scheduledSamples.Clear();
             sampleCursor = 0;
             prefetchedLoopSamples = 0;
-            // Preserve the running transport cycle on ordinary live edits.
+            // The live BPM cursor can be mid-tick. Skipping to its floored
+            // integer used to replay an already-sounded drum at the old tick,
+            // producing extra hits/flams while dragging the tempo slider.
+            // Preserve the precise musical phase and already-playing tails.
             while (sampleCursor < plan.samples.Count && plan.samples[sampleCursor].tick < atTick)
                 sampleCursor++;
         }
@@ -1078,16 +1081,21 @@ namespace ZPunk.DAW
                 startTick + (now - anchorDsp) / secondsPerTick;
             bpm = Mathf.Clamp(nextBpm, 1f, 400f);
             acid?.SetTempo(bpm);
+            // Drum Designer ECHO uses musical eighths. The previous code kept
+            // the default/pre-play BPM while the slider was being dragged.
+            drums?.SetDrumFxTempo(bpm);
             secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
             if (!beforeStart)
                 anchorDsp = now - (exactTick - startTick) * secondsPerTick;
             PublishPerformanceFxClock();
             if (clock != null) clock.bpm = bpm;
-            ResetFutureSamples((long)Math.Max(0.0, Math.Floor(exactTick)));
-            acid?.AllNotesOff();
+            ResetFutureSamples(Math.Max(0.0, exactTick));
+            // Requeue only upcoming ACID commands; never retrigger the note
+            // already playing at a fractional tick or reset the synth's DSP.
+            acid?.RetimestampPendingNotes();
             acidCursor = acidPrefetchCursor = 0;
-            long acidPosition = (long)Math.Max(0.0, Math.Floor(exactTick));
-            while (acidCursor < plan.midi.Count && plan.midi[acidCursor].tick < acidPosition) acidCursor++;
+            while (acidCursor < plan.midi.Count && plan.midi[acidCursor].tick < exactTick)
+                acidCursor++;
             liveRevision++;
         }
 
@@ -1158,6 +1166,7 @@ namespace ZPunk.DAW
             if (tempoChanged) acid?.SetTempo(bpm);
             if (tempoChanged)
             {
+                drums?.SetDrumFxTempo(bpm);
                 secondsPerTick = 60.0 / bpm / SongData.TicksPerQuarter;
                 if (!beforeStart)
                     anchorDsp = now - (exactTick - startTick) * secondsPerTick;
@@ -1187,7 +1196,7 @@ namespace ZPunk.DAW
                         plan.samples.Exists(e => e.type == SongEventPlanner.EventType.Chop),
                         plan.samples, bpm, activeLoopEnabled ? loopStart : 0,
                         activeLoopEnabled ? loopEnd : 0, audioLookahead);
-                ResetFutureSamples(position);
+                ResetFutureSamples(tempoChanged ? exactTick : position);
             }
             ResolveControllers();
             ApplyAllTrackGains();
@@ -1197,12 +1206,19 @@ namespace ZPunk.DAW
                 !RefreshEditedNativeMidiTracks(previousPlan, next, position))
                 ReconcileFallbackHeldMidi(previousPlan, next, position);
             midiCursor = 0;
-            if (tempoChanged || loopChanged ||
-                (midiChanged && ChangedMidiTracks(previousPlan, next).Contains((int)TrackKind.Acid)))
+            bool acidNotesEdited = midiChanged &&
+                ChangedMidiTracks(previousPlan, next).Contains((int)TrackKind.Acid);
+            if (tempoChanged || loopChanged || acidNotesEdited)
             {
-                acid?.AllNotesOff();
+                // Changing the pattern/loop may intentionally replace its held
+                // note. Tempo-only edits must NOT restart a sounding 303 voice.
+                if (loopChanged || acidNotesEdited) acid?.AllNotesOff();
+                else acid?.RetimestampPendingNotes();
                 acidCursor = acidPrefetchCursor = 0;
-                while (acidCursor < plan.midi.Count && plan.midi[acidCursor].tick < position) acidCursor++;
+                double acidFromTick = tempoChanged && !loopChanged && !acidNotesEdited
+                    ? exactTick : position;
+                while (acidCursor < plan.midi.Count && plan.midi[acidCursor].tick < acidFromTick)
+                    acidCursor++;
             }
             while (midiCursor < plan.midi.Count &&
                    (plan.midi[midiCursor].tick < position ||

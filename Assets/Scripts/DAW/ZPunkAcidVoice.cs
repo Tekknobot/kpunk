@@ -25,6 +25,11 @@ namespace ZPunk.DAW
         private readonly List<Command> audioQueue = new List<Command>(256);
         private int generation;
         private int audioGeneration;
+        // A live tempo adjustment invalidates only FUTURE note timestamps.
+        // Unlike AllNotesOff, it must preserve the held note, 303 filter envelope,
+        // slides, and wet FX tails on the audio thread.
+        private volatile int scheduleRevision;
+        private int audioScheduleRevision;
         private float gain = 1f;
         private AcidState parameters = new AcidState();
         private double phase, frequency, targetFrequency, phaseStep, portamentoLeft;
@@ -342,6 +347,19 @@ namespace ZPunk.DAW
             lock (queueLock) { generation++; queued.Clear(); }
         }
 
+        /// <summary>Invalidate pre-scheduled note times after a BPM change
+        /// without silencing the currently sounding ACID voice or its FX.
+        /// The transport queues the remaining notes again against its new anchor.
+        /// </summary>
+        public void RetimestampPendingNotes()
+        {
+            lock (queueLock)
+            {
+                scheduleRevision++;
+                queued.Clear();
+            }
+        }
+
         private static double PolyBlep(double t, double dt)
         {
             if (t < dt) { t /= dt; return t + t - t * t - 1.0; }
@@ -474,6 +492,14 @@ namespace ZPunk.DAW
                 pedalInputReady = false;
                 Array.Clear(pedalDecimatorHistory, 0, pedalDecimatorHistory.Length);
                 pedalDecimatorWrite = 0;
+            }
+            // Future notes are owned by the old tempo; discard their scheduled
+            // times only. An active gate and the DSP state MUST continue.
+            int localScheduleRevision = scheduleRevision;
+            if (localScheduleRevision != audioScheduleRevision)
+            {
+                audioScheduleRevision = localScheduleRevision;
+                audioQueue.Clear();
             }
             lock (queueLock)
             {

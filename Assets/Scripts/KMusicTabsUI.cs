@@ -17,7 +17,9 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private VisualElement uiRoot, pages, shell, header, headerRow, menu, menuBody, dock;
     private VisualElement pageArrangement, pageEditor, pageSound, pageMixer;
     private VisualElement context, content;
-    private Label heading, subheading, projectInfo, headerTitle, headerSignature;
+    private Label heading, subheading, projectInfo, headerTitle, headerVersion, headerSignature;
+    private VisualElement headerBrand;
+    private Image headerLogo;
     private Label tempoDisplay;
     private Coroutine menuAnimation;
     private Coroutine wavExportRoutine;
@@ -253,18 +255,60 @@ public sealed class KMusicTabsUI : MonoBehaviour
         headerRow.style.width=new Length(100,LengthUnit.Percent);
         headerRow.style.minWidth=0;
         header.Add(headerRow);
-        headerTitle=existingTitle!=null?existingTitle:Label("ZPUNK 2.0",18);
-        headerTitle.text="ZPUNK 2.2";
+        headerBrand=new VisualElement{name="ZPunkHeaderBrand"};
+        headerBrand.style.flexDirection=FlexDirection.Row;
+        headerBrand.style.alignItems=Align.Center;
+        headerBrand.style.flexGrow=1;
+        headerBrand.style.flexShrink=1;
+        headerBrand.style.minWidth=0;
+        headerBrand.style.overflow=Overflow.Hidden;
+        headerRow.Add(headerBrand);
+        // Use the existing app logo, included as a tiny Resources sprite so
+        // phones can load it without a scene/Inspector reference.
+        var logoSprite=Resources.Load<Sprite>("ZPunkHeaderLogo");
+        if(logoSprite!=null)
+        {
+            headerLogo=new Image{name="ZPunkHeaderLogo",sprite=logoSprite};
+            headerLogo.scaleMode=ScaleMode.ScaleToFit;
+            headerLogo.style.width=24;
+            headerLogo.style.height=24;
+            headerLogo.style.flexShrink=0;
+            headerLogo.style.marginRight=5;
+            headerLogo.pickingMode=PickingMode.Ignore;
+            headerBrand.Add(headerLogo);
+        }
+        var brandWords=new VisualElement{name="ZPunkBrandWords"};
+        brandWords.style.flexDirection=FlexDirection.Column;
+        brandWords.style.flexGrow=0;
+        brandWords.style.flexShrink=1;
+        brandWords.style.minWidth=0;
+        headerBrand.Add(brandWords);
+        headerTitle=existingTitle!=null?existingTitle:Label("ZPUNK",18);
+        headerTitle.text="ZPUNK";
         headerTitle.style.fontSize=18;
         headerTitle.style.unityFontStyleAndWeight=FontStyle.Bold;
         headerTitle.style.color=Ink;
+        headerTitle.style.height=21;
         headerTitle.style.flexShrink=1;
-        headerTitle.style.flexGrow=1;
         headerTitle.style.minWidth=0;
         headerTitle.style.overflow=Overflow.Hidden;
         headerTitle.style.whiteSpace=WhiteSpace.NoWrap;
         headerTitle.style.textOverflow=TextOverflow.Ellipsis;
-        headerRow.Add(headerTitle);
+        brandWords.Add(headerTitle);
+        // Show Player Settings > Version automatically, so the UI stays in
+        // sync with future releases without hardcoding old ZPUNK labels.
+        string appVersion=Application.version;
+        headerVersion=new Label(string.IsNullOrEmpty(appVersion)?"2.3.8":appVersion);
+        headerVersion.name="ZPunkVersion";
+        headerVersion.style.fontSize=12;
+        headerVersion.style.height=15;
+        headerVersion.style.color=Dim;
+        headerVersion.style.whiteSpace=WhiteSpace.NoWrap;
+        headerVersion.style.textOverflow=TextOverflow.Ellipsis;
+        headerVersion.style.overflow=Overflow.Hidden;
+        headerVersion.style.flexShrink=1;
+        headerVersion.style.minWidth=0;
+        brandWords.Add(headerVersion);
 
         headerPlay=play;
         headerStop=stop;
@@ -1305,10 +1349,13 @@ public sealed class KMusicTabsUI : MonoBehaviour
         // Keep the header legible and single-line down to narrow phone widths.
         // Only the low-value signature disappears; the title and core actions stay.
         bool narrow=width<400;
-        if(headerTitle!=null)
+        if(headerTitle!=null)headerTitle.style.fontSize=narrow?15:18;
+        if(headerVersion!=null)headerVersion.style.fontSize=narrow?9:10;
+        if(headerLogo!=null)
         {
-            headerTitle.text=narrow?"ZPUNK":"ZPUNK 2.0";
-            headerTitle.style.fontSize=narrow?16:18;
+            headerLogo.style.width=narrow?21:24;
+            headerLogo.style.height=narrow?21:24;
+            headerLogo.style.marginRight=narrow?3:5;
         }
         if(headerSignature!=null)
             headerSignature.style.display=width<440?DisplayStyle.None:DisplayStyle.Flex;
