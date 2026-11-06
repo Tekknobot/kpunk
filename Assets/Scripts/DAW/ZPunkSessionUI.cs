@@ -494,8 +494,10 @@ namespace ZPunk.DAW
             button.style.marginRight = 0;
             button.style.marginTop = 0;
             button.style.marginBottom = 0;
-            button.style.paddingLeft = 0;
-            button.style.paddingRight = 0;
+            button.style.paddingLeft = 4;
+            button.style.paddingRight = 4;
+            button.style.paddingTop = 2;
+            button.style.paddingBottom = 2;
             button.style.borderTopLeftRadius = 5;
             button.style.borderTopRightRadius = 5;
             button.style.borderBottomLeftRadius = 5;
@@ -913,7 +915,7 @@ namespace ZPunk.DAW
             drawer.style.flexShrink = 0;
             // Preserve enough launch-grid space even on short phones.
             // Both existing controls scroll inside this compact drawer.
-            drawer.style.height = 232;
+            drawer.style.height = 360;
             drawer.style.minHeight = 0;
             drawer.style.width = Length.Percent(100);
             drawer.style.display = effectsExpanded ? DisplayStyle.Flex : DisplayStyle.None;

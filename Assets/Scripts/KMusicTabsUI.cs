@@ -336,8 +336,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
         sessionToggle.style.borderLeftColor=Dim;
         sessionToggle.style.borderRightColor=Dim;
         var iconGrid=new VisualElement();
-        iconGrid.style.width=20;
-        iconGrid.style.height=20;
+        iconGrid.style.width=17;
+        iconGrid.style.height=17;
         iconGrid.style.flexDirection=FlexDirection.Column;
         iconGrid.pickingMode=PickingMode.Ignore;
         for(int r=0;r<2;r++)
@@ -350,8 +350,8 @@ public sealed class KMusicTabsUI : MonoBehaviour
                 var cell=new VisualElement();
                 cell.style.width=7;
                 cell.style.height=7;
-                cell.style.marginRight=3;
-                cell.style.marginBottom=3;
+                cell.style.marginRight = c == 0 ? 3 : 0;
+                cell.style.marginBottom = r == 0 ? 3 : 0;
                 cell.style.borderTopWidth=1;
                 cell.style.borderBottomWidth=1;
                 cell.style.borderLeftWidth=1;
@@ -367,6 +367,10 @@ public sealed class KMusicTabsUI : MonoBehaviour
         }
         sessionToggle.style.alignItems=Align.Center;
         sessionToggle.style.justifyContent=Justify.Center;
+        sessionToggle.style.paddingTop = 0;
+        sessionToggle.style.paddingBottom = 0;
+        sessionToggle.style.paddingLeft = 0;
+        sessionToggle.style.paddingRight = 0;        
         sessionToggle.Add(iconGrid);
         headerRow.Add(sessionToggle);
 
