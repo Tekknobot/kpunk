@@ -670,13 +670,12 @@ public sealed class KMusicTabsUI : MonoBehaviour
         RefreshScopeToggle();
     }
 
-    // One master audio scope shared by ARRANGE and SESSION. Never create
-    // duplicate waveform/tap instances. Reparent only the visual controls.
+    // Scope is ARRANGE-only. Always park the existing waveform controls in
+    // the arrangement, even while SESSION is visible; no second audio tap.
     private void MountScopeInCurrentWorkspace()
     {
         if (scopeBar == null || scopeDrawer == null) return;
-        VisualElement target = workspace == "session" && pageSession != null
-            ? pageSession.Q<VisualElement>("ZPunkSessionScopeHost") : arrangementScopeContainer;
+        VisualElement target = arrangementScopeContainer;
         if (target == null) return;
         if (scopeBar.parent == target && scopeDrawer.parent == target) return;
         scopeBar.RemoveFromHierarchy();
@@ -1389,11 +1388,10 @@ public sealed class KMusicTabsUI : MonoBehaviour
         StyleNav(createButton,workspace=="create");
         StyleNav(soundButton,workspace=="sound");
         StyleNav(mixButton,workspace=="mix");
-        // Scope is shared by ARRANGE and SESSION. Preserve its expanded
-        // state between tabs, but stop sampling on unrelated pages.
+        // MASTER / SCOPE is visible and sampled only on ARRANGE.
         if (masterAudioTap != null)
-            masterAudioTap.CaptureEnabled = scopeIsOpen && (workspace == "arrange" || workspace == "session");
-        if (scopeIsOpen && (workspace == "arrange" || workspace == "session"))
+            masterAudioTap.CaptureEnabled = scopeIsOpen && workspace == "arrange";
+        if (scopeIsOpen && workspace == "arrange")
         {
             nextScopeFrame = 0f;
             nextTapSearch = 0f;
@@ -1468,7 +1466,7 @@ public sealed class KMusicTabsUI : MonoBehaviour
     private void Update()
     {
         if(!isReady)return;
-        if ((workspace == "arrange" || workspace == "session") && scopeIsOpen && masterWaveform != null && Time.unscaledTime >= nextScopeFrame)
+        if (workspace == "arrange" && scopeIsOpen && masterWaveform != null && Time.unscaledTime >= nextScopeFrame)
         {
             nextScopeFrame = Time.unscaledTime + 1f / 20f;
             if (scopeAnimation == null && scopeDrawer != null)

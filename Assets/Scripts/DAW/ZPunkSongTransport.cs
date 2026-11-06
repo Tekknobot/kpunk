@@ -149,13 +149,18 @@ namespace ZPunk.DAW
 
         // A launch request must be installed BEFORE audio lookahead reaches its
         // bar boundary. If the upcoming bar is too close, use the following one.
-        public long NextSafeSessionBar()
+        public long NextSafeSessionBar() => NextSafeSessionLaunch(SongData.TicksPerBar4);
+
+        /// <summary>Choose the first rhythmic boundary beyond the DSP scheduling
+        /// lookahead and a guard interval. For 4/4: bar=1920, half=960,
+        /// quarter=480, eighth=240 ticks. Never launch early or in the past.</summary>
+        public long NextSafeSessionLaunch(long quantumTicks)
         {
             double phase = SessionPreciseTick;
             double margin = (Math.Max(audioLookahead, 0.32f) + 0.16) *
                 SessionBpm * SongData.TicksPerQuarter / 60.0;
-            long bar = SongData.TicksPerBar4;
-            return Math.Max(bar, (long)Math.Ceiling((phase + margin) / bar) * bar);
+            long step = Math.Max(1L, quantumTicks);
+            return Math.Max(step, (long)Math.Ceiling((phase + margin) / step) * step);
         }
 
         public void ArmSessionPlayback(SongData performanceSong)

@@ -21,6 +21,16 @@ namespace ZPunk.DAW
         private const int GoWidth = 52;
         private const int ColumnGap = 4;
         private const int TileHeight = 52;
+        private const int MixButtonHeight = 36;
+        private const int MixButtonGap = 4;
+        private const int MixRowHeight = MixButtonHeight * 2 + MixButtonGap;
+        // Ableton-style values are musical note values, not fractions of a bar.
+        // 1 BAR = 4 beats, 1/2 = 2 beats, 1/4 = 1 beat, 1/8 = half a beat.
+        private static readonly string[] QuantizeNames = { "1 BAR", "1/2", "1/4", "1/8" };
+        private static readonly long[] QuantizeTicks = {
+            SongData.TicksPerBar4, SongData.TicksPerQuarter * 2L,
+            SongData.TicksPerQuarter, SongData.TicksPerQuarter / 2L
+        };
         private const long BarTicks = SongData.TicksPerBar4;
         private const long PerformanceTicks = PerformanceBars * BarTicks;
         private static readonly Color Bg = new Color(.075f, .092f, .125f);
@@ -58,6 +68,8 @@ namespace ZPunk.DAW
         private VisualElement page;
         private Label status;
         private Button reloadButton;
+        private Button quantizeButton;
+        private int quantizeIndex; // persisted when Session is hidden or reloaded
         private SongData source;
         private SongData sourceDocument;
         private KMusicProjectManager projects;
@@ -72,7 +84,7 @@ namespace ZPunk.DAW
         public Action<int> CreateRequested;
         public Action LayoutRebuilt;
         public Action BeforeLayoutRebuild;
-        private bool effectsExpanded;
+        private bool effectsExpanded = true;
 
         public void Initialize(VisualElement target)
         {
@@ -291,6 +303,21 @@ namespace ZPunk.DAW
             });
         }
 
+        private long NextLaunchTick()
+        {
+            return transport == null ? BarTicks :
+                transport.NextSafeSessionLaunch(QuantizeTicks[quantizeIndex]);
+        }
+
+        private void CycleQuantize()
+        {
+            quantizeIndex = (quantizeIndex + 1) % QuantizeNames.Length;
+            if (quantizeButton != null)
+                quantizeButton.text = "QUANT " + QuantizeNames[quantizeIndex];
+            // Existing queued triggers retain the boundary they were given.
+            RefreshButtons();
+        }
+
         private void QueueClip(int track, int scene)
         {
             if (source == null || transport == null || track < 0 || track >= initialSlots.Length ||
@@ -324,7 +351,7 @@ namespace ZPunk.DAW
             }
             else
             {
-                long at = transport.NextSafeSessionBar();
+                long at = NextLaunchTick();
                 if (at >= PerformanceTicks)
                 {
                     status.text = "SESSION CYCLE END — LAUNCH AFTER LOOP";
@@ -378,7 +405,7 @@ namespace ZPunk.DAW
             }
             else
             {
-                long at = transport.NextSafeSessionBar();
+                long at = NextLaunchTick();
                 if (at >= PerformanceTicks)
                 {
                     status.text = "SESSION CYCLE END — LAUNCH AFTER LOOP";
@@ -402,7 +429,7 @@ namespace ZPunk.DAW
             }
             else
             {
-                long at = transport.NextSafeSessionBar();
+                long at = NextLaunchTick();
                 if (at < PerformanceTicks)
                 {
                     for (int t = 0; t < initialSlots.Length; t++) QueueAt(t, -1, at);
@@ -496,6 +523,37 @@ namespace ZPunk.DAW
             button.style.marginBottom = 0;
         }
 
+        // Row label treatment follows the compact SCENE tiles: same column
+        // wrapper, zero child margins, dark panel and a slim accent stripe.
+        private static VisualElement RowBadge(string caption, int height)
+        {
+            var cell = new VisualElement();
+            cell.style.width = Length.Percent(100);
+            cell.style.height = height;
+            cell.style.minHeight = height;
+            cell.style.flexDirection = FlexDirection.Row;
+            cell.style.alignItems = Align.Center;
+            cell.style.backgroundColor = new Color(.10f, .14f, .19f);
+            cell.style.borderTopLeftRadius = 5;
+            cell.style.borderTopRightRadius = 5;
+            cell.style.borderBottomLeftRadius = 5;
+            cell.style.borderBottomRightRadius = 5;
+            var stripe = new VisualElement();
+            stripe.style.width = 3;
+            stripe.style.height = Math.Min(36, height - 12);
+            stripe.style.marginLeft = 3;
+            stripe.style.backgroundColor = Accent;
+            stripe.pickingMode = PickingMode.Ignore;
+            cell.Add(stripe);
+            var label = Caption(caption, 11, Ink);
+            label.style.flexGrow = 1;
+            label.style.unityFontStyleAndWeight = FontStyle.Bold;
+            label.style.whiteSpace = WhiteSpace.NoWrap;
+            label.style.marginRight = 3;
+            cell.Add(label);
+            return cell;
+        }
+
         private Color TrackColor(int track)
         {
             if (source != null && source.tracks != null && track < source.tracks.Count &&
@@ -508,7 +566,7 @@ namespace ZPunk.DAW
         private void BuildLayout()
         {
             if (page == null) return;
-            // Shared scope/FX live instances must be moved out before Clear.
+            // Shared FX controls must be parked before clearing this view.
             BeforeLayoutRebuild?.Invoke();
             page.Clear();
             page.style.backgroundColor = Bg;
@@ -520,22 +578,20 @@ namespace ZPunk.DAW
             page.style.flexGrow = 1;
             page.style.minHeight = 0;
             page.style.minWidth = 0;
-            // Reserve the same inline MASTER / SCOPE module used by ARRANGE.
-            // KMusicTabsUI moves the existing module here when SESSION is visible.
-            var scopeHost = new VisualElement { name = "ZPunkSessionScopeHost" };
-            scopeHost.style.flexDirection = FlexDirection.Column;
-            scopeHost.style.flexShrink = 0;
-            scopeHost.style.minWidth = 0;
-            page.Add(scopeHost);
+            // MASTER / SCOPE belongs exclusively to ARRANGE; Session uses
+            // this space for performance controls and the clip grid.
             var intro = new VisualElement();
             intro.style.flexDirection = FlexDirection.Row;
             intro.style.alignItems = Align.Center;
             intro.style.justifyContent = Justify.SpaceBetween;
             intro.style.marginBottom = 7;
-            var title = Caption("1 BAR QUANTIZE", 12, Accent);
-            title.style.unityTextAlign = TextAnchor.MiddleLeft;
-            title.style.flexShrink = 1;
-            intro.Add(title);
+            quantizeButton = ActionButton("QUANT " + QuantizeNames[quantizeIndex],
+                CycleQuantize, 89);
+            quantizeButton.style.fontSize = 11;
+            quantizeButton.style.color = Accent;
+            quantizeButton.tooltip = "Launch quantization: 1 BAR, 1/2, 1/4, 1/8. " +
+                "Changes affect newly queued launches only.";
+            intro.Add(quantizeButton);
             reloadButton = ActionButton("RELOAD", ShowCurrentProject, 63);
             reloadButton.tooltip = "Refresh clip slots from ARRANGE when Session is stopped";
             intro.Add(reloadButton);
@@ -559,7 +615,7 @@ namespace ZPunk.DAW
             if (scenes.Count == 0 || !scenes.Exists(scene =>
                 Array.Exists(scene.patterns, pattern => pattern != null)))
             {
-                var empty = Caption("NO ARRANGEMENT CLIPS YET.\nCREATE CLIPS, THEN TAP SYNC.", 14, Muted);
+                var empty = Caption("NO ARRANGEMENT CLIPS YET.\nCREATE CLIPS, THEN TAP RELOAD.", 14, Muted);
                 empty.style.whiteSpace = WhiteSpace.Normal;
                 empty.style.marginTop = 28;
                 page.Add(empty);
@@ -670,10 +726,10 @@ namespace ZPunk.DAW
             // Keep M and S stacked inside the *same* column wrapper as clips.
             var controls = new VisualElement();
             controls.style.flexDirection = FlexDirection.Row;
-            controls.style.height = TileHeight + ColumnGap;
+            controls.style.height = MixRowHeight + ColumnGap;
             controls.style.flexShrink = 0;
             var mixHead = Column(SceneWidth);
-            mixHead.Add(Caption("M / S", 10, Muted));
+            mixHead.Add(RowBadge("M / S", MixRowHeight));
             controls.Add(mixHead);
             for (int t = 0; t < initialSlots.Length; t++)
             {
@@ -681,9 +737,9 @@ namespace ZPunk.DAW
                 var column = Column(TrackWidth);
                 var mute = ActionButton("M", () => ToggleMute(track), TrackWidth);
                 var solo = ActionButton("S", () => ToggleSolo(track), TrackWidth);
-                FillColumn(mute, (TileHeight - 2) / 2);
-                FillColumn(solo, (TileHeight - 2) / 2);
-                solo.style.marginTop = 2;
+                FillColumn(mute, MixButtonHeight);
+                FillColumn(solo, MixButtonHeight);
+                solo.style.marginTop = MixButtonGap;
                 muteButtons.Add(mute);
                 soloButtons.Add(solo);
                 column.Add(mute);
@@ -696,7 +752,7 @@ namespace ZPunk.DAW
             stops.style.height = TileHeight + ColumnGap;
             stops.style.flexShrink = 0;
             var stopHead = Column(SceneWidth);
-            stopHead.Add(Caption("STOP", 10, Muted));
+            stopHead.Add(RowBadge("STOP", TileHeight));
             stops.Add(stopHead);
             for (int t = 0; t < initialSlots.Length; t++)
             {
@@ -705,7 +761,7 @@ namespace ZPunk.DAW
                 var button = ActionButton("■", () => QueueClip(track, -1), TrackWidth);
                 FillColumn(button, TileHeight);
                 button.style.fontSize = 23;
-                button.tooltip = "Stop this lane on the next bar";
+                button.tooltip = "Stop this lane at the next safe quantized boundary";
                 column.Add(button);
                 stops.Add(column);
                 stopButtons.Add(button);
@@ -776,7 +832,7 @@ namespace ZPunk.DAW
                 status.text = "STOP ARRANGEMENT TO START SESSION";
             else if (isRunning && pendingCount > 0)
                 status.text = "QUEUED " + pendingCount + "  /  BAR " + (nearest / BarTicks + 1);
-            else status.text = isRunning ? "LIVE  /  NEXT BAR SYNC" :
+            else status.text = isRunning ? "LIVE  /  QUANT " + QuantizeNames[quantizeIndex] :
                 "TAP A CLIP OR A SCENE TO START";
             for (int t = 0; t < initialSlots.Length; t++)
             {
@@ -797,10 +853,18 @@ namespace ZPunk.DAW
                             if (launch.track == t && launch.scene == s && launch.at > now)
                                 queued = true;
                         Color color = TrackColor(t);
-                        buttons[s].style.backgroundColor = selected ? new Color(
-                            color.r * .43f, color.g * .43f, color.b * .43f) :
-                            queued ? new Color(.21f,.30f,.34f) : Surface;
-                        buttons[s].style.color = selected || queued ? Accent : color;
+                        bool available = scenes[s].patterns[t] != null;
+                        // Inactive clips get a subtle lane-colored tint. The
+                        // currently sounding clip is filled with the actual track
+                        // color; queued clips get a brighter intermediate tint.
+                        Color background = selected ? color :
+                            available ? Color.Lerp(Surface, color, queued ? .56f : .24f) : Surface;
+                        buttons[s].style.backgroundColor = background;
+                        buttons[s].style.color = selected ? Bg : available ? Ink : Muted;
+                        var caption = buttons[s].Q<Label>("ZPunkIconCaption");
+                        if (caption != null) caption.style.color = selected ? Bg : Ink;
+                        var icon = buttons[s].Q<Image>("ZPunkIcon");
+                        if (icon != null) icon.tintColor = selected ? Bg : Ink;
                     }
                 if (t < muteButtons.Count)
                 {
