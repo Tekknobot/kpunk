@@ -3039,11 +3039,11 @@ namespace ZPunk.DAW
                 acidLiveButton.text = genreLiveEnabled ? "LIVE ON" : "LIVE OFF";
                 acidLiveButton.style.backgroundColor = genreLiveEnabled ? SelectedColor() : Raised;
                 acidLiveButton.style.color = genreLiveEnabled ? Accent : Muted;
-                acidLiveButton.tooltip = "After GENERATE, adjustments automatically rewrite only the selected clip";
+                acidLiveButton.tooltip = "Generated clips remain editable when you close and reopen GEN";
             }
             if (genreShapeStatus != null)
                 genreShapeStatus.text = !genreAppliedInSession ?
-                    "TAP GENERATE ONCE TO ENABLE LIVE EDITING" :
+                    "TAP GENERATE TO CREATE A LIVE-EDITABLE PATTERN" :
                     genreUnappliedChanges ? (genreLiveEnabled ? "LIVE / UPDATING PATTERN..." :
                         "CHANGES PENDING / TAP APPLY AGAIN") :
                     genreLiveEnabled ? "LIVE / THIS CLIP UPDATES AS YOU ADJUST" :
@@ -3108,12 +3108,15 @@ namespace ZPunk.DAW
             }
         }
 
-        private void RestoreGenreClipSettings()
+        // A valid generator tag means this clip already has a reproducible source
+        // pattern. Reopening GEN is an editing session, not a new generation.
+        // The tag persists with the clip across project saves and editor restarts.
+        private bool RestoreGenreClipSettings()
         {
-            if (content == null || string.IsNullOrEmpty(content.generatedTag)) return;
+            if (content == null || string.IsNullOrEmpty(content.generatedTag)) return false;
             string tag = content.generatedTag;
             string[] parts = tag.Split(new[] { " / " }, StringSplitOptions.None);
-            if (parts.Length < 3) return;
+            if (parts.Length < 3) return false;
             int foundGenre = -1, foundStyle = -1;
             for (int genre = 0; genre < ZPunkGenreGenerator.Genres.Length; genre++)
                 if (parts[0] == ZPunkGenreGenerator.Genres[genre])
@@ -3123,7 +3126,7 @@ namespace ZPunk.DAW
                         if (parts[1] == ZPunkGenreGenerator.Styles[genre][style]) { foundStyle = style; break; }
                     break;
                 }
-            if (foundGenre < 0 || foundStyle < 0) return;
+            if (foundGenre < 0 || foundStyle < 0) return false;
             generatorGenre = foundGenre;
             generatorStyle = foundStyle;
             foreach (string segment in parts)
@@ -3141,6 +3144,7 @@ namespace ZPunk.DAW
                     }
             }
             ZPunkGenreShaper.Restore(tag, genreShape);
+            return true;
         }
 
         private void SaveSharedHarmonicSelection(int? newProgression = null)
@@ -3228,15 +3232,15 @@ namespace ZPunk.DAW
                 generatorSynthChords = content != null &&
                     !string.IsNullOrEmpty(content.generatedTag) &&
                     content.generatedTag.Contains(" / CHORDS / ");
-            // Opening an existing clip NEVER regenerates it. Restore the exact
-            // genre/style/variation/shape when metadata is available; the next
-            // explicit GENERATE enables subsequent live rewrites.
+            // Restore saved genre/style/seed/shape for the *selected* clip. A
+            // previously generated pattern remains live-editable after closing
+            // this panel (and after reloading the project). No notes change just
+            // because GEN was opened; only an actual control change rewrites it.
             genreShape = new ZPunkGenreShaper.Settings();
-            genreAppliedInSession = false;
             genreUnappliedChanges = false;
             genreLiveHistoryPending = false;
             if (genreLiveUpdate != null) { genreLiveUpdate.Pause(); genreLiveUpdate = null; }
-            RestoreGenreClipSettings();
+            genreAppliedInSession = RestoreGenreClipSettings();
             generatorBars = clip == null ? (song.sharedProgressionChoice > 0 ? 4 : 2) :
                 (clip.lengthTicks >= 4 * SongData.TicksPerBar4 ? 4 :
                  clip.lengthTicks >= 2 * SongData.TicksPerBar4 ? 2 : 1);
@@ -3253,6 +3257,16 @@ namespace ZPunk.DAW
             CancelAcidKnobGesture();
             if (acidLiveUpdate != null) { acidLiveUpdate.Pause(); acidLiveUpdate = null; }
             if (genreLiveUpdate != null) { genreLiveUpdate.Pause(); genreLiveUpdate = null; }
+            // If a parameter was changed and the sheet closed inside the 220 ms
+            // live debounce window, commit it now. Otherwise the UI could show
+            // the new value for a moment and then restore the old one on reopen.
+            // Respect LIVE OFF: unapplied edits must not rewrite a clip on close.
+            if (genreLiveEnabled && genreAppliedInSession && genreUnappliedChanges &&
+                generatorPanel != null && generatorPanel.style.display.value == DisplayStyle.Flex &&
+                song != null && song.tracks != null && generatorTargetTrack == trackIndex &&
+                trackIndex >= 0 && trackIndex < song.tracks.Count &&
+                song.tracks[trackIndex].kind != TrackKind.Acid)
+                GenerateGenreSequence(true);
             bool showGenreNotes = genreAppliedInSession && generatorPanel != null &&
                 generatorPanel.style.display.value == DisplayStyle.Flex &&
                 song != null && song.tracks != null && generatorTargetTrack >= 0 &&
