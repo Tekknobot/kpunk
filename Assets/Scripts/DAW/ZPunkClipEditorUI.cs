@@ -102,7 +102,7 @@ namespace ZPunk.DAW
         // 2.3.4: The chord brush is exclusive to SYNTH and PADS. Chord groups
         // are ordinary MIDI notes, with an optional persistent edit-group ID.
         private VisualElement acidNoteToolbar;
-        private Button accentNoteButton, slideNoteButton, sampleLabButton;
+        private Button accentNoteButton, slideNoteButton, sampleLabButton, duplicateNoteButton;
         private Button previousClipButton, nextClipButton;
         private VisualElement chordDrawToolbar;
         private Button noteDrawButton, chordDrawButton;
@@ -454,8 +454,8 @@ namespace ZPunk.DAW
             trackScopeRow.Add(sampleLabButton);
             root.Add(trackScopeRow);
 
-            // Six equally sized controls fit a portrait phone on ONE row.
-            // Never make the last buttons inaccessible through a hidden scroller.
+            // Keep all seven note commands on one row, including DUP, so they remain
+            // accessible on portrait phones without an extra scrolling toolbar.
             var controls = new VisualElement { name = "ZPunkNoteCommands" };
             controls.style.flexDirection = FlexDirection.Row;
             controls.style.flexWrap = Wrap.NoWrap;
@@ -468,18 +468,22 @@ namespace ZPunk.DAW
             var octaveUp = EqualButton("OCT +", () => { octave = Mathf.Min(9,octave+1); ScrollToOctave(); });
             var lengthDown = EqualButton("LEN -", () => ChangeLength(-1));
             var lengthUp = EqualButton("LEN +", () => ChangeLength(1));
+            duplicateNoteButton = EqualButton("DUP", DuplicateSelectedEvent);
+            duplicateNoteButton.tooltip = "Duplicate selected note or chord (CHORD mode); hold a drum/chop hit to select it";
             var deleteNote = EqualButton("DEL", DeleteSelectedNote);
             generatorQuickButton = EqualButton("GEN", () => OpenGenerator(trackIndex));
             ZPunkUIIcons.Apply(octaveDown, "up", "OCT -", 17f);
             ZPunkUIIcons.Apply(octaveUp, "down", "OCT +", 17f);
             ZPunkUIIcons.Apply(lengthDown, "minus", "LEN -", 17f);
             ZPunkUIIcons.Apply(lengthUp, "plus", "LEN +", 17f);
+            ZPunkUIIcons.Apply(duplicateNoteButton, "copy", "DUP", 17f);
             ZPunkUIIcons.Apply(deleteNote, "delete", "DEL", 17f);
             ZPunkUIIcons.Apply(generatorQuickButton, "spark", "GEN", 17f);
             controls.Add(octaveDown);
             controls.Add(octaveUp);
             controls.Add(lengthDown);
             controls.Add(lengthUp);
+            controls.Add(duplicateNoteButton);
             controls.Add(deleteNote);
             controls.Add(generatorQuickButton);
             root.Add(controls);
@@ -688,7 +692,7 @@ namespace ZPunk.DAW
             selectedInfo.style.unityTextAlign = TextAnchor.MiddleRight;
             velocityRow.Add(selectedInfo);
             root.Add(velocityRow);
-            var footer = Txt("TAP: add/remove  |  DRAG NOTE: move steps / pitch  |  RIGHT END: resize  |  EDGE: scroll",10,Muted);
+            var footer = Txt("TAP: add/remove  |  SELECT NOTE, THEN DUP  |  HOLD DRUM/CHOP HIT TO SELECT  |  DRAG: move/resize",10,Muted);
             footer.style.whiteSpace = WhiteSpace.Normal;
             footer.style.marginTop = 5;
             footer.style.marginBottom = 8;
@@ -4673,6 +4677,197 @@ namespace ZPunk.DAW
             selectedNote = -1;
             Changed();
         }
+        // DUP is deliberately non-destructive: it creates a fresh note/hit to the
+        // right, without replacing the source. In CHORD mode a whole group is
+        // cloned with a NEW group ID, so moving either chord never moves both.
+        private void RefreshDuplicateNoteButton()
+        {
+            if (duplicateNoteButton == null) return;
+            bool hasSelection = false;
+            if (content != null)
+            {
+                if (content.kind == ClipKind.Midi)
+                    hasSelection = content.notes != null && selectedNote >= 0 &&
+                        selectedNote < content.notes.Count && content.notes[selectedNote] != null;
+                else if (selectedEventRow >= 0 && selectedEventTick >= 0)
+                {
+                    int step = GridStepForTick(selectedEventTick);
+                    hasSelection = content.kind == ClipKind.Drums
+                        ? FindDrumStepIndex(selectedEventRow, step) >= 0
+                        : content.kind == ClipKind.Chops && FindChopStepIndex(selectedEventRow, step) >= 0;
+                }
+            }
+            duplicateNoteButton.SetEnabled(hasSelection);
+        }
+
+        // Extending the arrangement clip is required for duplicated notes to
+        // actually play. Never extend through the next clip on this track.
+        private bool EnsureDuplicateClipDuration(long endTick)
+        {
+            if (clip == null || song?.tracks == null || trackIndex < 0 ||
+                trackIndex >= song.tracks.Count) return false;
+            long requiredLength = Math.Max(clip.lengthTicks,
+                endTick - Math.Max(0L, clip.sourceOffsetTick));
+            if (clip.startTick + requiredLength > ArrangementEditing.MaxSongTicks)
+            {
+                if (info != null) info.text = "DUP: SONG LIMIT REACHED";
+                return false;
+            }
+            if (requiredLength <= clip.lengthTicks) return true;
+            var track = song.tracks[trackIndex];
+            if (track?.clips != null)
+                foreach (var other in track.clips)
+                    if (other != null && other != clip && other.lengthTicks > 0 &&
+                        other.startTick < clip.startTick + requiredLength &&
+                        other.startTick + other.lengthTicks > clip.startTick + clip.lengthTicks)
+                    {
+                        if (info != null) info.text = "DUP: NO ROOM BEFORE NEXT CLIP";
+                        return false;
+                    }
+            clip.lengthTicks = requiredLength;
+            clip.loopEnabled = false;
+            ArrangementEditing.ExtendSong(song, clip.startTick + requiredLength);
+            return true;
+        }
+
+        private void DuplicateSelectedEvent()
+        {
+            if (content == null || clip == null) return;
+            if (content.kind == ClipKind.Midi)
+            {
+                if (content.notes == null || selectedNote < 0 ||
+                    selectedNote >= content.notes.Count || content.notes[selectedNote] == null) return;
+                if (!Writable() || content?.notes == null || selectedNote >= content.notes.Count) return;
+
+                var selected = content.notes[selectedNote];
+                if (selected == null) return;
+                string originalGroup = IsChordDrawing ? selected.chordGroupId : null;
+                var originals = new List<NoteEvent>();
+                int selectedOffset = 0;
+                for (int i = 0; i < content.notes.Count; i++)
+                {
+                    var note = content.notes[i];
+                    if (note == null || (!string.IsNullOrEmpty(originalGroup)
+                        ? note.chordGroupId != originalGroup : i != selectedNote)) continue;
+                    if (i == selectedNote) selectedOffset = originals.Count;
+                    originals.Add(note);
+                }
+                if (originals.Count == 0) return;
+
+                long firstTick = long.MaxValue, lastEnd = 0;
+                foreach (var note in originals)
+                {
+                    firstTick = Math.Min(firstTick, note.startTick);
+                    lastEnd = Math.Max(lastEnd, note.startTick + Math.Max(1L, note.durationTicks));
+                }
+                long span = Math.Max(quantum, lastEnd - firstTick);
+                long firstShift = ((span + quantum - 1L) / quantum) * quantum;
+                long shift = firstShift;
+                bool found = false;
+                long candidateEnd = 0;
+                // Prefer the next adjacent slot, but don't hide a copy beneath an
+                // existing same-pitch note. Respect grouped attack offsets.
+                for (int attempt = 0; attempt < 256; attempt++, shift += quantum)
+                {
+                    candidateEnd = lastEnd + shift;
+                    if (candidateEnd > ArrangementEditing.MaxSongTicks) break;
+                    bool collision = false;
+                    foreach (var original in originals)
+                    {
+                        long start = original.startTick + shift;
+                        long end = start + Math.Max(1L, original.durationTicks);
+                        foreach (var other in content.notes)
+                        {
+                            if (other == null || other.pitch != original.pitch) continue;
+                            if (other.startTick < end &&
+                                other.startTick + Math.Max(1L, other.durationTicks) > start)
+                            { collision = true; break; }
+                        }
+                        if (collision) break;
+                    }
+                    if (!collision) { found = true; break; }
+                }
+                if (!found)
+                {
+                    if (info != null) info.text = "DUP: NO FREE NOTE POSITION";
+                    return;
+                }
+                if (!EnsureDuplicateClipDuration(candidateEnd)) return;
+                string freshGroup = !string.IsNullOrEmpty(originalGroup)
+                    ? ArrangementEditing.Id("chord") : null;
+                int firstIndex = content.notes.Count;
+                foreach (var original in originals)
+                    content.notes.Add(new NoteEvent {
+                        pitch = original.pitch, startTick = original.startTick + shift,
+                        durationTicks = original.durationTicks, velocity = original.velocity,
+                        accent = original.accent, slide = original.slide,
+                        chordGroupId = freshGroup
+                    });
+                content.lengthTicks = Math.Max(content.lengthTicks, candidateEnd);
+                selectedNote = firstIndex + selectedOffset;
+                selectedEventRow = -1;
+                selectedEventTick = -1;
+                Changed();
+                var focusedScroller = scroller;
+                var focusedClipId = clipId;
+                int focusedIndex = selectedNote;
+                focusedScroller?.schedule.Execute(() => {
+                    if (scroller == focusedScroller && clipId == focusedClipId &&
+                        selectedNote == focusedIndex && IsMidi)
+                        FocusSelectedChord(focusedIndex);
+                }).ExecuteLater(20);
+                return;
+            }
+
+            // Drum hits and sample chops use the existing long-hold velocity
+            // selection. Duplicate only the selected lane/slice to its next free
+            // sixteenth, preserving source timing offsets and hit velocity.
+            if (selectedEventRow < 0 || selectedEventTick < 0 ||
+                (content.kind != ClipKind.Drums && content.kind != ClipKind.Chops)) return;
+            int selectedStep = GridStepForTick(selectedEventTick);
+            int index = content.kind == ClipKind.Drums
+                ? FindDrumStepIndex(selectedEventRow, selectedStep)
+                : FindChopStepIndex(selectedEventRow, selectedStep);
+            if (index < 0 || !Writable()) return;
+            bool drums = content?.kind == ClipKind.Drums;
+            DrumEvent drum = drums && content.drums != null && index < content.drums.Count
+                ? content.drums[index] : null;
+            ChopEvent chop = !drums && content?.chops != null && index < content.chops.Count
+                ? content.chops[index] : null;
+            if (drum == null && chop == null) return;
+            long sourceTick = drums ? drum.startTick : chop.startTick;
+            long copyTick = -1;
+            for (int offset = 1; offset <= 256; offset++)
+            {
+                long candidate = sourceTick + offset * quantum;
+                if (candidate + quantum > ArrangementEditing.MaxSongTicks) break;
+                int targetStep = GridStepForTick(candidate);
+                if (drums ? FindDrumStepIndex(selectedEventRow, targetStep) < 0 :
+                    FindChopStepIndex(selectedEventRow, targetStep) < 0)
+                { copyTick = candidate; break; }
+            }
+            if (copyTick < 0)
+            {
+                if (info != null) info.text = "DUP: NO FREE STEP";
+                return;
+            }
+            if (!EnsureDuplicateClipDuration(copyTick + quantum)) return;
+            if (drums)
+                content.drums.Add(new DrumEvent {
+                    lane = drum.lane, startTick = copyTick, velocity = drum.velocity,
+                    legacyVelocityTier = drum.legacyVelocityTier
+                });
+            else
+                content.chops.Add(new ChopEvent {
+                    sliceId = chop.sliceId, startTick = copyTick, velocity = chop.velocity
+                });
+            content.lengthTicks = Math.Max(content.lengthTicks, copyTick + quantum);
+            selectedNote = -1;
+            selectedEventRow = drums ? drum.lane : chop.sliceId - 1;
+            selectedEventTick = copyTick;
+            Changed();
+        }
+
         // The slider edits the selected event, or acts as the brush velocity when
         // nothing is selected. Selecting never toggles/deletes the event.
         private void RefreshVelocityRail()
@@ -4682,6 +4877,7 @@ namespace ZPunk.DAW
             if (velocityThumb != null) velocityThumb.style.left = new Length(percent, LengthUnit.Percent);
             if (selectedInfo != null) selectedInfo.text = velocity.ToString();
             RefreshAcidNoteButtons();
+            RefreshDuplicateNoteButton();
         }
         private void SelectNoteVelocity(int index)
         {
