@@ -3054,27 +3054,57 @@ namespace ZPunk.DAW
                        (kind == TrackKind.Pads || kind == TrackKind.Synth && generatorSynthChords) ?
                          "CHORD GROUPS" : "MELODY / BASS");
             if (genrePreviewSteps == null) return;
-            var counts = new int[16];
+            var onsetsByStep = new int[16];
+            var heldSteps = new bool[16];
             if (genreAppliedInSession && content != null)
             {
-                if (drums && content.drums != null)
-                    foreach (var hit in content.drums)
-                        if (hit != null && hit.startTick >= 0 && hit.startTick < SongData.TicksPerBar4)
-                            counts[Mathf.Clamp((int)(hit.startTick * 16 / SongData.TicksPerBar4), 0, 15)]++;
-                else if (!drums && content.notes != null)
+                // Keep the DRUM and MIDI cases explicitly braced. Without these
+                // braces, the else would attach to the inner drum-hit condition,
+                // so melodic tracks never reached their preview renderer.
+                if (drums)
                 {
-                    var onsets = new HashSet<long>();
+                    if (content.drums != null)
+                    {
+                        foreach (var hit in content.drums)
+                        {
+                            if (hit == null || hit.startTick < 0 || hit.startTick >= SongData.TicksPerBar4)
+                                continue;
+                            int step = Mathf.Clamp((int)(hit.startTick * 16 / SongData.TicksPerBar4), 0, 15);
+                            onsetsByStep[step]++;
+                        }
+                    }
+                }
+                else if (content.notes != null)
+                {
+                    // Preview the FIRST bar. An onset is shown brightly; a
+                    // sustaining BASS, SYNTH, or PADS note occupies dimmer cells
+                    // until its note-off. Simultaneous chord voices share an
+                    // onset, rather than looking like a drum roll.
+                    long barTicks = SongData.TicksPerBar4;
+                    var distinctOnsets = new HashSet<long>();
                     foreach (var note in content.notes)
-                        if (note != null && note.startTick >= 0 && note.startTick < SongData.TicksPerBar4 &&
-                            onsets.Add(note.startTick))
-                            counts[Mathf.Clamp((int)(note.startTick * 16 / SongData.TicksPerBar4), 0, 15)]++;
+                    {
+                        if (note == null || note.durationTicks <= 0) continue;
+                        long start = note.startTick;
+                        long end = start + note.durationTicks;
+                        if (end <= 0 || start >= barTicks) continue;
+                        long visibleStart = Math.Max(0L, start);
+                        long visibleEnd = Math.Min(barTicks, end);
+                        int firstStep = Mathf.Clamp((int)(visibleStart * 16 / barTicks), 0, 15);
+                        int lastStep = Mathf.Clamp((int)((visibleEnd - 1) * 16 / barTicks), 0, 15);
+                        for (int step = firstStep; step <= lastStep; step++) heldSteps[step] = true;
+                        if (start >= 0 && distinctOnsets.Add(start))
+                            onsetsByStep[firstStep]++;
+                    }
                 }
             }
             for (int i = 0; i < genrePreviewSteps.Length; i++)
             {
-                genrePreviewSteps[i].style.backgroundColor = counts[i] == 0 ? Raised :
-                    counts[i] > 2 ? new Color(.98f,.66f,.28f) : Accent;
-                genrePreviewSteps[i].style.opacity = counts[i] == 0 ? .5f : 1f;
+                genrePreviewSteps[i].style.backgroundColor = onsetsByStep[i] > 2
+                    ? new Color(.98f, .66f, .28f)
+                    : onsetsByStep[i] > 0 ? Accent
+                    : heldSteps[i] ? Color.Lerp(Raised, Accent, .36f) : Raised;
+                genrePreviewSteps[i].style.opacity = onsetsByStep[i] > 0 || heldSteps[i] ? 1f : .5f;
             }
         }
 
