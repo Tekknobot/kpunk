@@ -901,12 +901,19 @@ namespace ZPunk.DAW
             for (int i = 0; i < steps.Length; i++)
             {
                 int step = steps[i];
-                int length = style == 1 ? 2 : 1;
+                int untilNext = (i + 1 < steps.Length ? steps[i + 1] : 16) - step;
+                // Even hard techno needs a few eighth/quarter-note holds among
+                // its punches. MINIMAL leaves especially long spaces between hits.
+                int desired = style == 1 ? ((bar + rhythm + character) % 3 == 0 ? 10 : 6) :
+                              style == 2 ? ((i + character) % 3 == 0 ? 4 : 2) :
+                                           ((bar + i + character) % 3 == 0 ? 6 : 3);
+                int length = Math.Max(1, Math.Min(untilNext, desired));
                 int velocity = style == 1 ? 74 : style == 2 ? 106 : 91;
-                AddMidi(c, bar, step, length, root, velocity, r);
+                string group = GeneratedChordGroup(bar, step);
+                AddMidi(c, bar, step, length, root, velocity, r, group);
                 if (style != 1 || character % 2 == 0)
                     AddMidi(c, bar, step, length,
-                            FoldPitch(root + color, root + 7, 55, 82), velocity - 7, r);
+                            FoldPitch(root + color, root + 7, 55, 82), velocity - 7, r, group);
             }
         }
 
@@ -925,11 +932,12 @@ namespace ZPunk.DAW
             int fifth = chord.ToneNearest(7, 7);
             int length = hold ? 32 : style == 2 ? 12 : 16;
             int velocity = style == 1 ? 54 : style == 2 ? 65 : 61;
-            AddMidi(c, bar, 0, length, root, velocity, r);
+            string group = GeneratedChordGroup(bar, 0);
+            AddMidi(c, bar, 0, length, root, velocity, r, group);
             // Open fifths and octaves support hard sequencers without competing
             // with them; the PADS track must not turn into a bright chord solo.
             AddMidi(c, bar, 0, length, FoldPitch(root + fifth, 64, 56, 78),
-                    velocity - 8, r);
+                    velocity - 8, r, group);
             if (style == 2 && character % 3 == 0)
             {
                 int third = chord.ToneNearest(3, 4);
@@ -972,6 +980,46 @@ namespace ZPunk.DAW
                 copy.Add(new NoteEvent { startTick = n.startTick, durationTicks = n.durationTicks,
                     pitch = n.pitch, velocity = n.velocity, chordGroupId = n.chordGroupId });
             return copy;
+        }
+
+        // Older generated chord clips predate chordGroupId. Only simultaneous
+        // voices from a known generated harmony clip are eligible for backfill.
+        // The editor calls this on entering CHORD mode, after obtaining a writable
+        // clip, so existing projects gain group editing without regeneration.
+        public static bool HasUngroupedChordAttacks(ClipContentData clip)
+        {
+            if (clip == null || clip.kind != ClipKind.Midi || clip.notes == null ||
+                clip.notes.Count < 2 || string.IsNullOrEmpty(clip.generatedTag)) return false;
+            var first = new HashSet<long>();
+            foreach (var note in clip.notes)
+                if (note != null && string.IsNullOrEmpty(note.chordGroupId) &&
+                    !first.Add(note.startTick)) return true;
+            return false;
+        }
+
+        public static void GroupUngroupedChordAttacks(ClipContentData clip)
+        {
+            if (clip == null || clip.notes == null) return;
+            var byStart = new Dictionary<long, List<NoteEvent>>();
+            foreach (var note in clip.notes)
+            {
+                if (note == null || !string.IsNullOrEmpty(note.chordGroupId)) continue;
+                List<NoteEvent> members;
+                if (!byStart.TryGetValue(note.startTick, out members))
+                {
+                    members = new List<NoteEvent>();
+                    byStart.Add(note.startTick, members);
+                }
+                members.Add(note);
+            }
+            foreach (var pair in byStart)
+            {
+                if (pair.Value.Count < 2) continue;
+                // Tick-based IDs cannot collide with the bar/step-based IDs from
+                // new generation, and remain stable across save and restore.
+                string group = "legacy-generated-chord-" + pair.Key;
+                foreach (var note in pair.Value) note.chordGroupId = group;
+            }
         }
 
         private static bool SameChord(ZPunkChordLibrary.Chord left, ZPunkChordLibrary.Chord right)
@@ -1055,8 +1103,16 @@ namespace ZPunk.DAW
             // Clip placement is already aligned by the arrangement's tick clock.
         }
 
+        // These IDs are unique per attack within a generated clip and survive
+        // history, save/load, and clip duplication. Chord Draw already uses the
+        // same NoteEvent.chordGroupId contract for selection/move/resize.
+        private static string GeneratedChordGroup(int bar, int step)
+        {
+            return "generated-chord-" + bar + "-" + step;
+        }
+
         private static void AddMidi(ClipContentData clip, int bar, int step, int stepsLong,
-                                    int pitch, int velocity, Random r)
+                                    int pitch, int velocity, Random r, string chordGroupId = null)
         {
             if (bar < 0 || step < 0 || step >= 16 || stepsLong < 1) return;
             long start = (long)bar * SongData.TicksPerBar4 + (long)step * SongData.TicksPerSixteenth;
@@ -1068,7 +1124,8 @@ namespace ZPunk.DAW
                                      clip.lengthTicks - start);
             if (duration <= 0) return;
             clip.notes.Add(new NoteEvent { startTick = start, durationTicks = duration,
-                pitch = pitch, velocity = Clamp(velocity + r.Next(-4, 5), 25, 127) });
+                pitch = pitch, velocity = Clamp(velocity + r.Next(-4, 5), 25, 127),
+                chordGroupId = chordGroupId });
         }
 
         private static int FoldPitch(int note, int target, int low, int high)
@@ -1505,8 +1562,12 @@ namespace ZPunk.DAW
                                                 Random r, bool sameNextChord)
         {
             int[] hits = ChordRhythms(g, s, pads, rhythm + character, bar);
-            if (!pads && g == 1 && tempoBand < 0 && s != 1)
-                hits = ShapeChordStabs(hits, s == 3 ? 15 : 11);
+            if (!pads)
+            {
+                if (g == 1 && tempoBand < 0 && s != 1)
+                    hits = ShapeChordStabs(hits, s == 3 ? 15 : 11);
+                hits = ShapeChordPhrase(hits, bar, character);
+            }
             // Keep PADS separate from the busy rhythmic SYNTH-stab vocabulary.
             bool longHold = pads && ShouldHoldPad(g, s, character) &&
                             bar + 1 < bars && harmony[bar + 1] == degree &&
@@ -1519,19 +1580,17 @@ namespace ZPunk.DAW
                 if (pads) duration = longHold ? 32 :
                     hits.Length == 1 ? 16 - step :
                     (hit + 1 < hits.Length ? hits[hit + 1] - step - 1 : 16 - step);
-                else duration = g == 1 && s == 1 ? 6 :
-                    g == 0 && s == 1 ? 5 : g == 3 && s == 2 ? 6 :
-                    g == 2 && s == 1 ? 7 : 1 + r.Next(2);
-                if (!pads)
+                else
                 {
-                    duration = ShapeLength(duration + Dna(g, s).SynthHold, g, s, tempoBand);
                     int untilNext = hit + 1 < hits.Length ? hits[hit + 1] - step : 16 - step;
-                    duration = Math.Min(duration, Math.Max(1, untilNext));
+                    duration = NaturalChordLength(g, s, bar, hit, rhythm, character,
+                                                  tempoBand, untilNext, r);
                 }
                 duration = Math.Max(1, duration);
                 int vel = pads ? 66 : g == 1 && s == 3 ? 103 : g == 4 ? 94 : 84;
+                string group = GeneratedChordGroup(bar, step);
                 for (int i = 0; i < notes.Length; i++)
-                    AddMidi(c, bar, step, duration, notes[i], vel - i * 3 - hit % 2 * 4, r);
+                    AddMidi(c, bar, step, duration, notes[i], vel - i * 3 - hit % 2 * 4, r, group);
             }
             // Movement in the top voice makes sustained pads less static; always
             // remain within the current chord and avoid re-articulating the pad root.
@@ -1541,6 +1600,57 @@ namespace ZPunk.DAW
                 int top = notes[notes.Length - 1];
                 AddMidi(c, bar, 11, 4, top, 52, r);
             }
+        }
+
+        // Give a multi-bar phrase a small call/response shape. Preserve the
+        // first-bar motif, thin the second-bar answer, open up bar three, then
+        // return to the original figure in bar four. Never change sparse pads.
+        private static int[] ShapeChordPhrase(int[] original, int bar, int character)
+        {
+            int phraseBar = bar % 4;
+            if (original.Length < 3 || phraseBar == 0 || phraseBar == 3) return original;
+            var shaped = new List<int>(original);
+            if (phraseBar == 1)
+                shaped.RemoveAt((character & 1) == 0 ? shaped.Count - 1 : 1);
+            else if (shaped.Count >= 4)
+                shaped.RemoveAt(1);
+            return shaped.ToArray();
+        }
+
+        // Chord articulations use musical divisions rather than the generic
+        // synth-lead's 1/16-note ShapeLength cap. Sparse styles get genuine
+        // 1/4- and 1/2-bar sustains; busy styles retain occasional tight stabs.
+        // Every voice in an attack receives the same duration, with no overlap
+        // into the next attack or beyond its bar. Offbeats remain on the grid.
+        private static int NaturalChordLength(int g, int s, int bar, int attack,
+                                               int rhythm, int character, int tempoBand,
+                                               int untilNext, Random r)
+        {
+            int feel = Mod(rhythm + character * 3 + bar * 2 + attack, 5);
+            int desired;
+            if (g == 1 && s == 1) // Deep house: rounded quarter/half-beat harmonies.
+                desired = new[] { 8, 6, 4, 8, 6 }[feel];
+            else if (g == 1 && s == 3) // Rave piano: a few punches, some held answers.
+                desired = new[] { 2, 4, 3, 6, 4 }[feel];
+            else if (g == 1 && s == 2) // Jackin: short rhythmic responses.
+                desired = new[] { 2, 3, 4, 2, 6 }[feel];
+            else if ((g == 0 && s == 1) || (g == 3 && s == 2) || (g == 4 && s == 1))
+                desired = new[] { 8, 6, 4, 10, 6 }[feel];
+            else if (g == 3 && s == 1) // Jungle: leave room underneath the break.
+                desired = new[] { 4, 6, 3, 8, 4 }[feel];
+            else
+                desired = new[] { 4, 2, 6, 3, 4 }[feel];
+
+            // Adjacent attacks retain a little separation; held notes can run
+            // into the next beat when the phrase calls for a legato response.
+            if (tempoBand >= 1 && desired < 8) desired++;
+            if (tempoBand <= -1 && (g == 1 || g == 4 || g == 5) && desired > 2)
+                desired--;
+            int maximum = Math.Max(1, untilNext);
+            int length = Math.Min(desired, maximum);
+            if (length == maximum && maximum > 3 && (feel + r.Next(3)) % 3 != 0)
+                length--; // rhythmic breath before the next chord
+            return Math.Max(1, length);
         }
 
         private static int[] ShapeChordStabs(int[] original, int extra)

@@ -38,6 +38,15 @@ namespace ZPunk.DAW
         private int sampleKeyGuideProjectSlot = -1;
         private VisualElement generatorPanel, generatorGenres, generatorStyles, generatorBarsRow, generatorSynthModeRow;
         private VisualElement normalGeneratorSections, acidGeneratorSections;
+        private VisualElement genreDrumShapeSection, genreNoteShapeSection, genrePatternPreview;
+        private Label genreShapeStatus, genreShapeSummary;
+        private Button genreResetButton;
+        private VisualElement[] genrePreviewSteps;
+        private readonly List<Action> genreControlPainters = new List<Action>();
+        private ZPunkGenreShaper.Settings genreShape = new ZPunkGenreShaper.Settings();
+        private bool genreLiveEnabled = true, genreAppliedInSession, genreUnappliedChanges;
+        private bool genreLiveHistoryPending;
+        private IVisualElementScheduledItem genreLiveUpdate;
         private Label acidKeyLabel, acidGeneratorSummary, acidLiveStatus;
         private VisualElement acidPatternPreview;
         private Button generatorApplyButton, generatorCancelButton, acidLiveButton;
@@ -486,7 +495,7 @@ namespace ZPunk.DAW
             chordDrawToolbar.style.flexShrink = 0;
             chordDrawToolbar.style.marginBottom = 3;
             noteDrawButton = EqualButton("NOTE", () => { chordDrawEnabled = false; RefreshChordDrawToolbar(); RefreshVelocityDisplays(); });
-            chordDrawButton = EqualButton("CHORD", () => { chordDrawEnabled = true; RefreshChordDrawToolbar(); RefreshVelocityDisplays(); });
+            chordDrawButton = EqualButton("CHORD", EnableChordEditing);
             noteDrawButton.tooltip = "Draw and edit individual notes";
             chordDrawButton.tooltip = "Tap a root pitch to draw a whole chord; drag any chord note to move the group";
             chordDrawToolbar.Add(noteDrawButton);
@@ -1949,8 +1958,8 @@ namespace ZPunk.DAW
             synthModeButtons.style.flexDirection = FlexDirection.Row;
             synthModeButtons.style.height = 48;
             synthModeButtons.style.alignItems = Align.Center;
-            generatorMelodyButton = Btn("MELODY", () => { generatorSynthChords = false; RefreshGeneratorPanel(); }, 90);
-            generatorChordsButton = Btn("CHORDS", () => { generatorSynthChords = true; RefreshGeneratorPanel(); }, 90);
+            generatorMelodyButton = Btn("MELODY", () => ChangeGenreGeneratorSetting(() => generatorSynthChords = false), 90);
+            generatorChordsButton = Btn("CHORDS", () => ChangeGenreGeneratorSetting(() => generatorSynthChords = true), 90);
             generatorMelodyButton.style.flexGrow = 1;
             generatorChordsButton.style.flexGrow = 1;
             synthModeButtons.Add(generatorMelodyButton);
@@ -1969,13 +1978,13 @@ namespace ZPunk.DAW
             keyRow.style.height = 48;
             keyRow.style.flexDirection = FlexDirection.Row;
             keyRow.style.alignItems = Align.Center;
-            keyRow.Add(Btn("<",() => { generatorKey = (generatorKey + 11)%12; SaveSharedHarmonicSelection(); RefreshGeneratorPanel(); },43));
+            keyRow.Add(Btn("<",() => ChangeGenreGeneratorSetting(() => { generatorKey = (generatorKey + 11)%12; SaveSharedHarmonicSelection(); }),43));
             generatorKeyLabel = Txt("A MIN",13,Accent);
             generatorKeyLabel.style.flexGrow = 1;
             generatorKeyLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
             keyRow.Add(generatorKeyLabel);
-            keyRow.Add(Btn(">",() => { generatorKey = (generatorKey + 1)%12; SaveSharedHarmonicSelection(); RefreshGeneratorPanel(); },43));
-            keyRow.Add(Btn("MIN/MAJ",() => { generatorMinor = !generatorMinor; SaveSharedHarmonicSelection(); RefreshGeneratorPanel(); },85));
+            keyRow.Add(Btn(">",() => ChangeGenreGeneratorSetting(() => { generatorKey = (generatorKey + 1)%12; SaveSharedHarmonicSelection(); }),43));
+            keyRow.Add(Btn("MIN/MAJ",() => ChangeGenreGeneratorSetting(() => { generatorMinor = !generatorMinor; SaveSharedHarmonicSelection(); }),85));
             body.Add(keyRow);
 
             // Shared project-level harmonic direction, independent of the selected
@@ -2051,7 +2060,7 @@ namespace ZPunk.DAW
                     ? samplePlayer.DawSampleFolder + "/" + samplePlayer.DawSampleName : null;
                 ApplySampleKeyGuide();
                 RefreshClipSampleKeyReference();
-                RefreshGeneratorPanel();
+                GenreGeneratorParametersChanged();
             }, 132);
             generatorSampleKeyButton.style.height = 42;
             generatorSampleKeyButton.style.flexShrink = 0;
@@ -2077,8 +2086,12 @@ namespace ZPunk.DAW
             generatorVariationLabel = Txt("VARIATION 1",11,Muted);
             generatorVariationLabel.style.flexGrow = 1;
             variationRow.Add(generatorVariationLabel);
-            variationRow.Add(Btn("NEW VARIATION",() => { generatorVariation++; RefreshGeneratorPanel(); },118));
+            variationRow.Add(Btn("NEW VARIATION",() => ChangeGenreGeneratorSetting(() => generatorVariation++),118));
             body.Add(variationRow);
+
+            // All six genres share the existing composition engine; these
+            // controls shape the selected STYLE without erasing its identity.
+            body.Add(BuildGenreShaperControls());
 
             // Persistent history is scoped to the selected project, instrument, genre
             // and melodic/chord mode. It lives within the sheet's existing scroll area.
@@ -2119,10 +2132,24 @@ namespace ZPunk.DAW
             actionRow.Add(generatorCancelButton);
             acidLiveButton = Btn("LIVE ON", () =>
             {
-                acidLiveEnabled = !acidLiveEnabled;
-                if (!acidLiveEnabled && acidLiveUpdate != null) acidLiveUpdate.Pause();
-                if (acidLiveEnabled && acidUnappliedChanges) QueueAcidLiveUpdate();
-                RefreshAcidGeneratorPanel();
+                if (song != null && song.tracks != null && generatorTargetTrack >= 0 &&
+                    generatorTargetTrack < song.tracks.Count &&
+                    song.tracks[generatorTargetTrack].kind == TrackKind.Acid)
+                {
+                    acidLiveEnabled = !acidLiveEnabled;
+                    if (!acidLiveEnabled && acidLiveUpdate != null) acidLiveUpdate.Pause();
+                    if (acidLiveEnabled && acidUnappliedChanges) QueueAcidLiveUpdate();
+                    RefreshAcidGeneratorPanel();
+                }
+                else
+                {
+                    // Reuse the same compact LIVE toggle on genre tracks.
+                    // The ACID generator's flag remains independent.
+                    genreLiveEnabled = !genreLiveEnabled;
+                    if (!genreLiveEnabled && genreLiveUpdate != null) genreLiveUpdate.Pause();
+                    if (genreLiveEnabled && genreUnappliedChanges) QueueGenreLiveUpdate();
+                    RefreshGenreShapeControls();
+                }
             }, 76);
             acidLiveButton.style.display = DisplayStyle.None;
             acidLiveButton.tooltip = "After APPLY, changes automatically rewrite the ACID clip";
@@ -2801,6 +2828,7 @@ namespace ZPunk.DAW
             foreach (var paint in acidControlPainters) paint();
             if (acidLiveButton != null)
             {
+                acidLiveButton.tooltip = "After APPLY, ACID controls rewrite only the selected clip";
                 acidLiveButton.text = acidLiveEnabled ? "LIVE ON" : "LIVE OFF";
                 acidLiveButton.style.backgroundColor = acidLiveEnabled ? SelectedColor() : Raised;
                 acidLiveButton.style.color = acidLiveEnabled ? Accent : Muted;
@@ -2815,6 +2843,274 @@ namespace ZPunk.DAW
                     " GRID  /  VARIATION " + acidSettings.variation +
                     "  /  EDITS AFFECT ONLY THE SELECTED ACID CLIP";
             RefreshAcidStepPreview();
+        }
+
+        // The selected genre/style is composed by ZPunkGenreGenerator exactly as
+        // before. This second layer provides ACID-style live musical controls.
+        private VisualElement BuildGenreShaperControls()
+        {
+            genreControlPainters.Clear();
+            var sheet = new VisualElement { name = "ZPunkGenreLiveShape" };
+            sheet.style.flexDirection = FlexDirection.Column;
+            sheet.style.marginTop = 7;
+            sheet.style.marginBottom = 9;
+            var heading = Txt("PATTERN SHAPE / LIVE", 13, Accent);
+            heading.style.unityFontStyleAndWeight = FontStyle.Bold;
+            sheet.Add(heading);
+            var help = Txt("GEN first, then shape the selected clip while it plays. Genre and style define the source groove; controls preserve that musical character.", 11, Muted);
+            help.style.whiteSpace = WhiteSpace.Normal;
+            help.style.marginTop = 4;
+            help.style.marginBottom = 7;
+            sheet.Add(help);
+
+            genrePatternPreview = new VisualElement();
+            genrePatternPreview.style.flexDirection = FlexDirection.Row;
+            genrePatternPreview.style.height = 22;
+            genrePatternPreview.style.marginTop = 4;
+            genrePatternPreview.style.marginBottom = 9;
+            genrePreviewSteps = new VisualElement[16];
+            for (int i = 0; i < genrePreviewSteps.Length; i++)
+            {
+                var step = new VisualElement();
+                step.style.flexGrow = 1;
+                step.style.marginRight = i == 15 ? 0 : 2;
+                step.style.borderTopLeftRadius = 2;
+                step.style.borderTopRightRadius = 2;
+                step.style.borderBottomLeftRadius = 2;
+                step.style.borderBottomRightRadius = 2;
+                step.style.backgroundColor = Raised;
+                genrePreviewSteps[i] = step;
+                genrePatternPreview.Add(step);
+            }
+            sheet.Add(genrePatternPreview);
+            genreShapeStatus = Txt("GENERATE TO START LIVE EDITING", 11, Accent);
+            genreShapeStatus.style.whiteSpace = WhiteSpace.Normal;
+            genreShapeStatus.style.marginBottom = 7;
+            sheet.Add(genreShapeStatus);
+
+            AddGenreShapeCycler(sheet, "DENSITY", ZPunkGenreShaper.Density,
+                () => genreShape.density, value => genreShape.density = value);
+            AddGenreShapeCycler(sheet, "GROOVE", ZPunkGenreShaper.Groove,
+                () => genreShape.groove, value => genreShape.groove = value);
+            AddGenreShapeCycler(sheet, "ENERGY", ZPunkGenreShaper.Energy,
+                () => genreShape.energy, value => genreShape.energy = value);
+            genreNoteShapeSection = new VisualElement();
+            genreNoteShapeSection.style.flexDirection = FlexDirection.Column;
+            AddGenreShapeCycler(genreNoteShapeSection, "NOTE LENGTH", ZPunkGenreShaper.Gate,
+                () => genreShape.gate, value => genreShape.gate = value);
+            AddGenreShapeCycler(genreNoteShapeSection, "REGISTER", ZPunkGenreShaper.Register,
+                () => genreShape.register, value => genreShape.register = value, true);
+            sheet.Add(genreNoteShapeSection);
+
+            genreDrumShapeSection = new VisualElement();
+            genreDrumShapeSection.style.flexDirection = FlexDirection.Column;
+            AddGenreShapeCycler(genreDrumShapeSection, "KICK ACTIVITY", ZPunkGenreShaper.LaneLevel,
+                () => genreShape.kick, value => genreShape.kick = value);
+            AddGenreShapeCycler(genreDrumShapeSection, "HAT ACTIVITY", ZPunkGenreShaper.LaneLevel,
+                () => genreShape.hats, value => genreShape.hats = value);
+            AddGenreShapeCycler(genreDrumShapeSection, "PERCUSSION", ZPunkGenreShaper.LaneLevel,
+                () => genreShape.percussion, value => genreShape.percussion = value);
+            AddGenreShapeCycler(genreDrumShapeSection, "END FILL", ZPunkGenreShaper.Fills,
+                () => genreShape.fills, value => genreShape.fills = value);
+            sheet.Add(genreDrumShapeSection);
+            var footer = new VisualElement();
+            footer.style.height = 43;
+            footer.style.flexDirection = FlexDirection.Row;
+            footer.style.alignItems = Align.Center;
+            genreShapeSummary = Txt("ORIGINAL STYLE / NO EXTRA SHAPING", 10, Muted);
+            genreShapeSummary.style.flexGrow = 1;
+            genreShapeSummary.style.whiteSpace = WhiteSpace.Normal;
+            footer.Add(genreShapeSummary);
+            genreResetButton = Btn("RESET", () =>
+            {
+                genreShape = new ZPunkGenreShaper.Settings();
+                GenreGeneratorParametersChanged();
+            }, 68);
+            footer.Add(genreResetButton);
+            sheet.Add(footer);
+            return sheet;
+        }
+
+        // Compact cyclers are touch-friendly on portrait phones. Their retained
+        // painters update labels without recreating buttons during LIVE edits.
+        private void AddGenreShapeCycler(VisualElement panel, string caption, string[] names,
+            Func<int> get, Action<int> set, bool voicingControl = false)
+        {
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.alignItems = Align.Center;
+            row.style.minHeight = 43;
+            row.style.marginBottom = 2;
+            var titleLabel = Txt(caption, 10, Muted);
+            titleLabel.style.width = 119;
+            titleLabel.style.flexShrink = 1;
+            row.Add(titleLabel);
+            var less = Btn("<", () =>
+            {
+                int next = Mathf.Max(0, get() - 1);
+                if (next != get()) ChangeGenreShapeSetting(() => set(next));
+            }, 38);
+            less.style.height = 37;
+            row.Add(less);
+            var value = Txt("ORIGINAL", 11, Accent);
+            value.style.flexGrow = 1;
+            value.style.minWidth = 0;
+            value.style.unityTextAlign = TextAnchor.MiddleCenter;
+            row.Add(value);
+            var more = Btn(">", () =>
+            {
+                int next = Mathf.Min(names.Length - 1, get() + 1);
+                if (next != get()) ChangeGenreShapeSetting(() => set(next));
+            }, 38);
+            more.style.height = 37;
+            row.Add(more);
+            genreControlPainters.Add(() =>
+            {
+                bool isChord = song != null && song.tracks != null &&
+                    generatorTargetTrack >= 0 && generatorTargetTrack < song.tracks.Count &&
+                    (song.tracks[generatorTargetTrack].kind == TrackKind.Pads ||
+                     song.tracks[generatorTargetTrack].kind == TrackKind.Synth && generatorSynthChords);
+                titleLabel.text = voicingControl && isChord ? "VOICING" : caption;
+                string[] displayNames = voicingControl && isChord ? ZPunkGenreShaper.Spread : names;
+                value.text = displayNames[Mathf.Clamp(get(), 0, displayNames.Length - 1)];
+                value.style.color = get() == 2 ? Muted : Accent;
+                less.SetEnabled(get() > 0);
+                more.SetEnabled(get() < displayNames.Length - 1);
+            });
+            panel.Add(row);
+        }
+
+        private void ChangeGenreShapeSetting(Action change)
+        {
+            change?.Invoke();
+            genreUnappliedChanges = true;
+            RefreshGenreShapeControls();
+            QueueGenreLiveUpdate();
+        }
+
+        private void ChangeGenreGeneratorSetting(Action change)
+        {
+            change?.Invoke();
+            GenreGeneratorParametersChanged();
+        }
+
+        private void GenreGeneratorParametersChanged()
+        {
+            genreUnappliedChanges = true;
+            RefreshGeneratorPanel();
+            QueueGenreLiveUpdate();
+        }
+
+        private void QueueGenreLiveUpdate()
+        {
+            if (genreLiveUpdate != null) { genreLiveUpdate.Pause(); genreLiveUpdate = null; }
+            if (!genreLiveEnabled || !genreAppliedInSession ||
+                generatorPanel == null || generatorPanel.style.display.value != DisplayStyle.Flex ||
+                song == null || song.tracks == null || generatorTargetTrack != trackIndex) return;
+            string scheduledClip = clipId;
+            genreLiveUpdate = generatorPanel.schedule.Execute(() =>
+            {
+                genreLiveUpdate = null;
+                if (!genreLiveEnabled || !genreAppliedInSession || !genreUnappliedChanges ||
+                    generatorPanel == null || generatorPanel.style.display.value != DisplayStyle.Flex ||
+                    song == null || song.tracks == null ||
+                    generatorTargetTrack != trackIndex || clipId != scheduledClip ||
+                    trackIndex < 0 || trackIndex >= song.tracks.Count ||
+                    song.tracks[trackIndex].kind == TrackKind.Acid) return;
+                GenerateGenreSequence(true);
+            });
+            genreLiveUpdate.ExecuteLater(220);
+        }
+
+        private void RefreshGenreShapeControls()
+        {
+            if (song == null || song.tracks == null || generatorTargetTrack < 0 ||
+                generatorTargetTrack >= song.tracks.Count) return;
+            TrackKind kind = song.tracks[generatorTargetTrack].kind;
+            if (kind == TrackKind.Acid) return;
+            bool drums = kind == TrackKind.Drums;
+            if (genreNoteShapeSection != null)
+                genreNoteShapeSection.style.display = drums ? DisplayStyle.None : DisplayStyle.Flex;
+            if (genreDrumShapeSection != null)
+                genreDrumShapeSection.style.display = drums ? DisplayStyle.Flex : DisplayStyle.None;
+            foreach (var paint in genreControlPainters) paint();
+            if (acidLiveButton != null)
+            {
+                acidLiveButton.text = genreLiveEnabled ? "LIVE ON" : "LIVE OFF";
+                acidLiveButton.style.backgroundColor = genreLiveEnabled ? SelectedColor() : Raised;
+                acidLiveButton.style.color = genreLiveEnabled ? Accent : Muted;
+                acidLiveButton.tooltip = "After GENERATE, adjustments automatically rewrite only the selected clip";
+            }
+            if (genreShapeStatus != null)
+                genreShapeStatus.text = !genreAppliedInSession ?
+                    "TAP GENERATE ONCE TO ENABLE LIVE EDITING" :
+                    genreUnappliedChanges ? (genreLiveEnabled ? "LIVE / UPDATING PATTERN..." :
+                        "CHANGES PENDING / TAP APPLY AGAIN") :
+                    genreLiveEnabled ? "LIVE / THIS CLIP UPDATES AS YOU ADJUST" :
+                        "LIVE OFF / TAP APPLY AGAIN TO UPDATE";
+            if (genreShapeSummary != null)
+                genreShapeSummary.text = "STYLE: " + ZPunkGenreGenerator.Styles[generatorGenre][generatorStyle] +
+                    "  /  " + (drums ? "DRUM GROOVE" :
+                       (kind == TrackKind.Pads || kind == TrackKind.Synth && generatorSynthChords) ?
+                         "CHORD GROUPS" : "MELODY / BASS");
+            if (genrePreviewSteps == null) return;
+            var counts = new int[16];
+            if (genreAppliedInSession && content != null)
+            {
+                if (drums && content.drums != null)
+                    foreach (var hit in content.drums)
+                        if (hit != null && hit.startTick >= 0 && hit.startTick < SongData.TicksPerBar4)
+                            counts[Mathf.Clamp((int)(hit.startTick * 16 / SongData.TicksPerBar4), 0, 15)]++;
+                else if (!drums && content.notes != null)
+                {
+                    var onsets = new HashSet<long>();
+                    foreach (var note in content.notes)
+                        if (note != null && note.startTick >= 0 && note.startTick < SongData.TicksPerBar4 &&
+                            onsets.Add(note.startTick))
+                            counts[Mathf.Clamp((int)(note.startTick * 16 / SongData.TicksPerBar4), 0, 15)]++;
+                }
+            }
+            for (int i = 0; i < genrePreviewSteps.Length; i++)
+            {
+                genrePreviewSteps[i].style.backgroundColor = counts[i] == 0 ? Raised :
+                    counts[i] > 2 ? new Color(.98f,.66f,.28f) : Accent;
+                genrePreviewSteps[i].style.opacity = counts[i] == 0 ? .5f : 1f;
+            }
+        }
+
+        private void RestoreGenreClipSettings()
+        {
+            if (content == null || string.IsNullOrEmpty(content.generatedTag)) return;
+            string tag = content.generatedTag;
+            string[] parts = tag.Split(new[] { " / " }, StringSplitOptions.None);
+            if (parts.Length < 3) return;
+            int foundGenre = -1, foundStyle = -1;
+            for (int genre = 0; genre < ZPunkGenreGenerator.Genres.Length; genre++)
+                if (parts[0] == ZPunkGenreGenerator.Genres[genre])
+                {
+                    foundGenre = genre;
+                    for (int style = 0; style < ZPunkGenreGenerator.Styles[genre].Length; style++)
+                        if (parts[1] == ZPunkGenreGenerator.Styles[genre][style]) { foundStyle = style; break; }
+                    break;
+                }
+            if (foundGenre < 0 || foundStyle < 0) return;
+            generatorGenre = foundGenre;
+            generatorStyle = foundStyle;
+            foreach (string segment in parts)
+            {
+                int parsed;
+                if (segment.Length > 1 && segment[0] == 'V' &&
+                    int.TryParse(segment.Substring(1), out parsed)) generatorVariation = parsed;
+                for (int k = 0; k < ZPunkGenreGenerator.Keys.Length; k++)
+                    if (segment == ZPunkGenreGenerator.Keys[k] + " MIN" ||
+                        segment == ZPunkGenreGenerator.Keys[k] + " MAJ")
+                    {
+                        generatorKey = k;
+                        generatorMinor = segment.EndsWith(" MIN", StringComparison.Ordinal);
+                        break;
+                    }
+            }
+            ZPunkGenreShaper.Restore(tag, genreShape);
         }
 
         private void SaveSharedHarmonicSelection(int? newProgression = null)
@@ -2854,7 +3150,7 @@ namespace ZPunk.DAW
             SaveSharedHarmonicSelection(selected);
             // A four-chord progression needs four bars to be fully audible.
             if (selected > 0 && current == 0 && clip == null) generatorBars = 4;
-            RefreshGeneratorPanel();
+            GenreGeneratorParametersChanged();
         }
 
         private void OpenGenerator(int requestedTrack)
@@ -2902,10 +3198,22 @@ namespace ZPunk.DAW
                 generatorSynthChords = content != null &&
                     !string.IsNullOrEmpty(content.generatedTag) &&
                     content.generatedTag.Contains(" / CHORDS / ");
+            // Opening an existing clip NEVER regenerates it. Restore the exact
+            // genre/style/variation/shape when metadata is available; the next
+            // explicit GENERATE enables subsequent live rewrites.
+            genreShape = new ZPunkGenreShaper.Settings();
+            genreAppliedInSession = false;
+            genreUnappliedChanges = false;
+            genreLiveHistoryPending = false;
+            if (genreLiveUpdate != null) { genreLiveUpdate.Pause(); genreLiveUpdate = null; }
+            RestoreGenreClipSettings();
             generatorBars = clip == null ? (song.sharedProgressionChoice > 0 ? 4 : 2) :
                 (clip.lengthTicks >= 4 * SongData.TicksPerBar4 ? 4 :
                  clip.lengthTicks >= 2 * SongData.TicksPerBar4 ? 2 : 1);
-            generatorVariation++;
+            // Do not change an existing generated clip's seed merely by reopening.
+            if (content == null || string.IsNullOrEmpty(content.generatedTag) ||
+                content.generatedTag.IndexOf(" / V", StringComparison.Ordinal) < 0)
+                generatorVariation++;
             FindSampler();
             RefreshGeneratorPanel();
             generatorPanel.style.display = DisplayStyle.Flex;
@@ -2914,17 +3222,36 @@ namespace ZPunk.DAW
         {
             CancelAcidKnobGesture();
             if (acidLiveUpdate != null) { acidLiveUpdate.Pause(); acidLiveUpdate = null; }
+            if (genreLiveUpdate != null) { genreLiveUpdate.Pause(); genreLiveUpdate = null; }
+            bool showGenreNotes = genreAppliedInSession && generatorPanel != null &&
+                generatorPanel.style.display.value == DisplayStyle.Flex &&
+                song != null && song.tracks != null && generatorTargetTrack >= 0 &&
+                generatorTargetTrack < song.tracks.Count &&
+                song.tracks[generatorTargetTrack].kind != TrackKind.Acid;
             bool showNotes = acidAppliedInSession && generatorPanel != null &&
                 generatorPanel.style.display.value == DisplayStyle.Flex &&
                 song != null && song.tracks != null && generatorTargetTrack >= 0 &&
                 generatorTargetTrack < song.tracks.Count &&
                 song.tracks[generatorTargetTrack].kind == TrackKind.Acid;
+            // Capture the final LIVE-shaped take once, not one history entry per
+            // control movement. This makes PREVIOUS useful after closing the lab.
+            if (showGenreNotes && genreLiveHistoryPending && projects != null &&
+                content != null && song != null && song.tracks != null &&
+                generatorTargetTrack >= 0 && generatorTargetTrack < song.tracks.Count)
+            {
+                TrackKind kind = song.tracks[generatorTargetTrack].kind;
+                bool chords = kind == TrackKind.Synth && generatorSynthChords;
+                ZPunkGenerationHistory.Add(projects.CurrentSlot, kind, generatorGenre, generatorStyle,
+                    generatorKey, generatorMinor, generatorBars, generatorVariation, chords, content);
+            }
+            genreLiveHistoryPending = false;
             if (generatorPanel != null) generatorPanel.style.display = DisplayStyle.None;
             if (acidKnobTouchLayer != null) acidKnobTouchLayer.style.display = DisplayStyle.None;
-            if (showNotes && content != null && content.kind == ClipKind.Midi) FocusPatternNotes(true);
+            if ((showNotes || showGenreNotes) && content != null && content.kind == ClipKind.Midi) FocusPatternNotes(true);
             acidAppliedInSession = false;
+            genreAppliedInSession = false;
         }
-        private void RefreshGeneratorPanel()
+        private void RefreshGeneratorPanel(bool updateHistory = true)
         {
             if (generatorPanel == null || song == null || song.tracks == null ||
                 generatorTargetTrack >= song.tracks.Count) return;
@@ -2933,9 +3260,10 @@ namespace ZPunk.DAW
             generatorHint.text = isAcidTrack ? (clip == null ?
                 "APPLY creates an ACID clip. The panel remains open for further changes." :
                 "APPLY replaces notes in " + clip.name + ". CLOSE keeps the last applied pattern.") :
-                clip == null ? "Creates a new clip. No changes until GENERATE is tapped." :
-                "REPLACES all notes in " + clip.name + ". Cancel leaves it unchanged." +
-                (string.IsNullOrEmpty(content?.generatedTag) ? "" : "\nCURRENT: " + content.generatedTag);
+                (!genreAppliedInSession ?
+                    (clip == null ? "GENERATE creates a new clip; your controls stay open for live shaping." :
+                     "GENERATE replaces " + clip.name + ". Opening the panel never alters existing notes.") :
+                    "EDITING " + (clip == null ? "CLIP" : clip.name) + " / LIVE edits rewrite only this clip.");
             bool acidGenerator = song.tracks[generatorTargetTrack].kind == TrackKind.Acid;
             if (normalGeneratorSections != null)
                 normalGeneratorSections.style.display = acidGenerator ? DisplayStyle.None : DisplayStyle.Flex;
@@ -2945,11 +3273,12 @@ namespace ZPunk.DAW
             // follows scrolling and face geometry without blocking other UI.
             SyncAcidKnobTouchTargets();
             if (generatorApplyButton != null)
-                generatorApplyButton.text = acidGenerator ? (acidAppliedInSession ? "APPLY AGAIN" : "APPLY") : "GENERATE";
+                generatorApplyButton.text = acidGenerator ? (acidAppliedInSession ? "APPLY AGAIN" : "APPLY") :
+                    (genreAppliedInSession ? "APPLY AGAIN" : "GENERATE");
             if (acidLiveButton != null)
-                acidLiveButton.style.display = acidGenerator ? DisplayStyle.Flex : DisplayStyle.None;
+                acidLiveButton.style.display = DisplayStyle.Flex;
             if (generatorCancelButton != null)
-                generatorCancelButton.text = acidGenerator ? "CLOSE" : "CANCEL";
+                generatorCancelButton.text = "CLOSE";
             if (acidGenerator)
             {
                 RefreshAcidGeneratorPanel();
@@ -2959,7 +3288,7 @@ namespace ZPunk.DAW
             for (int g = 0; g < ZPunkGenreGenerator.Genres.Length; g++)
             {
                 int index = g;
-                var button = Btn(ZPunkGenreGenerator.Genres[g],() => { generatorGenre = index; generatorStyle = 0; RefreshGeneratorPanel(); },90);
+                var button = Btn(ZPunkGenreGenerator.Genres[g],() => ChangeGenreGeneratorSetting(() => { generatorGenre = index; generatorStyle = 0; }),90);
                 if (g == generatorGenre) { button.style.backgroundColor = SelectedColor(); button.style.color = Accent; }
                 generatorGenres.Add(button);
             }
@@ -2969,7 +3298,7 @@ namespace ZPunk.DAW
             {
                 if (generatorGenre == 1 && st == 3 && song.tracks[generatorTargetTrack].kind == TrackKind.Drums) continue;
                 int index = st;
-                var button = Btn(ZPunkGenreGenerator.Styles[generatorGenre][st],() => { generatorStyle = index; RefreshGeneratorPanel(); },91);
+                var button = Btn(ZPunkGenreGenerator.Styles[generatorGenre][st],() => ChangeGenreGeneratorSetting(() => generatorStyle = index),91);
                 if (st == generatorStyle) { button.style.backgroundColor = SelectedColor(); button.style.color = Accent; }
                 generatorStyles.Add(button);
             }
@@ -3009,13 +3338,14 @@ namespace ZPunk.DAW
             foreach (int count in new[]{1,2,4})
             {
                 int selected = count;
-                var button = Btn(count + (count == 1 ? " BAR" : " BARS"), () => { generatorBars = selected; RefreshGeneratorPanel(); },76);
+                var button = Btn(count + (count == 1 ? " BAR" : " BARS"), () => ChangeGenreGeneratorSetting(() => generatorBars = selected),76);
                 button.style.flexGrow = 1;
                 if (generatorBars == count) { button.style.backgroundColor = SelectedColor(); button.style.color = Accent; }
                 generatorBarsRow.Add(button);
             }
             generatorVariationLabel.text = "VARIATION " + generatorVariation.ToString();
-            RefreshGenerationHistory();
+            RefreshGenreShapeControls();
+            if (updateHistory) RefreshGenerationHistory();
         }
 
         // Update both on generator edits and while sample-key analysis finishes.
@@ -3175,8 +3505,8 @@ namespace ZPunk.DAW
             if (keepGeneratorOpen)
             {
                 // Redraw only rebuilds the step grid, not the modal sheet.
-                // Repeated APPLY/LIVE writes therefore preserve sheet scroll and touch.
-                RefreshGeneratorPanel();
+                // Suppress history disk reads for debounced LIVE updates.
+                RefreshGeneratorPanel(!genreAppliedInSession);
             }
             // GEN and history restoration reveal the generated octave after close.
             else if (content.kind == ClipKind.Midi) FocusPatternNotes(true);
@@ -3247,6 +3577,17 @@ namespace ZPunk.DAW
                 GenerateAcidSequence();
                 return;
             }
+            GenerateGenreSequence(false);
+        }
+
+        private void GenerateGenreSequence(bool live)
+        {
+            // A scheduled update must never replace a second clip after the
+            // selected track has changed. Manual APPLY cancels pending edits.
+            if (genreLiveUpdate != null) { genreLiveUpdate.Pause(); genreLiveUpdate = null; }
+            if (song == null || song.tracks == null || trackIndex != generatorTargetTrack ||
+                trackIndex < 0 || trackIndex >= song.tracks.Count ||
+                song.tracks[trackIndex].kind == TrackKind.Acid) return;
             if (!PrepareGeneratorContent(generatorBars)) return;
             TrackKind kind = song.tracks[trackIndex].kind;
             bool chords = kind == TrackKind.Synth && generatorSynthChords;
@@ -3255,17 +3596,27 @@ namespace ZPunk.DAW
             if (song.sharedProgressionChoice == 0 &&
                 (kind == TrackKind.Bass || (kind == TrackKind.Synth && !chords)))
                 ReadArrangementHarmony(generatorBars, out detectedDegrees, out detectedVoices);
-            // The shared progression takes priority over previously arranged harmony;
-            // bar offset is the clip's actual arrangement position, not its local bar.
             int barOffset = clip == null ? 0 : (int)(clip.startTick / SongData.TicksPerBar4);
             ZPunkGenreGenerator.Fill(content, kind, generatorGenre, generatorStyle,
                 generatorBars, generatorKey, generatorMinor, generatorVariation, chords,
                 detectedDegrees, detectedVoices, song.sharedProgressionChoice, barOffset,
                 song.bpm);
-            ZPunkGenerationHistory.Add(projects.CurrentSlot, kind, generatorGenre, generatorStyle,
-                generatorKey, generatorMinor, generatorBars, generatorVariation, chords, content);
-            FinishGeneratorContent();
+            ZPunkGenreShaper.Apply(content, kind, genreShape, generatorGenre,
+                generatorVariation, chords);
+            if (kind == TrackKind.Pads || kind == TrackKind.Synth)
+                chordDrawEnabled = kind == TrackKind.Pads || chords;
+            // History records deliberate GENERATE/APPLY snapshots, not every
+            // 190 ms change when LIVE is enabled.
+            if (!live && projects != null)
+                ZPunkGenerationHistory.Add(projects.CurrentSlot, kind, generatorGenre, generatorStyle,
+                    generatorKey, generatorMinor, generatorBars, generatorVariation, chords, content);
+            genreAppliedInSession = true;
+            genreUnappliedChanges = false;
+            genreLiveHistoryPending = live;
+            FinishGeneratorContent(true);
+            if (!live) RefreshGenerationHistory();
         }
+
         private void RestoreGeneration(ZPunkGenerationHistory.Entry entry)
         {
             ClipContentData saved = ZPunkGenerationHistory.Copy(entry);
@@ -3284,6 +3635,15 @@ namespace ZPunk.DAW
             content.notes = saved.notes ?? new List<NoteEvent>();
             content.drums = saved.drums ?? new List<DrumEvent>();
             content.chops = new List<ChopEvent>();
+            bool historyChords = song.tracks[trackIndex].kind == TrackKind.Pads ||
+                (song.tracks[trackIndex].kind == TrackKind.Synth &&
+                 !string.IsNullOrEmpty(saved.generatedTag) &&
+                 saved.generatedTag.Contains(" / CHORDS / "));
+            if (historyChords && ZPunkGenreGenerator.HasUngroupedChordAttacks(content))
+                ZPunkGenreGenerator.GroupUngroupedChordAttacks(content);
+            if (song.tracks[trackIndex].kind == TrackKind.Pads ||
+                song.tracks[trackIndex].kind == TrackKind.Synth)
+                chordDrawEnabled = historyChords;
             // Older saved generations may still contain an empty first step.
             // Bring restored patterns onto the same tick-zero convention.
             ZPunkGenreGenerator.AlignToStart(content);
@@ -4088,6 +4448,25 @@ namespace ZPunk.DAW
             chordQualityButton?.SetEnabled(available && chordDrawEnabled);
             chordLengthButton?.SetEnabled(available && chordDrawEnabled);
             if (!available || !chordDrawEnabled) CloseChordMenu();
+        }
+
+        private void EnableChordEditing()
+        {
+            chordDrawEnabled = true;
+            // Legacy generated CHORDS/PADS clips have multiple simultaneous notes
+            // but no edit-group IDs. Upgrade them only on explicit CHORD selection,
+            // not while browsing or editing unrelated manual notes/lead patterns.
+            bool generatedHarmony = IsChordTrack && IsMidi && content != null &&
+                !string.IsNullOrEmpty(content.generatedTag) &&
+                (song.tracks[trackIndex].kind == TrackKind.Pads ||
+                 content.generatedTag.Contains(" / CHORDS / "));
+            if (generatedHarmony && ZPunkGenreGenerator.HasUngroupedChordAttacks(content) && Writable())
+            {
+                ZPunkGenreGenerator.GroupUngroupedChordAttacks(content);
+                Changed();
+            }
+            RefreshChordDrawToolbar();
+            RefreshVelocityDisplays();
         }
 
         private string SelectedChordGroup()
